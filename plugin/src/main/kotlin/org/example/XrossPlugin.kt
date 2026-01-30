@@ -5,17 +5,377 @@ package org.example
 
 import org.gradle.api.Project
 import org.gradle.api.Plugin
+import org.gradle.api.tasks.Exec
+import java.io.File
+import org.gradle.kotlin.dsl.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.decodeFromJsonElement
+
+// KotlinPoet imports
+import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.jvm.jvmName
+
+
+// メタデータ構造体の定義 (Rustの構造体に対応)
+@Serializable
+data class FieldMetadata(
+    val name: String,
+    val rust_type: String,
+    val ffi_getter_name: String,
+    val ffi_setter_name: String,
+    val ffi_type: String
+)
+
+@Serializable
+data class MethodMetadata(
+    val name: String,
+    val ffi_name: String,
+    val args: List<String>,
+    val return_type: String,
+    val has_self: Boolean,
+    val is_static: Boolean
+)
+
+@Serializable
+data class StructMetadata(
+    val name: String,
+    val ffi_prefix: String,
+    val new_fn_name: String,
+    val drop_fn_name: String,
+    val clone_fn_name: String,
+    val fields: List<FieldMetadata>,
+    val methods: List<MethodMetadata> // ここには実際には含まれないので注意
+)
+
+// トップレベルの統合メタデータ構造体
+@Serializable
+data class XrossCombinedMetadata(
+    val structs: List<StructMetadata>,
+    val methods: List<MethodMetadata>
+)
+
+
+/**
+ * Helper function to determine the Rust target triple based on OS and architecture.
+ */
+fun getRustTargetTriple(osName: String, osArch: String): String {
+    return when {
+        osName.contains("mac", ignoreCase = true) && osArch.contains("aarch64", ignoreCase = true) -> "aarch64-apple-darwin"
+        osName.contains("mac", ignoreCase = true) && osArch.contains("x86_64", ignoreCase = true) -> "x86_64-apple-darwin"
+        osName.contains("linux", ignoreCase = true) && osArch.contains("aarch64", ignoreCase = true) -> "aarch64-unknown-linux-gnu"
+        osName.contains("linux", ignoreCase = true) && osArch.contains("x86_64", ignoreCase = true) -> "x86_64-unknown-linux-gnu"
+        osName.contains("windows", ignoreCase = true) && osArch.contains("x86_64", ignoreCase = true) -> "x86_64-pc-windows-msvc"
+        else -> throw IllegalArgumentException("Unsupported OS/Arch combination: $osName / $osArch")
+    }
+}
+
+/**
+ * Helper function to get the native library extension based on OS.
+ */
+fun getNativeLibraryExtension(osName: String): String {
+    return when {
+        osName.contains("mac", ignoreCase = true) -> "dylib"
+        osName.contains("linux", ignoreCase = true) -> "so"
+        osName.contains("windows", ignoreCase = true) -> "dll"
+        else -> throw IllegalArgumentException("Unsupported OS: $osName")
+    }
+}
+
 
 /**
  * A simple 'hello world' plugin.
  */
 class XrossPlugin: Plugin<Project> {
     override fun apply(project: Project) {
+        // 現在のOSとアーキテクチャを検出
+        val osName = System.getProperty("os.name")
+        val osArch = System.getProperty("os.arch")
+        val rustTargetTriple = getRustTargetTriple(osName, osArch)
+        val nativeLibraryExtension = getNativeLibraryExtension(osName)
+        val rustBuildProfile = if (project.gradle.startParameter.taskNames.any { it.contains("Release") }) "release" else "debug" // TODO: ビルドタイプをより正確に検出
+
         // Register a task
-        project.tasks.register("greeting") { task ->
+        project.tasks.register("xrossGreeting") { task ->
             task.doLast {
-                println("Hello from plugin 'org.example.greeting'")
+                println("Hello from Xross plugin 'org.example.xross-plugin'")
             }
+        }
+
+        // Rustネイティブライブラリをビルドするタスクを登録
+        val buildRustNativeLibrary = project.tasks.register<Exec>("buildRustNativeLibrary") {
+            group = "xross"
+            description = "Builds the Rust native library for $rustTargetTriple using cargo-zigbuild."
+
+            // xross-coreプロジェクトのパス
+            val xrossCoreProject = project.rootProject.project(":xross-core")
+            val xrossCoreProjectDir = xrossCoreProject.projectDir
+
+            // cargo zigbuild コマンドの設定
+            commandLine("cargo", "zigbuild", "--target", rustTargetTriple, "--${rustBuildProfile}")
+            workingDir(xrossCoreProjectDir)
+
+            // ビルド後のネイティブライブラリのコピー
+            doLast {
+                val targetDir = xrossCoreProjectDir.resolve("target/$rustTargetTriple/$rustBuildProfile")
+                val libraryName = xrossCoreProject.name.replace("-", "_") // xross-core -> xross_core
+                val fullLibraryName = "lib${libraryName}.${nativeLibraryExtension}"
+                val nativeLibrary = targetDir.resolve(fullLibraryName)
+
+                if (nativeLibrary.exists()) {
+                    val resourcesDir = project.projectDir.resolve("src/main/resources")
+                    resourcesDir.mkdirs() // resourcesディレクトリがなければ作成
+                    nativeLibrary.copyTo(resourcesDir.resolve(fullLibraryName), overwrite = true)
+                    println("Copied native library to: ${resourcesDir.resolve(fullLibraryName)}")
+                } else {
+                    println("Native library not found at: $nativeLibrary")
+                }
+            }
+        }
+
+        // ここにメタデータを読み込むロジックを追加
+        project.afterEvaluate {
+            val xrossCoreProject = project.rootProject.findProject("xross-core")
+
+            if (xrossCoreProject != null) {
+                val xrossCoreTargetDir = xrossCoreProject.projectDir.resolve("target")
+                
+                val metadataFilePath = xrossCoreTargetDir.walkBottomUp()
+                    .filter { it.isFile && it.name == "xross_metadata.json" }
+                    .firstOrNull()
+
+                if (metadataFilePath != null && metadataFilePath.exists()) {
+                    val metadataContent = metadataFilePath.readText()
+                    println("Xross metadata loaded from: $metadataFilePath")
+                    
+                    // JSONをパース
+                    try {
+                        val combinedMetadata = Json.decodeFromString<XrossCombinedMetadata>(metadataContent)
+                        
+                        println("Successfully parsed Xross metadata.")
+                        println("Parsed Structs: ${combinedMetadata.structs}")
+                        println("Parsed Methods: ${combinedMetadata.methods}")
+
+                        // ここからKotlinコード生成ロジック
+
+                        val generatedDir = File(project.buildDir, "generated/source/kotlin/main/xross")
+                        generatedDir.mkdirs()
+
+                        combinedMetadata.structs.forEach { structMeta ->
+                            // そのStructMetadataに関連するメソッドのみを抽出して渡す
+                            val relatedMethods = combinedMetadata.methods.filter {
+                                // メソッドのffi_nameのプレフィックスから、どのstructに関連するかを判断
+                                it.ffi_name.startsWith(structMeta.ffi_prefix)
+                            }
+                            // FileSpecを生成し、ファイルに書き出す
+                            val fileSpec = generateKotlinClass(structMeta, relatedMethods)
+                            val outputFile = File(generatedDir, "${structMeta.name}.kt")
+                            outputFile.writeText(fileSpec.toString()) // toString()でKotlinコードを生成
+                            println("Generated Kotlin class: ${outputFile.absolutePath}")
+                        }
+
+                    } catch (e: Exception) {
+                        project.logger.error("Failed to parse Xross metadata JSON: ${e.message}")
+                    }
+                } else {
+                    println("Xross metadata file not found. Searched in ${xrossCoreTargetDir}")
+                }
+            } else {
+                println("Xross core project not found.")
+            }
+        }
+    }
+
+    // Kotlinクラス生成ヘルパー関数
+    private fun generateKotlinClass(
+        structMeta: StructMetadata,
+        relatedMethods: List<MethodMetadata> // 関連するメソッドリストを受け取る
+    ): FileSpec { // 戻り値をFileSpecに変更
+        val className = ClassName("org.example.xross.generated", structMeta.name)
+        val ffiPrefix = structMeta.ffi_prefix
+
+        val classTypeSpec = TypeSpec.classBuilder(className)
+            .addModifiers(KModifier.PRIVATE) // private constructor
+            .primaryConstructor(FunSpec.constructorBuilder()
+                .addModifiers(KModifier.PRIVATE)
+                .addParameter("ptr", Long::class)
+                .build())
+            .addProperty(PropertySpec.builder("ptr", Long::class, KModifier.PRIVATE).initializer("ptr").build())
+            .addSuperinterface(ClassName("java.lang", "AutoCloseable"))
+            .addFunction(FunSpec.builder("close")
+                .addModifiers(KModifier.OVERRIDE)
+                .addStatement("h_drop.invokeExact(ptr)")
+                .addStatement("arena.close()") // Confined arena を手動でクローズ
+                .build())
+            .addType(TypeSpec.companionObjectBuilder()
+                .addProperty(PropertySpec.builder("linker", ClassName("java.lang.foreign", "Linker"), KModifier.PRIVATE)
+                    .initializer("%T.nativeLinker()", ClassName("java.lang.foreign", "Linker")).build())
+                .addProperty(PropertySpec.builder("lookup", ClassName("java.lang.foreign", "SymbolLookup"), KModifier.PRIVATE)
+                    .initializer("%T.loaderLookup()", ClassName("java.lang.foreign", "SymbolLookup")).build())
+                .addProperty(PropertySpec.builder("arena", ClassName("java.lang.foreign", "Arena"), KModifier.PRIVATE)
+                    .initializer("%T.ofConfined()", ClassName("java.lang.foreign", "Arena")).build())
+                .addProperty(PropertySpec.builder("h_new", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                    .initializer("""
+                        |linker.downcallHandle(
+                        |  lookup.find("${structMeta.new_fn_name}").orElseThrow(),
+                        |  %T.methodType(Long::class.java)
+                        |)
+                    """.trimMargin(), ClassName("java.lang.invoke", "MethodType")).build())
+                .addFunction(FunSpec.builder("new")
+                    .returns(className)
+                    .addStatement("return %T(h_new.invokeExact() as Long)", className)
+                    .build())
+                .addProperty(PropertySpec.builder("h_clone", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                    .initializer("""
+                        |linker.downcallHandle(
+                        |  lookup.find("${structMeta.clone_fn_name}").orElseThrow(),
+                        |  %T.methodType(Long::class.java, Long::class.java)
+                        |)
+                    """.trimMargin(), ClassName("java.lang.invoke", "MethodType")).build())
+                .addFunction(FunSpec.builder("clone")
+                    .addParameter("instance", className)
+                    .returns(className)
+                    .addStatement("return %T(h_clone.invokeExact(instance.ptr) as Long)", className)
+                    .build())
+                .apply {
+                    // 静的メソッド (is_static == true)
+                    relatedMethods.filter { it.is_static }.forEach { methodMeta ->
+                        val kotlinArgs = methodMeta.args.map { rustTypeToKotlinType(it) }
+                        val ffiArgs = methodMeta.args.map { rustFFITypeToKotlinFFIType(it) }
+                        val kotlinReturnType = rustTypeToKotlinType(methodMeta.return_type)
+                        val ffiReturnType = rustFFITypeToKotlinFFIType(methodMeta.return_type)
+
+                        val ffiMethodTypeArgs = mutableListOf<CodeBlock>()
+                        ffiArgs.forEach { ffiArg ->
+                            ffiMethodTypeArgs.add(CodeBlock.of("%T::class.java", ClassName.bestGuess(ffiArg.toString())))
+                        }
+
+                        addProperty(PropertySpec.builder("h_${methodMeta.name}", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                            .initializer("""
+                                |linker.downcallHandle(
+                                |  lookup.find("${methodMeta.ffi_name}").orElseThrow(),
+                                |  %T.methodType(${ffiReturnType}::class.java, %L)
+                                |)
+                            """.trimMargin(), ClassName("java.lang.invoke", "MethodType"), ffiMethodTypeArgs.joinToCodeBlock(", "))).build())
+
+                        addFunction(FunSpec.builder(methodMeta.name)
+                            .returns(kotlinReturnType)
+                            .apply {
+                                methodMeta.args.forEachIndexed { i, rustArgType ->
+                                    addParameter("arg$i", rustTypeToKotlinType(rustArgType))
+                                }
+                            }
+                            .addCode(buildCodeBlock {
+                                addStatement("return h_%L.invokeExact(%L) as %T", methodMeta.name,
+                                    methodMeta.args.mapIndexed { i, _ -> "arg$i" }.joinToString(), kotlinReturnType)
+                            }).build())
+                    }
+                }
+                .build()) // End companion object
+            .apply {
+                // フィールドのGetter/Setter
+                structMeta.fields.forEach { fieldMeta ->
+                    val kotlinType = rustTypeToKotlinType(fieldMeta.rust_type)
+                    val ffiKotlinType = rustFFITypeToKotlinFFIType(fieldMeta.ffi_type)
+                    
+                    addProperty(PropertySpec.builder("h_get_${fieldMeta.name}", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                        .initializer("""
+                            |linker.downcallHandle(
+                            |  lookup.find("${fieldMeta.ffi_getter_name}").orElseThrow(),
+                            |  %T.methodType(%T::class.java, Long::class.java)
+                            |)
+                        """.trimMargin(), ClassName("java.lang.invoke", "MethodType"), ffiKotlinType.canonicalName)).build())
+
+                    addProperty(PropertySpec.builder("h_set_${fieldMeta.name}", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                        .initializer("""
+                            |linker.downcallHandle(
+                            |  lookup.find("${fieldMeta.ffi_setter_name}").orElseThrow(),
+                            |  %T.methodType(Void.TYPE, Long::class.java, %T::class.java)
+                            |)
+                        """.trimMargin(), ClassName("java.lang.invoke", "MethodType"), ffiKotlinType.canonicalName)).build())
+
+                    addProperty(PropertySpec.builder(fieldMeta.name, kotlinType)
+                        .mutable(true)
+                        .getter(FunSpec.getterBuilder()
+                            .addStatement("return h_get_%L.invokeExact(ptr) as %T", fieldMeta.name, kotlinType).build())
+                        .setter(FunSpec.setterBuilder()
+                            .addParameter("value", kotlinType)
+                            .addStatement("h_set_%L.invokeExact(ptr, value as %T)", fieldMeta.name, ffiKotlinType)
+                            .build())
+                        .build())
+                }
+
+                // メンバーメソッド
+                relatedMethods.filter { !it.is_static }.forEach { methodMeta ->
+                    val kotlinArgs = methodMeta.args.drop(1).map { rustTypeToKotlinType(it) } // Selfをドロップ
+                    val ffiArgs = methodMeta.args.drop(1).map { rustFFITypeToKotlinFFIType(it) } // Selfをドロップ
+                    val kotlinReturnType = rustTypeToKotlinType(methodMeta.return_type)
+                    val ffiReturnType = rustFFITypeToKotlinFFIType(methodMeta.return_type)
+
+                    val ffiMethodTypeArgs = mutableListOf<CodeBlock>()
+                    ffiArgs.forEach { ffiArg ->
+                        ffiMethodTypeArgs.add(CodeBlock.of("%T::class.java", ClassName.bestGuess(ffiArg.toString())))
+                    }
+
+                    addProperty(PropertySpec.builder("h_${methodMeta.name}", ClassName("java.lang.invoke", "MethodHandle"), KModifier.PRIVATE)
+                        .initializer("""
+                            |linker.downcallHandle(
+                            |  lookup.find("${methodMeta.ffi_name}").orElseThrow(),
+                            |  %T.methodType(${ffiReturnType}::class.java, Long::class.java, %L)
+                            |)
+                        """.trimMargin(), ClassName("java.lang.invoke", "MethodType"), ffiMethodTypeArgs.joinToCodeBlock(", "))).build())
+
+                    addFunction(FunSpec.builder(methodMeta.name)
+                        .returns(kotlinReturnType)
+                        .apply {
+                            kotlinArgs.forEachIndexed { i, typeName ->
+                                addParameter("arg$i", typeName)
+                            }
+                        }
+                        .addCode(buildCodeBlock {
+                            addStatement("return h_%L.invokeExact(ptr, %L) as %T", methodMeta.name,
+                                kotlinArgs.mapIndexed { i, _ -> "arg$i" }.joinToString(), kotlinReturnType)
+                        }).build())
+                }
+            }
+            .build() // End classTypeSpec
+
+        // FileSpecを構築
+        return FileSpec.builder("org.example.xross.generated", className.simpleName)
+            .addType(classTypeSpec)
+            .build()
+    }
+
+    // Rustの型をKotlinPoetのTypeNameにマッピングするヘルパー関数
+    private fun rustTypeToKotlinType(rustType: String): TypeName {
+        return when (rustType) {
+            "u8", "i8" -> Byte::class.asTypeName()
+            "u16", "i16" -> Short::class.asTypeName()
+            "u32", "i32" -> Int::class.asTypeName()
+            "u64", "i64" -> Long::class.asTypeName()
+            "f32" -> Float::class.asTypeName()
+            "f64" -> Double::class.asTypeName()
+            "bool" -> Boolean::class.asTypeName()
+            "String" -> String::class.asTypeName()
+            else -> ClassName("org.example.xross.generated", rustType) // JvmClassな構造体は生成されるクラス名
+        }
+    }
+
+    // FFIで渡すKotlinPoetのTypeNameにマッピングするヘルパー関数
+    private fun rustFFITypeToKotlinFFIType(ffiType: String): TypeName {
+        return when (ffiType) {
+            "u8", "i8" -> Byte::class.asTypeName()
+            "u16", "i16" -> Short::class.asTypeName()
+            "u32", "i32" -> Int::class.asTypeName()
+            "u64", "i64" -> Long::class.asTypeName()
+            "f32" -> Float::class.asTypeName()
+            "f64" -> Double::class.asTypeName()
+            "bool" -> Boolean::class.asTypeName()
+            "*const libc::c_char" -> ClassName("java.lang.foreign", "MemorySegment") // String
+            else -> if (ffiType.startsWith("*mut ")) Long::class.asTypeName() else ClassName.bestGuess(ffiType)
         }
     }
 }

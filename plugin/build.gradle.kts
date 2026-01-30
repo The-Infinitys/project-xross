@@ -8,6 +8,8 @@
 plugins {
     // Apply the Java Gradle plugin development plugin to add support for developing Gradle plugins
     `java-gradle-plugin`
+    // Add the kotlin-dsl plugin for building Kotlin DSL plugins
+    `kotlin-dsl`
 
     // Apply the Kotlin JVM plugin to add support for Kotlin.
     alias(libs.plugins.kotlin.jvm)
@@ -23,12 +25,18 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test")
 
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // Add Kotlinx Serialization for JSON parsing
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0") // 最新バージョンを確認
+
+    // Add KotlinPoet for Kotlin code generation
+    implementation("com.squareup:kotlinpoet:1.16.0")
 }
 
 gradlePlugin {
     // Define the plugin
-    val greeting by plugins.creating {
-        id = "org.example.greeting"
+    val xrossPlugin by plugins.creating { // 変数名をgreetingからxrossPluginに変更
+        id = "org.example.xross-plugin" // プラグインIDを変更
         implementationClass = "org.example.XrossPlugin"
     }
 }
