@@ -5,6 +5,18 @@
  * For more details on writing Custom Plugins, please refer to https://docs.gradle.org/9.3.0/userguide/custom_plugins.html in the Gradle documentation.
  */
 
+// Top-level properties for Rust build
+val rustTargets = listOf(
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
+)
+val cargoZigbuildPath = project.findProperty("cargoZigbuildPath") ?: "cargo zigbuild"
+val rustBuildDir = layout.buildDirectory.dir("rust").get().asFile
+val rustArtifactsDir = rustBuildDir.resolve("artifacts")
+
 plugins {
     // Apply the Java Gradle plugin development plugin to add support for developing Gradle plugins
     `java-gradle-plugin`
@@ -41,7 +53,76 @@ gradlePlugin {
     }
 }
 
-// Add a source set for the functional test suite
+val buildRust = tasks.register("buildRust") {
+    group = "build"
+    description = "Builds the Rust xross-core library for various targets using cargo-zigbuild."
+
+    outputs.dir(rustArtifactsDir)
+    outputs.file(rustBuildDir.resolve("xross_metadata.json"))
+
+    doLast {
+        rustArtifactsDir.mkdirs()
+
+        rustTargets.forEach { target ->
+            val targetDir = rustArtifactsDir.resolve(target)
+            targetDir.mkdirs()
+
+            val cargoCommand = "$cargoZigbuildPath --target $target --release"
+            logger.lifecycle("Building xross-core for target '$target' with command: $cargoCommand")
+
+            // Execute cargo zigbuild command
+            project.exec {
+                workingDir(project.projectDir.parentFile.resolve("xross-core"))
+                commandLine("bash", "-c", cargoCommand)
+            }
+
+            // Determine artifact name based on target
+            val artifactName = when {
+                target.contains("windows") -> "xross_core.dll"
+                target.contains("apple") -> "libxross_core.dylib"
+                else -> "libxross_core.so"
+            }
+
+            // Copy the built artifact to the target directory
+            val rustTargetReleaseDir = project.projectDir.parentFile.resolve("xross-core/target/$target/release")
+            val sourceArtifact = rustTargetReleaseDir.resolve(artifactName)
+            if (sourceArtifact.exists()) {
+                sourceArtifact.copyTo(targetDir.resolve(artifactName), overwrite = true)
+                logger.lifecycle("Copied $artifactName to ${targetDir.absolutePath}")
+            } else {
+                logger.error("Failed to find built artifact for target '$target' at ${sourceArtifact.absolutePath}")
+            }
+        }
+
+        // Copy xross_metadata.json
+        val sourceMetadata = project.projectDir.parentFile.resolve("xross-core/target/release/xross_metadata.json")
+        if (sourceMetadata.exists()) {
+            sourceMetadata.copyTo(rustBuildDir.resolve("xross_metadata.json"), overwrite = true)
+            logger.lifecycle("Copied xross_metadata.json to ${rustBuildDir.absolutePath}")
+        } else {
+            logger.error("Failed to find xross_metadata.json at ${sourceMetadata.absolutePath}. Ensure xross-core's build.rs generates it.")
+        }
+    }
+}
+
+
+
+tasks.named<Copy>("processResources") {
+    dependsOn(buildRust)
+    from(rustArtifactsDir) {
+        into("lib") // Copy artifacts into 'lib' subdirectory within resources
+    }
+}
+
+sourceSets {
+    main {
+        kotlin {
+            srcDir(layout.buildDirectory.dir("generated/xross/src/main/kotlin"))
+        }
+    }
+}
+
+
 val functionalTestSourceSet = sourceSets.create("functionalTest") {
 }
 

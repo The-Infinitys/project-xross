@@ -16,8 +16,8 @@ use syn::{
     punctuated::Punctuated,
     Token,
 };
-use serde::{Serialize, Deserialize};
 use std::{fs, path::PathBuf};
+use xross_metadata::{FieldMetadata, MethodMetadata, StructMetadata};
 
 // --- ヘルパー関数 ---
 
@@ -73,38 +73,6 @@ fn generate_ffi_prefix(crate_name: &str, struct_name_str: &str) -> String {
     format!("{}_{}", crate_name, struct_name_str)
 }
 
-// --- メタデータ定義 ---
-
-#[derive(Debug, Serialize, Deserialize)]
-struct FieldMetadata {
-    pub name: String,
-    pub rust_type: String,
-    pub ffi_getter_name: String,
-    pub ffi_setter_name: String,
-    pub ffi_type: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MethodMetadata {
-    pub name: String,
-    pub ffi_name: String,
-    pub args: Vec<String>,
-    pub return_type: String,
-    pub has_self: bool,
-    pub is_static: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StructMetadata {
-    pub name: String,
-    pub ffi_prefix: String,
-    pub new_fn_name: String,
-    pub drop_fn_name: String,
-    pub clone_fn_name: String,
-    pub fields: Vec<FieldMetadata>,
-    pub methods: Vec<MethodMetadata>,
-}
-
 // --- メインマクロ ---
 
 #[proc_macro_derive(JvmClass, attributes(jvm_class))]
@@ -134,9 +102,32 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
         None => return quote! { compile_error!("Missing #[jvm_class(crate = \"...\")]"); }.into(),
     };
 
-    if !ast.attrs.iter().any(|attr| attr.path().is_ident("repr")) {
-        // 簡易チェック。本来は repr(C) まで見るべきですが、一旦存在確認
+    let has_repr_c = ast.attrs.iter().any(|attr| {
+        if attr.path().is_ident("repr") {
+            if let Ok(Meta::List(meta_list)) = attr.parse_args::<Meta>() {
+                meta_list.nested.iter().any(|nested_meta| {
+                    if let syn::NestedMeta::Meta(Meta::Path(path)) = nested_meta {
+                        path.is_ident("C")
+                    } else { false }
+                })
+            } else { false }
+        } else { false }
+    });
+
+    if !has_repr_c {
+        return quote! { compile_error!("JvmClass derive requires #[repr(C)] for FFI compatibility."); }.into();
     }
+
+    let has_clone_derive = ast.attrs.iter().any(|attr| {
+        attr.path().is_ident("derive") && attr.parse_nested_meta(|meta| {
+            meta.path.is_ident("Clone")
+        }).is_ok()
+    });
+
+    if !has_clone_derive {
+        return quote! { compile_error!("JvmClass derive requires #[derive(Clone)] for FFI compatibility."); }.into();
+    }
+
 
     let ffi_prefix = generate_ffi_prefix(&crate_name, &name_str);
     let new_fn_name = format_ident!("{}_new", ffi_prefix);

@@ -1,51 +1,9 @@
 use std::{env, fs, path::Path};
-use serde::{Serialize, Deserialize}; // serde を追加
-
-// xross-macros/src/lib.rs で定義したメタデータ構造体をコピー
-// あるいは、xross-core が xross-macros に依存するようにして、use xross_macros::... とする
-// build.rs は Proc-macro に依存できないのでコピーする
-
-#[derive(Debug, Serialize, Deserialize)]
-struct FieldMetadata {
-    pub name: String,
-    pub rust_type: String,
-    pub ffi_getter_name: String,
-    pub ffi_setter_name: String,
-    pub ffi_type: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MethodMetadata {
-    pub name: String,
-    pub ffi_name: String,
-    pub args: Vec<String>,
-    pub return_type: String,
-    pub has_self: bool,
-    pub is_static: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StructMetadata {
-    pub name: String,
-    pub ffi_prefix: String,
-    pub new_fn_name: String,
-    pub drop_fn_name: String,
-    pub clone_fn_name: String,
-    pub fields: Vec<FieldMetadata>,
-    pub methods: Vec<MethodMetadata>, // implブロックから生成されるメソッドはここに集約されるべきだが、現在の設計では別々に処理
-}
-
-// トップレベルの統合メタデータ構造体
-#[derive(Debug, Serialize, Deserialize)]
-struct XrossCombinedMetadata {
-    pub structs: Vec<StructMetadata>,
-    pub methods: Vec<MethodMetadata>, // implブロックから生成されるメソッドはここに集約
-}
-
+use xross_metadata::{FieldMetadata, MethodMetadata, StructMetadata, XrossCombinedMetadata};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    
+
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
     let dest_path = Path::new(&out_dir).join("xross_metadata.json");
 
@@ -57,7 +15,7 @@ fn main() {
     for entry in fs::read_dir(out_dir_path).expect("Failed to read OUT_DIR") {
         let entry = entry.expect("Failed to read directory entry");
         let path = entry.path();
-        
+
         if path.is_file() {
             if path.file_name().map_or(false, |name| name.to_string_lossy().ends_with("_struct_metadata.json")) {
                 let content = fs::read_to_string(&path).expect(&format!("Failed to read metadata file: {:?}", path));
