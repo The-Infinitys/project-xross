@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "xross-core",
+    "xross-macros",
+    "xross-metadata",
+]
