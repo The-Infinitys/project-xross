@@ -11,6 +11,7 @@ plugins {
 
     // Apply the Kotlin JVM plugin to add support for Kotlin.
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 repositories {
@@ -21,8 +22,9 @@ repositories {
 dependencies {
     // Use the Kotlin Test integration.
     testImplementation("org.jetbrains.kotlin:kotlin-test")
-
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    implementation(libs.kotlinpoet)
+    implementation(libs.kotlinx.serialization.json)
 }
 
 gradlePlugin {
@@ -34,7 +36,7 @@ gradlePlugin {
 }
 
 // Add a source set for the functional test suite
-val functionalTestSourceSet = sourceSets.create("functionalTest") {
+val functionalTestSourceSet: SourceSet = sourceSets.create("functionalTest") {
 }
 
 configurations["functionalTestImplementation"].extendsFrom(configurations["testImplementation"])
@@ -57,4 +59,14 @@ tasks.named<Task>("check") {
 tasks.named<Test>("test") {
     // Use JUnit Jupiter for unit tests.
     useJUnitPlatform()
+}
+
+tasks.withType<Test>().configureEach {
+    // Project Panama を使用するための JVM 引数
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+
+    // Java 25 以上を使用していることを確認
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    })
 }
