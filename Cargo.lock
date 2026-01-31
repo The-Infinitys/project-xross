@@ -104,8 +104,11 @@ dependencies = [
 name = "xross-macros"
 version = "0.1.0"
 dependencies = [
+ "quote",
  "serde",
  "serde_json",
+ "syn",
+ "xross-metadata",
 ]
 
 [[package]]
