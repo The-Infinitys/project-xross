@@ -101,6 +101,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "xross-example"
+version = "0.1.0"
+dependencies = [
+ "xross-core",
+]
+
+[[package]]
 name = "xross-macros"
 version = "0.1.0"
 dependencies = [

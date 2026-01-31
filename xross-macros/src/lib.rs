@@ -2,16 +2,22 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use std::fs;
 use std::path::Path;
-use syn::{parse_macro_input, DeriveInput, ItemImpl, ImplItem, FnArg, Type, Expr, ExprLit, Lit, Meta};
-use xross_metadata::{XrossClass, XrossMethod, XrossField, XrossType};
+use syn::{
+    DeriveInput, Expr, ExprLit, FnArg, ImplItem, ItemImpl, Lit, Meta, Type, parse_macro_input,
+};
+use xross_metadata::{XrossClass, XrossField, XrossMethod, XrossType};
 
 // ヘルパー：属性からdocコメントを抽出する
 fn extract_docs(attrs: &[syn::Attribute]) -> Vec<String> {
-    attrs.iter()
+    attrs
+        .iter()
         .filter(|a| a.path().is_ident("doc"))
         .filter_map(|a| {
             if let Meta::NameValue(nv) = &a.meta {
-                if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
+                if let Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = &nv.value
+                {
                     return Some(s.value().trim().to_string());
                 }
             }
@@ -28,13 +34,25 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
 
     if let syn::Data::Struct(data) = &input.data {
         for field in &data.fields {
-            let field_name = field.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
+            let field_name = field
+                .ident
+                .as_ref()
+                .map(|i| i.to_string())
+                .unwrap_or_default();
             let field_docs = extract_docs(&field.attrs);
             // 型判定 (簡易)
             let ty_str = quote!(#field.ty).to_string();
-            let ty = if ty_str.contains("i32") { XrossType::I32 } else { XrossType::Pointer };
+            let ty = if ty_str.contains("i32") {
+                XrossType::I32
+            } else {
+                XrossType::Pointer
+            };
 
-            fields_meta.push(XrossField { name: field_name, ty, docs: field_docs });
+            fields_meta.push(XrossField {
+                name: field_name,
+                ty,
+                docs: field_docs,
+            });
         }
     }
 
@@ -42,7 +60,9 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
     // Rustマクロの制約上、jvm_export_impl 側で完結させるのがクリーンです。
     // そのため、derive側では共通関数生成のみに専念します。
 
-    let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_default().replace("-", "_");
+    let crate_name = std::env::var("CARGO_PKG_NAME")
+        .unwrap_or_default()
+        .replace("-", "_");
     let fn_drop = format_ident!("{}_{}_drop", crate_name, struct_name);
 
     quote! {
@@ -53,21 +73,32 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
         impl #struct_name {
             pub const JVM_STRUCT_NAME: &'static str = stringify!(#struct_name);
         }
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_attribute]
 pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_impl = parse_macro_input!(item as ItemImpl);
-    let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_default().replace("-", "_");
+    let crate_name = std::env::var("CARGO_PKG_NAME")
+        .unwrap_or_default()
+        .replace("-", "_");
 
     let attr_str = attr.to_string().replace(" ", "");
-    let package_name = if attr_str.is_empty() { crate_name.clone() } else { attr_str.clone() };
-    let prefix = format!("{}_{}", crate_name, attr_str.replace(".", "_")).trim_end_matches('_').to_string();
+    let package_name = if attr_str.is_empty() {
+        crate_name.clone()
+    } else {
+        attr_str.clone()
+    };
+    let prefix = format!("{}_{}", crate_name, attr_str.replace(".", "_"))
+        .trim_end_matches('_')
+        .to_string();
 
     let struct_name_ident = if let Type::Path(tp) = &*input_impl.self_ty {
         &tp.path.segments.last().unwrap().ident
-    } else { panic!("Required direct struct name"); };
+    } else {
+        panic!("Required direct struct name");
+    };
 
     let mut extra_functions = Vec::new();
     let mut methods_meta = Vec::new();
@@ -79,14 +110,21 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut is_method = false;
 
             method.attrs.retain(|a| {
-                if a.path().is_ident("jvm_new") { is_new = true; false }
-                else if a.path().is_ident("jvm_method") { is_method = true; false }
-                else { true }
+                if a.path().is_ident("jvm_new") {
+                    is_new = true;
+                    false
+                } else if a.path().is_ident("jvm_method") {
+                    is_method = true;
+                    false
+                } else {
+                    true
+                }
             });
 
             if is_new || is_method {
                 let rust_fn_name = &method.sig.ident;
-                let export_ident = format_ident!("{}_{}_{}", prefix, struct_name_ident, rust_fn_name);
+                let export_ident =
+                    format_ident!("{}_{}_{}", prefix, struct_name_ident, rust_fn_name);
 
                 // 型解析
                 let mut args_types = Vec::new();
@@ -102,7 +140,11 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     symbol: export_ident.to_string(),
                     is_constructor: is_new,
                     args: args_types,
-                    ret: if is_new { XrossType::Pointer } else { XrossType::I32 },
+                    ret: if is_new {
+                        XrossType::Pointer
+                    } else {
+                        XrossType::I32
+                    },
                     docs: method_docs,
                 });
 

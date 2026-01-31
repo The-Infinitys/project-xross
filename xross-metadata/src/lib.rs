@@ -2,7 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum XrossType {
-    Pointer, I32, I64, F32, F64, Void,
+    Pointer,
+    I32,
+    I64,
+    F32,
+    F64,
+    Void,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -26,7 +31,7 @@ pub struct XrossMethod {
 pub struct XrossClass {
     pub package: String,
     pub struct_name: String,
-    pub docs: Vec<String>,   // クラス自体のコメント
+    pub docs: Vec<String>, // クラス自体のコメント
     pub fields: Vec<XrossField>,
     pub methods: Vec<XrossMethod>,
 }
