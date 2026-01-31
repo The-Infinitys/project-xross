@@ -1,14 +1,32 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum XrossType {
+    Pointer, I32, I64, F32, F64, Void,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct XrossField {
+    pub name: String,
+    pub ty: XrossType,
+    pub docs: Vec<String>,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct XrossMethod {
+    pub name: String,
+    pub symbol: String,
+    pub is_constructor: bool,
+    pub args: Vec<XrossType>,
+    pub ret: XrossType,
+    pub docs: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct XrossClass {
+    pub package: String,
+    pub struct_name: String,
+    pub docs: Vec<String>,   // クラス自体のコメント
+    pub fields: Vec<XrossField>,
+    pub methods: Vec<XrossMethod>,
 }

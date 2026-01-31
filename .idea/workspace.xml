@@ -18,16 +18,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f975a9a1-e29b-4a10-834b-aa32ce0e2a24" name="変更" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/gradle.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/kotlinc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/xross.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/xross-macros/tests/test.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/xross-macros/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-macros/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-core/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-core/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-core/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-core/src/lib.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/xross-macros/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-macros/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-metadata/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-metadata/src/lib.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -146,7 +142,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1769839797497</updated>
-      <workItem from="1769839799702" duration="6021000" />
+      <workItem from="1769839799702" duration="7500000" />
     </task>
     <servers />
   </component>

@@ -8,6 +8,7 @@
       <sourceFolder url="file://$MODULE_DIR$/xross-macros/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/xross-metadata/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
+      <excludeFolder url="file://$MODULE_DIR$/xross-macros/target" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
