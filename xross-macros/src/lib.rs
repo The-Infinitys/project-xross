@@ -1,42 +1,26 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use quote::{quote, format_ident};
+use quote::{quote, format_ident, ToTokens};
 use syn::{
     parse_macro_input,
     DeriveInput,
-    Attribute,
-    Meta,
     Data,
     Fields,
     Type,
     Visibility,
     ItemImpl,
     ImplItem,
+    Meta,
     punctuated::Punctuated,
-    Token,
+    token::Token,
 };
 use std::{fs, path::PathBuf};
 use xross_metadata::{FieldMetadata, MethodMetadata, StructMetadata};
 
 // --- ヘルパー関数 ---
 
-fn has_derive_attribute(attrs: &[Attribute], trait_name: &str) -> bool {
-    attrs.iter().any(|attr| {
-        if attr.path().is_ident("derive") {
-            let mut found = false;
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident(trait_name) {
-                    found = true;
-                }
-                Ok(())
-            });
-            found
-        } else {
-            false
-        }
-    })
-}
+
 
 fn is_primitive_type(ty: &Type) -> bool {
     if let Type::Path(type_path) = ty {
@@ -104,26 +88,51 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
 
     let has_repr_c = ast.attrs.iter().any(|attr| {
         if attr.path().is_ident("repr") {
-            if let Ok(Meta::List(meta_list)) = attr.parse_args::<Meta>() {
-                meta_list.nested.iter().any(|nested_meta| {
-                    if let syn::NestedMeta::Meta(Meta::Path(path)) = nested_meta {
-                        path.is_ident("C")
-                    } else { false }
-                })
-            } else { false }
+            let mut found_c = false;
+            // `repr` 属性の引数 (例: `(C)`) をパースする
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("C") {
+                    found_c = true;
+                    Ok(())
+                } else {
+                    // 他の repr 引数は無視
+                    Ok(())
+                }
+            });
+            found_c
         } else { false }
     });
-
+    
     if !has_repr_c {
         return quote! { compile_error!("JvmClass derive requires #[repr(C)] for FFI compatibility."); }.into();
     }
 
     let has_clone_derive = ast.attrs.iter().any(|attr| {
-        attr.path().is_ident("derive") && attr.parse_nested_meta(|meta| {
-            meta.path.is_ident("Clone")
-        }).is_ok()
+        if attr.path().is_ident("derive") {
+            eprintln!("DEBUG: has_clone_derive - attr.meta: {}", quote! { #attr.meta }.to_string());
+            // attr.meta が Meta::List の場合にのみ、その中身をパースする
+            if let syn::Meta::List(meta_list) = &attr.meta {
+                let res = meta_list.parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated);
+                eprintln!("DEBUG: has_clone_derive - meta_list parse_args_with result: {:?}", res.is_ok());
+                if let Ok(paths) = res {
+                    let found = paths.iter().any(|path| {
+                        eprintln!("DEBUG: has_clone_derive - checking path: {}", quote! { #path }.to_string());
+                        path.is_ident("Clone")
+                    });
+                    eprintln!("DEBUG: has_clone_derive - found Clone: {:?}", found);
+                    found
+                } else {
+                    false
+                }
+            } else {
+                eprintln!("DEBUG: has_clone_derive - attr.meta is not Meta::List. Actual: {}", quote! { #attr.meta }.to_string());
+                false // Meta::Path や Meta::NameValue の場合は false
+            }
+        } else {
+            false
+        }
     });
-
+    
     if !has_clone_derive {
         return quote! { compile_error!("JvmClass derive requires #[derive(Clone)] for FFI compatibility."); }.into();
     }
@@ -155,42 +164,41 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
                         ffi_type_label = field_type_str.clone();
                         getter_setter_fns.extend(quote! {
                             #[no_mangle]
-                            pub extern "C" fn #getter_name(ptr: *const #name) -> #field_type {
+                            pub unsafe extern "C" fn #getter_name(ptr: *const #name) -> #field_type {
                                 unsafe { (*ptr).#field_name }
                             }
                             #[no_mangle]
-                            pub extern "C" fn #setter_name(ptr: *mut #name, value: #field_type) {
+                            pub unsafe extern "C" fn #setter_name(ptr: *mut #name, value: #field_type) {
                                 unsafe { (*ptr).#field_name = value; }
                             }
                         });
                     } else if is_string_type(field_type) {
                         ffi_type_label = "*const libc::c_char".to_string();
                         getter_setter_fns.extend(quote! {
-                            #[no_mangle]
-                            pub extern "C" fn #getter_name(ptr: *const #name) -> *const libc::c_char {
-                                unsafe {
-                                    let s = &(*ptr).#field_name;
-                                    let c_str = std::ffi::CString::new(s.as_str()).unwrap();
-                                    c_str.into_raw()
-                                }
-                            }
-                            #[no_mangle]
-                            pub extern "C" fn #setter_name(ptr: *mut #name, value: *const libc::c_char) {
-                                unsafe {
-                                    let c_str = std::ffi::CStr::from_ptr(value);
-                                    (*ptr).#field_name = c_str.to_string_lossy().into_owned();
-                                }
-                            }
-                        });
+                                                    #[no_mangle]
+                                                    pub unsafe extern "C" fn #getter_name(ptr: *const #name) -> *const libc::c_char {
+                                                        unsafe {
+                                                            let s = &(*ptr).#field_name;
+                                                            let c_str = std::ffi::CString::new(s.as_str()).unwrap();
+                                                            c_str.into_raw()
+                                                        }
+                                                    }
+                                                    #[no_mangle]
+                                                    pub unsafe extern "C" fn #setter_name(ptr: *mut #name, value: *const libc::c_char) {
+                                                        unsafe {
+                                                            let c_str = std::ffi::CStr::from_ptr(value);
+                                                            (*ptr).#field_name = c_str.to_string_lossy().into_owned();
+                                                        }
+                                                    }                        });
                     } else if is_jvm_class_type(field_type) {
                         ffi_type_label = format!("*mut {}", field_type_str);
                         getter_setter_fns.extend(quote! {
                             #[no_mangle]
-                            pub extern "C" fn #getter_name(ptr: *const #name) -> *mut #field_type {
+                            pub unsafe extern "C" fn #getter_name(ptr: *const #name) -> *mut #field_type {
                                 unsafe { Box::into_raw(Box::new((*ptr).#field_name.clone())) }
                             }
                             #[no_mangle]
-                            pub extern "C" fn #setter_name(ptr: *mut #name, value: *mut #field_type) {
+                            pub unsafe extern "C" fn #setter_name(ptr: *mut #name, value: *mut #field_type) {
                                 unsafe { (*ptr).#field_name = *Box::from_raw(value); }
                             }
                         });
@@ -228,11 +236,11 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
             fn new() -> Self { Self::default() }
         }
         #[no_mangle]
-        pub extern "C" fn #new_fn_name() -> *mut #name { Box::into_raw(Box::new(#name::new())) }
+        pub unsafe extern "C" fn #new_fn_name() -> *mut #name { Box::into_raw(Box::new(#name::new())) }
         #[no_mangle]
-        pub extern "C" fn #drop_fn_name(ptr: *mut #name) { if !ptr.is_null() { unsafe { drop(Box::from_raw(ptr)); } } }
+        pub unsafe extern "C" fn #drop_fn_name(ptr: *mut #name) { if !ptr.is_null() { unsafe { drop(Box::from_raw(ptr)); } } }
         #[no_mangle]
-        pub extern "C" fn #clone_fn_name(ptr: *const #name) -> *mut #name {
+        pub unsafe extern "C" fn #clone_fn_name(ptr: *const #name) -> *mut #name {
             unsafe { Box::into_raw(Box::new((*ptr).clone())) }
         }
         #getter_setter_fns
@@ -282,7 +290,7 @@ pub fn jvm_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 generated_fns.extend(quote! {
                     #[no_mangle]
-                    pub extern "C" fn #ffi_method_name() {
+                    pub unsafe extern "C" fn #ffi_method_name() {
                         unimplemented!("Method wrap not fully implemented");
                     }
                 });
