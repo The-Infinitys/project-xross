@@ -5,12 +5,9 @@ import java.io.File
 import java.nio.file.Files
 
 fun main() {
-    // 1. 一時フォルダの作成
     val tempDir: File = Files.createTempDirectory("xross_test_").toFile()
 
     try {
-        // 2. リソースから .so ファイルを一時フォルダにコピー
-        // ファイル名は環境に合わせて調整してください (例: libxross_example.so)
         val libName = "libxross_example.so"
         val libFile = File(tempDir, libName)
 

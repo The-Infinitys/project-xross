@@ -1,7 +1,6 @@
 use xross_core::{JvmClass, jvm_class};
 
 #[derive(JvmClass, Clone)]
-#[repr(C)]
 /// This is my service struct.
 struct MyService;
 
@@ -20,7 +19,6 @@ impl MyService {
 pub mod test {
     use super::*;
     #[derive(JvmClass, Clone)]
-    #[repr(C)]
     pub struct MyService2 {
         #[jvm_field]
         pub val: i32,
