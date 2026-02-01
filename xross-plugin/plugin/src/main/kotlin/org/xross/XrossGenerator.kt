@@ -16,24 +16,25 @@ object XrossGenerator {
             .addModifiers(KModifier.INTERNAL)
             .addSuperinterface(AutoCloseable::class)
 
-        // 内部ユーティリティ
         classBuilder.addType(buildFieldMemoryInfoType())
 
-        // インスタンスプロパティ
         classBuilder.addProperty(
             PropertySpec.builder("segment", MemorySegment::class)
                 .addModifiers(KModifier.PRIVATE).mutable(true)
                 .initializer("%T.NULL", MemorySegment::class).build()
         )
 
-        // 生成ロジックの各セクション
         generateConstructor(classBuilder, meta)
         generateFields(classBuilder, meta.fields)
-        generateMethods(classBuilder, meta.methods.filter { !it.isConstructor })
-        classBuilder.addType(generateCompanion(meta))
+
+        val companionBuilder = generateCompanionBuilder(meta)
+        generateMethods(classBuilder, companionBuilder, meta)
+
+        classBuilder.addType(companionBuilder.build())
         generateCloseMethod(classBuilder)
 
-        FileSpec.builder(targetPackage, className).indent("    ")
+        FileSpec.builder(targetPackage, className)
+            .indent("    ")
             .addImport(
                 "java.lang.foreign",
                 "ValueLayout",
@@ -43,22 +44,21 @@ object XrossGenerator {
                 "SymbolLookup",
                 "Arena"
             )
-            .addType(classBuilder.build()).build().writeTo(outputDir)
+            .addImport("java.util.concurrent.locks", "ReentrantLock")
+            .addImport("kotlin.concurrent", "withLock")
+            .addType(classBuilder.build())
+            .build()
+            .writeTo(outputDir)
     }
 
     private fun generateConstructor(classBuilder: TypeSpec.Builder, meta: XrossClass) {
         val constructor = meta.methods.find { it.isConstructor } ?: return
         val builder = FunSpec.constructorBuilder()
 
-        // 引数の追加（エスケープ済み）
-        constructor.args.forEach { builder.addParameter(it.name, it.ty.kotlinType) }
-
-        // invokeExact に渡す引数リストの構築
-        // 変数名にバッククォートを適用
-        val invokeArgs = constructor.args.joinToString(", ") { it.escapeName() }
+        constructor.args.forEach { builder.addParameter(it.name.toCamelCase(), it.ty.kotlinType) }
+        val invokeArgs = constructor.args.joinToString(", ") { it.name.toCamelCase().escapeName() }
 
         builder.beginControlFlow("try")
-            // ★ invokeArgs を使用し、バッククォートが必要な変数（val等）に対応
             .addStatement("val raw = newHandle.invokeExact($invokeArgs) as MemorySegment")
             .addStatement("this.segment = if (STRUCT_SIZE > 0) raw.reinterpret(STRUCT_SIZE) else raw")
             .nextControlFlow("catch (e: Throwable)")
@@ -70,7 +70,8 @@ object XrossGenerator {
 
     private fun generateFields(classBuilder: TypeSpec.Builder, fields: List<XrossField>) {
         fields.forEach { field ->
-            val prop = PropertySpec.builder(field.name, field.ty.kotlinType).mutable(true)
+            val camelName = field.name.toCamelCase()
+            val prop = PropertySpec.builder(camelName, field.ty.kotlinType).mutable(true)
                 .getter(
                     FunSpec.getterBuilder()
                         .addStatement("return segment.get(%M, OFFSET_${field.name}.offset)", field.ty.layoutMember)
@@ -86,79 +87,102 @@ object XrossGenerator {
         }
     }
 
-    private fun generateMethods(classBuilder: TypeSpec.Builder, methods: List<XrossMethod>) {
+    private fun generateMethods(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossClass) {
+        val methods = meta.methods.filter { !it.isConstructor }
+
+        if (methods.any { it.methodType == XrossMethodType.MutInstance }) {
+            classBuilder.addProperty(
+                PropertySpec.builder("lock", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                    .addModifiers(KModifier.PRIVATE, KModifier.FINAL)
+                    .initializer("ReentrantLock()")
+                    .build()
+            )
+        }
+
         methods.forEach { method ->
             val isStringRet = method.ret is XrossType.StringType
             val returnType = if (isStringRet) String::class.asTypeName() else method.ret.kotlinType
-            val funBuilder = FunSpec.builder(method.name).returns(returnType)
+            val funBuilder = FunSpec.builder(method.name.toCamelCase()).returns(returnType)
 
-            method.args.forEach { funBuilder.addParameter(it.name, it.asKotlinType()) }
+            method.args.forEach { funBuilder.addParameter(it.name.toCamelCase(), it.asKotlinType()) }
 
-            funBuilder.beginControlFlow("try")
+            val body = CodeBlock.builder()
+            if (method.methodType != XrossMethodType.Static) {
+                body.addStatement("val currentSegment = segment")
+                body.beginControlFlow("if (currentSegment == %T.NULL)", MemorySegment::class)
+                    .addStatement("throw NullPointerException(%S)", "Object has been dropped or ownership transferred")
+                    .endControlFlow()
+            }
 
-            // String または Slice がある場合は Arena を使用
+            body.beginControlFlow("try")
             val needsArena = method.args.any { it.ty is XrossType.StringType || it.ty is XrossType.Slice }
-            if (needsArena) funBuilder.beginControlFlow("Arena.ofConfined().use { arena ->")
+            if (needsArena) body.beginControlFlow("Arena.ofConfined().use { arena ->")
 
-            val invokeArgs = mutableListOf("segment")
+            val invokeArgs = mutableListOf<String>()
+            if (method.methodType != XrossMethodType.Static) invokeArgs.add("currentSegment")
+
             method.args.forEach { arg ->
-                val argName = arg.name
+                val argCamel = arg.name.toCamelCase()
                 when (val ty = arg.ty) {
                     is XrossType.StringType -> {
-                        funBuilder.addStatement("val ${arg.name}Seg = arena.allocateFrom($argName)")
-                        invokeArgs.add("${arg.name}Seg")
+                        body.addStatement("val ${argCamel}Seg = arena.allocateFrom($argCamel)")
+                        invokeArgs.add("${argCamel}Seg")
                     }
 
                     is XrossType.Slice -> {
-                        // 16バイト構造体 (ptr + len) の構築
-                        funBuilder.addComment("Construct Fat Pointer for Slice")
-                        funBuilder.addStatement("val ${arg.name}Data = arena.allocateArray(${ty.elementType.layoutMember}, $argName.size.toLong())")
-                        // 要素をコピーするロジック（簡易版：プリミティブを想定）
-                        funBuilder.addStatement("MemorySegment.copy($argName, 0, ${arg.name}Data, 0, $argName.byteSize())")
-
-                        funBuilder.addStatement("val ${arg.name}Slice = arena.allocate(16, 8)")
-                        funBuilder.addStatement("${arg.name}Slice.set(%M, 0, ${arg.name}Data)", ADDRESS_LAYOUT)
-                        funBuilder.addStatement("${arg.name}Slice.set(ValueLayout.JAVA_LONG, 8, $argName.size.toLong())")
-                        invokeArgs.add("${arg.name}Slice")
+                        body.addStatement("//Construct Fat Pointer for Slice")
+                        body.addStatement("val ${argCamel}Data = arena.allocateArray(${ty.elementType.layoutMember}, $argCamel.size.toLong())")
+                        body.addStatement("MemorySegment.copy($argCamel, 0, ${argCamel}Data, 0, $argCamel.byteSize())")
+                        body.addStatement("val ${argCamel}Slice = arena.allocate(16, 8)")
+                        body.addStatement("${argCamel}Slice.set(%M, 0, ${argCamel}Data)", ADDRESS_LAYOUT)
+                        body.addStatement("${argCamel}Slice.set(ValueLayout.JAVA_LONG, 8, $argCamel.size.toLong())")
+                        invokeArgs.add("${argCamel}Slice")
                     }
 
-                    else -> invokeArgs.add(argName)
+                    else -> invokeArgs.add(argCamel)
                 }
             }
 
             val call = "${method.name}Handle.invokeExact(${invokeArgs.joinToString()})"
-            when {
-                method.ret is XrossType.Void -> funBuilder.addStatement(call)
-                isStringRet -> {
-                    funBuilder.addStatement("val res = $call as MemorySegment")
-                    funBuilder.addStatement("if (res == MemorySegment.NULL) return \"\"")
-                    funBuilder.addStatement("val str = res.reinterpret(Long.MAX_VALUE).getString(0)")
-                    funBuilder.addComment("Release Rust-owned string memory")
-                    funBuilder.addStatement("xross_free_stringHandle.invokeExact(res)")
-                    funBuilder.addStatement("return str")
-                }
-
-                else -> funBuilder.addStatement("return $call as %T", returnType)
+            val executeBlock = if (method.methodType == XrossMethodType.MutInstance) {
+                CodeBlock.of("lock.withLock { %L }", call)
+            } else {
+                CodeBlock.of("%L", call)
             }
 
-            if (needsArena) funBuilder.endControlFlow()
-            funBuilder.nextControlFlow("catch (e: Throwable)").addStatement("throw RuntimeException(e)")
-                .endControlFlow()
-            classBuilder.addFunction(funBuilder.build())
+            when {
+                method.ret is XrossType.Void -> body.addStatement("%L", executeBlock)
+                isStringRet -> {
+                    body.addStatement("val res = %L as MemorySegment", executeBlock)
+                    body.addStatement("if (res == MemorySegment.NULL) return \"\"")
+                    body.addStatement("val str = res.reinterpret(Long.MAX_VALUE).getString(0)")
+                    body.addStatement("xross_free_stringHandle.invokeExact(res)")
+                    body.addStatement("return str")
+                }
+
+                else -> body.addStatement("return %L as %T", executeBlock, returnType)
+            }
+
+            if (needsArena) body.endControlFlow()
+            if (method.methodType == XrossMethodType.OwnedInstance) {
+                body.addStatement("segment = %T.NULL", MemorySegment::class)
+            }
+            body.nextControlFlow("catch (e: Throwable)").addStatement("throw RuntimeException(e)").endControlFlow()
+
+            funBuilder.addCode(body.build())
+            if (method.methodType == XrossMethodType.Static) companionBuilder.addFunction(funBuilder.build())
+            else classBuilder.addFunction(funBuilder.build())
         }
     }
 
-    private fun generateCompanion(meta: XrossClass): TypeSpec {
+    private fun generateCompanionBuilder(meta: XrossClass): TypeSpec.Builder {
         val builder = TypeSpec.companionObjectBuilder()
-
-        // ハンドル定義
         (CORE_HANDLES + "xross_free_string").forEach {
             builder.addProperty(PropertySpec.builder("${it}Handle", HANDLE_TYPE, KModifier.PRIVATE).build())
         }
         meta.methods.filter { !it.isConstructor }.forEach {
             builder.addProperty(PropertySpec.builder("${it.name}Handle", HANDLE_TYPE, KModifier.PRIVATE).build())
         }
-
         builder.addProperty(
             PropertySpec.builder("STRUCT_SIZE", Long::class, KModifier.PRIVATE).mutable().initializer("0L").build()
         )
@@ -176,13 +200,10 @@ object XrossGenerator {
             .addStatement("val linker = Linker.nativeLinker()")
             .addStatement("val lookup = SymbolLookup.loaderLookup()")
             .apply {
-                // xross_free_string は全クラス共通のシンボルとして探す
                 addStatement(
                     "xross_free_stringHandle = linker.downcallHandle(lookup.find(\"xross_free_string\").get(), %T.ofVoid(ValueLayout.ADDRESS))",
                     FunctionDescriptor::class
                 )
-
-                // コアハンドル初期化
                 CORE_HANDLES.forEach { suffix ->
                     val desc = when (suffix) {
                         "drop" -> CodeBlock.of("%T.ofVoid(ValueLayout.ADDRESS)", FunctionDescriptor::class)
@@ -200,10 +221,9 @@ object XrossGenerator {
                         desc
                     )
                 }
-
-                // メソッドハンドル初期化
                 meta.methods.filter { !it.isConstructor }.forEach { method ->
-                    val argLayouts = mutableListOf(CodeBlock.of("ValueLayout.ADDRESS"))
+                    val argLayouts = mutableListOf<CodeBlock>()
+                    if (method.methodType != XrossMethodType.Static) argLayouts.add(CodeBlock.of("ValueLayout.ADDRESS"))
                     method.args.forEach { arg -> argLayouts.add(CodeBlock.of("%M", arg.ty.layoutMember)) }
                     val desc = if (method.ret is XrossType.Void) {
                         CodeBlock.of("%T.ofVoid(%L)", FunctionDescriptor::class, argLayouts.joinToCode())
@@ -241,14 +261,7 @@ object XrossGenerator {
             .nextControlFlow("catch (e: Throwable)")
             .addStatement("throw RuntimeException(\"Init failed for ${meta.structName}\", e)").endControlFlow()
 
-        return builder.addInitializerBlock(init.build()).build()
-    }
-
-    // ヘルパー: 型に応じた引数の型（SliceならMemorySegmentとして扱う等）
-    private fun XrossField.asKotlinType(): TypeName = when (this.ty) {
-        is XrossType.StringType -> String::class.asTypeName()
-        is XrossType.Slice -> MemorySegment::class.asTypeName() // 呼び出し側が構築済みセグメントを渡す想定
-        else -> this.ty.kotlinType
+        return builder.addInitializerBlock(init.build())
     }
 
     private fun generateCloseMethod(classBuilder: TypeSpec.Builder) {
@@ -263,11 +276,25 @@ object XrossGenerator {
 
     private fun buildFieldMemoryInfoType() = TypeSpec.classBuilder("FieldMemoryInfo")
         .addModifiers(KModifier.PRIVATE).primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("offset", Long::class).addParameter("size", Long::class).build()
+            FunSpec.constructorBuilder().addParameter("offset", Long::class).addParameter("size", Long::class).build()
         )
         .addProperty(PropertySpec.builder("offset", Long::class).initializer("offset").build())
         .addProperty(PropertySpec.builder("size", Long::class).initializer("size").build()).build()
+
+    // --- Utility Extensions ---
+
+    private fun String.toCamelCase(): String {
+        val parts = this.split("_")
+        return parts[0] + parts.drop(1).joinToString("") { it.replaceFirstChar { char -> char.uppercase() } }
+    }
+
+    private fun String.escapeName(): String = if (this in KOTLIN_KEYWORDS) "`$this`" else this
+
+    private fun XrossField.asKotlinType(): TypeName = when (this.ty) {
+        is XrossType.StringType -> String::class.asTypeName()
+        is XrossType.Slice -> MemorySegment::class.asTypeName()
+        else -> this.ty.kotlinType
+    }
 
     private val KOTLIN_KEYWORDS = setOf(
         "package",
@@ -296,7 +323,4 @@ object XrossGenerator {
         "interface",
         "typeof"
     )
-
-    private fun XrossField.escapeName(): String = if (this.name in KOTLIN_KEYWORDS) "`${this.name}`" else this.name
 }
-

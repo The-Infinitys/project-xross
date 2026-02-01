@@ -36,6 +36,7 @@ fun main() {
         }
     }
 }
+
 fun executeTest() {
     println("--- Starting Memory Leak Test ---")
 
@@ -48,12 +49,12 @@ fun executeTest() {
         println("Running str_test() $iterations times...")
 
         for (i in 1..iterations) {
-            val s = service.str_test()
-
+            val s = MyService.strTest()
+            val x = service.execute(i)
             // 文字列が正しく取得できているか時々チェック
             if (i % reportInterval == 0) {
                 val mem = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
-                println("Iteration $i: String sample = '$s', JVM Used Memory: ${mem / 1024 / 1024} MB")
+                println("Iteration $i: String sample = '$s, x = $x', JVM Used Memory: ${mem / 1024 / 1024} MB")
             }
         }
     }
