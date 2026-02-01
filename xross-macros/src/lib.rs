@@ -50,10 +50,14 @@ fn map_type(ty: &Type) -> XrossType {
         "bool" => XrossType::Bool,
         "String" | "&str" => XrossType::String,
         "u16" => XrossType::U16,
+        s if s.starts_with("Vec<") || s.starts_with("&[") => {
+            XrossType::Slice(Box::new(XrossType::I32))
+        }
         s if s.contains("MemorySegment") || s.contains("Pointer") => XrossType::Pointer,
         _ => XrossType::Pointer,
     }
 }
+
 // ヘルパー：属性からdocコメントを抽出する
 fn extract_docs(attrs: &[syn::Attribute]) -> Vec<String> {
     attrs
@@ -155,20 +159,18 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_impl = parse_macro_input!(item as ItemImpl);
     let crate_name = env!("CARGO_PKG_NAME").replace("-", "_");
 
-    // パッケージ名の解析
+    // パッケージ解析・シンボル名構築は既存のまま ...
     let package_name = {
         let raw_attr = attr.to_string().replace(" ", "").replace("\"", "");
         let re = Regex::new(r"^[a-zA-Z0-9._]*$").unwrap();
         if !re.is_match(&raw_attr) && !raw_attr.is_empty() {
-            return syn::Error::new_spanned(
-                &input_impl.self_ty,
-                format!("Invalid package name '{}': Only alphanumeric, dots, and underscores are allowed.", raw_attr),
-            ).to_compile_error().into();
+            return syn::Error::new_spanned(&input_impl.self_ty, "Invalid package name")
+                .to_compile_error()
+                .into();
         }
         raw_attr
     };
 
-    // 構造体名の取得
     let struct_name_ident = if let Type::Path(tp) = &*input_impl.self_ty {
         &tp.path.segments.last().unwrap().ident
     } else {
@@ -177,7 +179,6 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into();
     };
 
-    // シンボルベース名
     let symbol_base = format!(
         "{}{}_{}",
         crate_name,
@@ -188,45 +189,33 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
         },
         struct_name_ident.to_string().to_snake_case()
     );
-
-    // --- メタデータの同期 ---
-    // derive(JvmClass) が書き出したフィールド/レイアウト情報をロード
     let (struct_docs, struct_fields_meta) = load_struct_metadata(struct_name_ident);
 
     let mut extra_functions = Vec::new();
     let mut methods_meta = Vec::new();
-    // jvm_class 属性マクロ内
+
+    // 基本メソッド (drop, clone, layout) の生成
     let drop_ident = format_ident!("{}_drop", symbol_base);
     let clone_ident = format_ident!("{}_clone", symbol_base);
     let layout_export_ident = format_ident!("{}_layout", symbol_base);
-
-    // derive 側で生成されるトレイト名をここでも生成して一致させる
     let marker_name = format_ident!("XrossJvmMarker{}", struct_name_ident);
 
     extra_functions.push(quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #drop_ident(ptr: *mut #struct_name_ident) {
-            if !ptr.is_null() {
-                unsafe{
-                    let _ = Box::from_raw(ptr);
-                }
-            }
+            if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
         }
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #clone_ident(ptr: *const #struct_name_ident) -> *mut #struct_name_ident {
             if ptr.is_null() { return std::ptr::null_mut(); }
-            unsafe{
-                Box::into_raw(Box::new((*ptr).clone()))
-            }
+            unsafe { Box::into_raw(Box::new((*ptr).clone())) }
         }
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #layout_export_ident() -> *mut std::ffi::c_char {
-            unsafe{
-                <#struct_name_ident as #marker_name>::layout()
-            }
+            unsafe { <#struct_name_ident as #marker_name>::layout() }
         }
     });
-    // メソッド解析ループ
+
     for item in &mut input_impl.items {
         if let ImplItem::Fn(method) = item {
             let mut is_new = false;
@@ -248,12 +237,12 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let rust_fn_name = &method.sig.ident;
                 let symbol_name = format!("{}_{}", symbol_base, rust_fn_name);
                 let export_ident = format_ident!("{}", symbol_name);
+
                 let mut method_type = XrossMethodType::Static;
                 let mut args_meta = Vec::new();
-
-                // 引数解析 & ラッパー引数構築
                 let mut c_args = Vec::new();
                 let mut call_args = Vec::new();
+                let mut conversion_logic = Vec::new();
 
                 for input in &method.sig.inputs {
                     match input {
@@ -274,28 +263,52 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                         FnArg::Typed(pat_type) => {
-                            let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
-                                id.ident.to_string()
+                            let arg_name_ident = if let Pat::Ident(id) = &*pat_type.pat {
+                                &id.ident
                             } else {
-                                "unknown".into()
+                                panic!("Unsupported pattern")
                             };
+                            let xross_ty = map_type(&pat_type.ty);
 
                             args_meta.push(XrossField {
-                                name: arg_name,
-                                ty: map_type(&pat_type.ty),
+                                name: arg_name_ident.to_string(),
+                                ty: xross_ty.clone(),
                                 docs: vec![],
                             });
-
-                            c_args.push(quote! { #pat_type });
-                            if let Pat::Ident(id) = &*pat_type.pat {
-                                let name = &id.ident;
-                                call_args.push(quote! { #name });
+                            match xross_ty {
+                                XrossType::String => {
+                                    let internal_name = format_ident!("{}_raw", arg_name_ident);
+                                    c_args.push(quote! { #internal_name: *const std::ffi::c_char });
+                                    // パフォーマンス重視: 可能なら借用 (&str) にし、必要なら owned (String) にする
+                                    conversion_logic.push(quote! {
+                                        let #arg_name_ident = unsafe {
+                                            if #internal_name.is_null() { "" } 
+                                            else { std::ffi::CStr::from_ptr(#internal_name).to_str().unwrap_or("") }
+                                        };
+                                    });
+                                    call_args.push(quote! { #arg_name_ident });
+                                }
+                                XrossType::Slice(_inner) => {
+                                    // Kotlinから16バイト構造体(Pointer + Len)が来ると仮定
+                                    let internal_name = format_ident!("{}_raw", arg_name_ident);
+                                    c_args.push(quote! { #internal_name: XrossSliceRaw }); // 後述の共通構造体
+                                    conversion_logic.push(quote! {
+            let #arg_name_ident = unsafe {
+                std::slice::from_raw_parts(#internal_name.ptr as *const _, #internal_name.len)
+            };
+        });
+                                    call_args.push(quote! { #arg_name_ident });
+                                }
+                                _ => {
+                                    c_args.push(quote! { #pat_type });
+                                    call_args.push(quote! { #arg_name_ident });
+                                }
                             }
                         }
                     }
                 }
 
-                let ret_ty = if is_new {
+                let xross_ret_ty = if is_new {
                     XrossType::Pointer
                 } else {
                     match &method.sig.output {
@@ -310,15 +323,33 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
                     method_type,
                     is_constructor: is_new,
                     args: args_meta,
-                    ret: ret_ty,
+                    ret: xross_ret_ty.clone(),
                     docs: extract_docs(&method.attrs),
                 });
+
+                // ラッパー関数の本体生成
+                let body = if is_new {
+                    quote! { Box::into_raw(Box::new(#struct_name_ident::#rust_fn_name(#(#call_args),*))) }
+                } else {
+                    quote! { #struct_name_ident::#rust_fn_name(#(#call_args),*) }
+                };
 
                 let wrapper = if is_new {
                     quote! {
                         #[unsafe(no_mangle)]
                         pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> *mut #struct_name_ident {
-                            Box::into_raw(Box::new(#struct_name_ident::#rust_fn_name(#(#call_args),*)))
+                            #(#conversion_logic)*
+                            #body
+                        }
+                    }
+                } else if xross_ret_ty == XrossType::String {
+                    // Stringを返す場合、CStringに変換してポインタを渡す（Java側でgetString(0)）
+                    quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> *mut std::ffi::c_char {
+                            #(#conversion_logic)*
+                            let result = #body;
+                            std::ffi::CString::new(result).unwrap_or_default().into_raw()
                         }
                     }
                 } else {
@@ -326,7 +357,8 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
                     quote! {
                         #[unsafe(no_mangle)]
                         pub unsafe extern "C" fn #export_ident(#(#c_args),*) #ret_sig {
-                            #struct_name_ident::#rust_fn_name(#(#call_args),*)
+                            #(#conversion_logic)*
+                            #body
                         }
                     }
                 };
@@ -335,7 +367,7 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // 最終メタデータの書き出し
+    // メタデータ保存処理 ...
     let class_meta = XrossClass {
         package_name: package_name.clone(),
         symbol_prefix: symbol_base,
@@ -344,26 +376,14 @@ pub fn jvm_class(attr: TokenStream, item: TokenStream) -> TokenStream {
         fields: struct_fields_meta,
         methods: methods_meta,
     };
-
     let target_dir = Path::new("target/xross").join(package_name.replace(".", "/"));
     fs::create_dir_all(&target_dir).ok();
     if let Ok(json) = serde_json::to_string_pretty(&class_meta) {
         fs::write(target_dir.join(format!("{}.json", struct_name_ident)), json).ok();
     }
 
-    // --- チェック用マーカー ---
-    // derive(JvmClass) が同じ名前のトレイトを生成することを期待
-    let marker_name = format_ident!("XrossJvmMarker{}", struct_name_ident);
-
     quote! {
         #input_impl
-
-        // implブロックの後に配置して確実に解決させる
-        const _: fn() = || {
-            fn assert_impls_jvm_class<T: #marker_name>() {}
-            assert_impls_jvm_class::<#struct_name_ident>();
-        };
-
         #(#extra_functions)*
     }
     .into()

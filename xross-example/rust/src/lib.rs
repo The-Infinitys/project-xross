@@ -14,6 +14,10 @@ impl MyService {
     pub fn execute(&self, data: i32) -> i32 {
         data * 2
     }
+    #[jvm_method]
+    pub fn str_test() -> String {
+        "hello, world".to_string()
+    }
 }
 
 pub mod test {

@@ -1,6 +1,5 @@
 package org.example
 
-import org.example.test.test2.MyService2
 import java.io.File
 import java.nio.file.Files
 
@@ -37,24 +36,28 @@ fun main() {
         }
     }
 }
-
 fun executeTest() {
-    println("--- Starting Test Execution ---")
+    println("--- Starting Memory Leak Test ---")
 
-    // MyService のテスト
     val myService = MyService()
-    myService.use { service -> // AutoCloseable なので use が使える
-        val i = service.execute(2)
-        println("MyService.execute(2) result: $i")
+    myService.use { service ->
+        // 100万回実行してメモリが増え続けないか確認
+        val iterations = 1_000_000
+        val reportInterval = 100_000
+
+        println("Running str_test() $iterations times...")
+
+        for (i in 1..iterations) {
+            val s = service.str_test()
+
+            // 文字列が正しく取得できているか時々チェック
+            if (i % reportInterval == 0) {
+                val mem = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
+                println("Iteration $i: String sample = '$s', JVM Used Memory: ${mem / 1024 / 1024} MB")
+            }
+        }
     }
 
-    // MyService2 のテスト (コンストラクタ引数あり)
-    val myService2 = MyService2(`val` = 1)
-    myService2.use { service2 ->
-        val i2 = service2.execute()
-        println("MyService2.execute() result: $i2")
-        println("MyService2 current val field: ${service2.`val`}")
-    }
-
-    println("--- Test Execution Finished ---")
+    println("--- Memory Leak Test Finished ---")
+    println("Check your OS process monitor (Task Manager / top) to see if 'RSS' is stable.")
 }
