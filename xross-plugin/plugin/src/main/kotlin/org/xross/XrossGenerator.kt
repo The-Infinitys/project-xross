@@ -10,7 +10,6 @@ object XrossGenerator {
             .addImport("java.lang.invoke", "MethodHandle")
             .addImport("java.io", "Closeable")
             .addImport("java.lang", "IllegalStateException")
-            .addImport("com.squareup.kotlinpoet", "KModifier")
         fileSpec.build().writeTo(outputDir)
     }
 
