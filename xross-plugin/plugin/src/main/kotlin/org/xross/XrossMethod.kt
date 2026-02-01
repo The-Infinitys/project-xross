@@ -10,12 +10,12 @@ import kotlinx.serialization.Serializable
 data class XrossMethod(
     val name: String,
     val symbol: String,
-    val methodType: XrossMethodType, // 追加
+    val methodType: XrossMethodType = XrossMethodType.Static, // 追加
     val isConstructor: Boolean,
     /** * List<XrossType> から List<XrossField> に変更
      * これにより引数名 (name) を保持できるようになります
      */
-    val args: List<XrossField>,
+    val args: List<XrossField>, // 型を List<XrossField> に変更
     val ret: XrossType,
-    val docs: List<String>
+    val docs: List<String> = emptyList()
 )

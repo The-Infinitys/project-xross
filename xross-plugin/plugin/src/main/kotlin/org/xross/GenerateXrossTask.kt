@@ -13,21 +13,26 @@ import javax.inject.Inject
 
 // --- 並列実行タスク ---
 abstract class GenerateXrossTask @Inject constructor(private val workerExecutor: WorkerExecutor) : DefaultTask() {
-    @get:InputDirectory @get:Optional abstract val metadataDir: DirectoryProperty
-    @get:OutputDirectory abstract val outputDir: DirectoryProperty
-    @get:Input abstract val packageName: Property<String>
+    @get:InputDirectory
+    @get:Optional
+    abstract val metadataDir: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Input
+    abstract val packageName: Property<String>
 
     @TaskAction
     fun execute() {
         val outDir = outputDir.get().asFile
         outDir.deleteRecursively()
         outDir.mkdirs()
-
-        val jsonFiles = metadataDir.asFile.get().listFiles { f -> f.extension == "json" } ?: return
-
+        println(metadataDir.get().asFile.absolutePath)
+        val jsonFiles = metadataDir.asFileTree.files.filter { it.extension == "json" }
         // WorkerExecutor を使って並列処理をキューイング
         val queue = workerExecutor.noIsolation() // プロセス分離が必要なら classLoaderIsolation()
-
+        println("${jsonFiles.size}")
         jsonFiles.forEach { file ->
             queue.submit(GenerateAction::class.java) { params ->
                 params.jsonFile.set(file)

@@ -47,28 +47,6 @@ fn extract_docs(attrs: &[syn::Attribute]) -> Vec<String> {
 pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = &input.ident;
-    let mut fields_meta = Vec::new();
-
-    if let syn::Data::Struct(data) = &input.data {
-        for field in &data.fields {
-            let field_name = field
-                .ident
-                .as_ref()
-                .map(|i| i.to_string())
-                .unwrap_or_default();
-            let field_docs = extract_docs(&field.attrs);
-            let ty = map_type(&field.ty);
-            fields_meta.push(XrossField {
-                name: field_name,
-                ty,
-                docs: field_docs,
-            });
-        }
-    }
-
-    // ここで一旦中間のメタデータを保存するか、静的変数に保持する設計が必要ですが、
-    // Rustマクロの制約上、jvm_export_impl 側で完結させるのがクリーンです。
-    // そのため、derive側では共通関数生成のみに専念します。
 
     let crate_name = std::env::var("CARGO_PKG_NAME")
         .unwrap_or_default()
@@ -110,6 +88,11 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut extra_functions = Vec::new();
     let mut methods_meta = Vec::new();
+
+    // implブロックからは構造体自身のdocsやfieldsは直接取得できないため、一旦空のまま
+    // これらの情報は JvmClass derive マクロで収集し、別途ファイルに書き出すなどの工夫が必要だが、今回はスコープ外
+    let struct_docs = vec![];
+    let struct_fields_meta = vec![];
 
     for item in &mut input_impl.items {
         if let ImplItem::Fn(method) = item {
@@ -188,8 +171,8 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     symbol: symbol_name,
                     method_type,
                     is_constructor: is_new,
-                    args: args_meta,
-                    ret, // 解析した結果を入れる
+                    args: args_meta, // Vec<XrossField> を使用
+                    ret,             // 解析した結果を入れる
                     docs: method_docs,
                 });
 
@@ -220,6 +203,12 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             if let Pat::Ident(id) = &*pat_type.pat {
                                 let name = &id.ident;
                                 call_args.push(quote! { #name });
+                            } else if let Pat::Type(pat_type) = &*pat_type.pat {
+                                // パターンマッチで型が指定されている場合 (例: `_arg: Type`)
+                                if let Pat::Ident(id) = &*pat_type.pat {
+                                    let name = &id.ident;
+                                    call_args.push(quote! { #name });
+                                }
                             }
                         }
                     }
@@ -250,12 +239,11 @@ pub fn jvm_export_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let class_meta = XrossClass {
         package_name: package_name.clone(),
         struct_name: struct_name_ident.to_string(),
-        docs: vec![],
-        fields: vec![],
+        docs: struct_docs,          // 現時点では空
+        fields: struct_fields_meta, // 現時点では空
         methods: methods_meta,
     };
 
-    // パッケージ名をパスに変換 (org.xross -> target/xross/org/xross/)
     let package_path = package_name.replace(".", "/");
     let target_dir = Path::new("target/xross").join(package_path);
     fs::create_dir_all(&target_dir).ok();

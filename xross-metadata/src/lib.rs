@@ -33,9 +33,9 @@ pub enum XrossMethodType {
 pub struct XrossMethod {
     pub name: String,
     pub symbol: String,
-    pub method_type: XrossMethodType, // 追加
+    pub method_type: XrossMethodType,
     pub is_constructor: bool,
-    pub args: Vec<XrossField>, // 型だけでなく引数名もあった方がJava側で親切です
+    pub args: Vec<XrossField>, // 型を Vec<XrossField> に変更
     pub ret: XrossType,
     pub docs: Vec<String>,
 }
@@ -53,7 +53,7 @@ pub struct XrossField {
 pub struct XrossClass {
     pub package_name: String,
     pub struct_name: String,
-    pub docs: Vec<String>,
-    pub fields: Vec<XrossField>,
+    pub docs: Vec<String>,       // 新しく追加
+    pub fields: Vec<XrossField>, // 新しく追加
     pub methods: Vec<XrossMethod>,
 }

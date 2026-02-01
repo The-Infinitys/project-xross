@@ -5,19 +5,19 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.lang.foreign.ValueLayout
 
-@Serializable
+@Serializable(with = XrossTypeSerializer::class)
 sealed class XrossType {
-    @Serializable @SerialName("void") object Void : XrossType()
-    @Serializable @SerialName("bool") object Bool : XrossType()
-    @Serializable @SerialName("i8") object I8 : XrossType()
-    @Serializable @SerialName("i16") object I16 : XrossType()
-    @Serializable @SerialName("i32") object I32 : XrossType()
-    @Serializable @SerialName("i64") object I64 : XrossType()
-    @Serializable @SerialName("u16") object U16 : XrossType()
-    @Serializable @SerialName("f32") object F32 : XrossType()
-    @Serializable @SerialName("f64") object F64 : XrossType()
-    @Serializable @SerialName("pointer") object Pointer : XrossType()
-    @Serializable @SerialName("string") object StringType : XrossType()
+    object Void : XrossType()
+    object Bool : XrossType()
+    object I8 : XrossType()
+    object I16 : XrossType()
+    object I32 : XrossType()
+    object I64 : XrossType()
+    object U16 : XrossType()
+    object F32 : XrossType()
+    object F64 : XrossType()
+    object Pointer : XrossType()
+    object StringType : XrossType()
 
     @Serializable @SerialName("slice")
     data class Slice(val elementType: XrossType) : XrossType()

@@ -30,8 +30,15 @@ class XrossPluginFunctionalTest {
                 {
                   "name": "hello",
                   "symbol": "lib_hello",
+                  "method_type": "Static",
                   "is_constructor": false,
-                  "args": ["I32"],
+                  "args": [
+                    {
+                      "name": "value",
+                      "ty": "I32",
+                      "docs": []
+                    }
+                  ],
                   "ret": "Void",
                   "docs": ["Test comment"]
                 }
@@ -48,6 +55,7 @@ class XrossPluginFunctionalTest {
 
             xross {
                 rustProjectDir = "rust-lib"
+                packageName = "org.xross.generated"
             }
         """.trimIndent())
 
@@ -68,7 +76,7 @@ class XrossPluginFunctionalTest {
 
         // 3. 生成されたファイルに意図したシンボルが含まれているか
         val content = generatedFile.readText()
-        assertTrue(content.contains("LibTestcrate"), "Should contain the Lib object")
-        assertTrue(content.contains("fun hello"), "Should contain the generated method")
+        assertTrue(content.contains("class MyStruct"), "Generated Kotlin file should contain the MyStruct class")
+        assertTrue(content.contains("fun hello"), "Generated Kotlin file should contain the generated method 'hello'")
     }
 }
