@@ -26,14 +26,13 @@ pub fn extract_docs(attrs: &[Attribute]) -> Vec<String> {
         .iter()
         .filter(|a| a.path().is_ident("doc"))
         .filter_map(|a| {
-            if let Meta::NameValue(nv) = &a.meta {
-                if let Expr::Lit(ExprLit {
+            if let Meta::NameValue(nv) = &a.meta
+                && let Expr::Lit(ExprLit {
                     lit: Lit::Str(s), ..
                 }) = &nv.value
                 {
                     return Some(s.value().trim().to_string());
                 }
-            }
             None
         })
         .collect()

@@ -33,7 +33,7 @@ pub fn map_type(ty: &Type) -> XrossType {
                     }
                 }
                 // 自作構造体の判定（大文字から始まるなど、プロジェクトの命名規則に依存）
-                s if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
+                s if s.chars().next().is_some_and(|c| c.is_uppercase()) => {
                     XrossType::Struct {
                         name: s.to_string(),
                         symbol_prefix: "".to_string(), // 後で解決
