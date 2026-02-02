@@ -3,7 +3,6 @@ package org.xross
 import com.squareup.kotlinpoet.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.lang.foreign.ValueLayout
 
 @Serializable(with = XrossTypeSerializer::class)
 sealed class XrossType {
@@ -13,14 +12,26 @@ sealed class XrossType {
     object I16 : XrossType()
     object I32 : XrossType()
     object I64 : XrossType()
-    object U16 : XrossType()
+    object U16 : XrossType() // Java Char
     object F32 : XrossType()
     object F64 : XrossType()
     object Pointer : XrossType()
-    object StringType : XrossType()
+    object RustString : XrossType() // Rust String / &str
 
-    @Serializable @SerialName("slice")
-    data class Slice(val elementType: XrossType) : XrossType()
+    @Serializable
+    @SerialName("Struct")
+    data class Struct(
+        val name: String,
+        val symbolPrefix: String,
+        val isReference: Boolean
+    ) : XrossType()
+
+    @Serializable
+    @SerialName("Slice")
+    data class Slice(
+        val elementType: XrossType,
+        val isReference: Boolean
+    ) : XrossType()
 
     /** KotlinPoet 用の型取得 */
     val kotlinType: TypeName get() = when (this) {
@@ -33,19 +44,35 @@ sealed class XrossType {
         I16 -> SHORT
         U16 -> CHAR
         Void -> UNIT
-        Pointer, StringType, is Slice -> ClassName("java.lang.foreign", "MemorySegment")
+        Pointer, RustString -> ClassName("java.lang.foreign", "MemorySegment")
+        is Struct -> ClassName("", name) // パッケージ名は生成時に解決
+        is Slice -> ClassName("java.lang.foreign", "MemorySegment") // ポインタ+長さ
     }
 
     /** FFM API (ValueLayout) へのマッピング */
-    val layoutMember: MemberName get() = MemberName("java.lang.foreign.ValueLayout", when (this) {
-        I32 -> "JAVA_INT"
-        I64 -> "JAVA_LONG"
-        F32 -> "JAVA_FLOAT"
-        F64 -> "JAVA_DOUBLE"
-        Bool -> "JAVA_BOOLEAN"
-        I8 -> "JAVA_BYTE"
-        I16 -> "JAVA_SHORT"
-        U16 -> "JAVA_CHAR"
-        Pointer, StringType, is Slice, Void -> "ADDRESS"
-    })
+    val layoutMember: MemberName get() = when (this) {
+        I32 -> ValueLayouts.JAVA_INT
+        I64 -> ValueLayouts.JAVA_LONG
+        F32 -> ValueLayouts.JAVA_FLOAT
+        F64 -> ValueLayouts.JAVA_DOUBLE
+        Bool -> ValueLayouts.JAVA_BOOLEAN
+        I8 -> ValueLayouts.JAVA_BYTE
+        I16 -> ValueLayouts.JAVA_SHORT
+        U16 -> ValueLayouts.JAVA_CHAR
+        Void -> throw IllegalStateException("Void has no layout")
+        Pointer, RustString, is Struct, is Slice -> ValueLayouts.ADDRESS
+    }
+
+    private object ValueLayouts {
+        private const val PKG = "java.lang.foreign.ValueLayout"
+        val JAVA_INT = MemberName(PKG, "JAVA_INT")
+        val JAVA_LONG = MemberName(PKG, "JAVA_LONG")
+        val JAVA_FLOAT = MemberName(PKG, "JAVA_FLOAT")
+        val JAVA_DOUBLE = MemberName(PKG, "JAVA_DOUBLE")
+        val JAVA_BOOLEAN = MemberName(PKG, "JAVA_BOOLEAN")
+        val JAVA_BYTE = MemberName(PKG, "JAVA_BYTE")
+        val JAVA_SHORT = MemberName(PKG, "JAVA_SHORT")
+        val JAVA_CHAR = MemberName(PKG, "JAVA_CHAR")
+        val ADDRESS = MemberName(PKG, "ADDRESS")
+    }
 }
