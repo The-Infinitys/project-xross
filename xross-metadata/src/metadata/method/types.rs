@@ -11,4 +11,3 @@ pub enum XrossMethodType {
     /// self (所有権を消費する。呼んだ後はJava側のハンドルを無効化する必要がある)
     OwnedInstance,
 }
-

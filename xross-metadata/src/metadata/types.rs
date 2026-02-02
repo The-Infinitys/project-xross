@@ -24,7 +24,7 @@ pub enum XrossType {
     #[serde(rename_all = "camelCase")]
     Slice {
         element_type: Box<XrossType>,
-        is_reference: bool,    // trueなら &[T] (Java側でポインタの解放禁止)
+        is_reference: bool, // trueなら &[T] (Java側でポインタの解放禁止)
     },
 }
 

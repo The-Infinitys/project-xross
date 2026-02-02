@@ -1,9 +1,9 @@
 mod types;
 pub use types::*;
 
-use serde::{Deserialize, Serialize};
-use crate::{XrossField, XrossType};
 use crate::metadata::ThreadSafety;
+use crate::{XrossField, XrossType};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -17,4 +17,3 @@ pub struct XrossMethod {
     pub docs: Vec<String>,
     pub safety: ThreadSafety,
 }
-
