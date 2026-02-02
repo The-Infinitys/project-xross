@@ -1,19 +1,20 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
-import org.xross.structures.*
 import org.xross.helper.StringHelper.toCamelCase
+import org.xross.structures.XrossClass
+import org.xross.structures.XrossMethodType
+import org.xross.structures.XrossThreadSafety
+import org.xross.structures.XrossType
 import java.lang.invoke.MethodHandle
 import java.lang.invoke.VarHandle
-import java.lang.foreign.*
-import java.nio.ByteOrder
 
-object HandleGenerator {
+object CompanionGenerator {
     private val HANDLE_TYPE = MethodHandle::class.asClassName()
     private val VH_TYPE = VarHandle::class.asClassName()
     private val ADDRESS = MemberName("java.lang.foreign.ValueLayout", "ADDRESS")
 
-    fun generateHandles(companionBuilder: TypeSpec.Builder, meta: XrossClass) {
+    fun generateCompanions(companionBuilder: TypeSpec.Builder, meta: XrossClass) {
         val coreHandles = listOf("new", "drop", "clone", "layout", "ref", "refMut")
 
         // 1. ハンドルプロパティの定義 (MethodHandle)
@@ -47,7 +48,13 @@ object HandleGenerator {
                 PropertySpec.builder("OFFSET_${it.name}", ClassName("", "FieldMemoryInfo"), KModifier.PRIVATE).build()
             )
         }
-
+        if (meta.methods.any { it.methodType == XrossMethodType.Static }) {
+            companionBuilder.addProperty(
+                PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"), KModifier.PRIVATE)
+                    .initializer("StampedLock()")
+                    .build()
+            )
+        }
         // 3. init ブロック
         val init = CodeBlock.builder()
             .addStatement("val linker = Linker.nativeLinker()")
@@ -108,7 +115,7 @@ object HandleGenerator {
             }
             .beginControlFlow("try")
             .addStatement("val layoutRaw = layoutHandle.invokeExact() as MemorySegment")
-            .addStatement("val layoutStr = if (layoutRaw == MemorySegment.NULL) \"\" else layoutRaw.reinterpret(1024 * 1024).getString(0)")
+            .addStatement("val layoutStr = if (layoutRaw == MemorySegment.NULL) \"\" else layoutRaw.reinterpret(Long.MAX_VALUE).getString(0)")
             .addStatement("val tempMap = layoutStr.split(';').filter { it.isNotBlank() }.associate { part -> val bits = part.split(':'); bits[0] to FieldMemoryInfo(bits[1].toLong(), bits[2].toLong()) }")
             .apply {
                 meta.fields.forEach {

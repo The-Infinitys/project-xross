@@ -96,78 +96,119 @@ object MethodGenerator {
         isStructRet: Boolean,
         returnType: TypeName
     ) {
-        // --- ロック戦略の決定 ---
         val safety = method.safety
+        val methodType = method.methodType
+        val isVoid = method.ret is XrossType.Void
 
-        val lockType = when {
-            // Unsafe または Atomic 指定の場合は JVM レベルの Lock をスキップ
-            // (Atomic メソッドは Rust 内部で原子性を担保している、あるいは CAS 命令であることを想定)
-            safety == XrossThreadSafety.Unsafe || safety == XrossThreadSafety.Atomic -> null
+        // StaticかInstanceかに関わらず、同じ名前 "sl" を参照する
+        // ※ HandleGenerator で Companion にも sl を追加した前提
+        val lockName = "sl"
 
-            // それ以外 (Lock) は従来通り methodType に基づいてロック
-            method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance -> "writeLock().withLock"
-            method.methodType == XrossMethodType.ConstInstance -> "readLock().withLock"
-            else -> null
+        val effectiveSafety = if (methodType == XrossMethodType.MutInstance || methodType == XrossMethodType.OwnedInstance) {
+            XrossThreadSafety.Immutable
+        } else {
+            safety
         }
 
-        if (lockType != null) body.beginControlFlow("lock.%L", lockType)
+        when (effectiveSafety) {
+            XrossThreadSafety.Unsafe -> {
+                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+            }
 
-        // --- 戻り値の処理 ---
+            XrossThreadSafety.Lock -> {
+                if (!isVoid) body.addStatement("var resValue: %T", returnType)
+                body.addStatement("var stamp = %L.tryOptimisticRead()", lockName)
+
+                if (!isVoid) body.add("resValue = ")
+                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+
+                body.beginControlFlow("if (!%L.validate(stamp))", lockName)
+                body.addStatement("stamp = %L.readLock()", lockName)
+                body.beginControlFlow("try")
+                if (!isVoid) body.add("resValue = ")
+                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+                body.nextControlFlow("finally")
+                body.addStatement("%L.unlockRead(stamp)", lockName)
+                body.endControlFlow()
+                body.endControlFlow()
+
+                if (!isVoid) body.addStatement("resValue")
+            }
+
+            XrossThreadSafety.Atomic -> {
+                body.addStatement("val stamp = %L.readLock()", lockName)
+                body.beginControlFlow("try")
+                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+                body.nextControlFlow("finally")
+                body.addStatement("%L.unlockRead(stamp)", lockName)
+                body.endControlFlow()
+            }
+
+            XrossThreadSafety.Immutable -> {
+                body.addStatement("val stamp = %L.writeLock()", lockName)
+                body.beginControlFlow("try")
+                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+                body.nextControlFlow("finally")
+                body.addStatement("%L.unlockWrite(stamp)", lockName)
+                body.endControlFlow()
+            }
+        }
+    }
+
+    private fun generateCallBody(
+        body: CodeBlock.Builder,
+        method: XrossMethod,
+        call: String,
+        isStringRet: Boolean,
+        isStructRet: Boolean,
+        returnType: TypeName
+    ) {
+        // STRUCT_SIZE は常に Companion にあるため、どこからでもアクセス可能
+        val structSize = "STRUCT_SIZE"
+
         when {
             method.ret is XrossType.Void -> {
                 body.addStatement("$call as Unit")
-                // OwnedInstance (self 消費) の場合はセグメントを無効化
                 if (method.methodType == XrossMethodType.OwnedInstance) {
-                    body.addStatement("segment = %T.NULL", MemorySegment::class)
+                    body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                 }
             }
 
             isStringRet -> {
+                body.beginControlFlow("run")
                 body.addStatement("val res = $call as %T", MemorySegment::class)
+                // reinterpret の引数に reinterpret(Long.MAX_VALUE) を使うハックを維持
                 body.addStatement(
                     "val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)",
                     MemorySegment::class, Long::class
                 )
-                // Rust 側で malloc された文字列を解放
                 body.addStatement("if (res != %T.NULL) xross_free_stringHandle.invokeExact(res)", MemorySegment::class)
-
-                if (method.methodType == XrossMethodType.OwnedInstance) {
-                    body.addStatement("segment = %T.NULL", MemorySegment::class)
-                }
+                if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                 body.addStatement("str")
+                body.endControlFlow()
             }
 
             isStructRet -> {
-                val struct = method.ret as XrossType.Struct
-                val structSize = "STRUCT_SIZE"
-
+                body.beginControlFlow("run")
                 body.addStatement("val resRaw = $call as %T", MemorySegment::class)
-                body.addStatement(
-                    "val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret($structSize)",
-                    MemorySegment::class
-                )
-
-                if (method.methodType == XrossMethodType.OwnedInstance) {
-                    body.addStatement("segment = %T.NULL", MemorySegment::class)
-                }
-                // 返り値の構造体に親の生存フラグ（aliveFlag）を渡すことで、
-                // 親が close されたらこの戻り値も無効になるようにする設計が望ましい
-                body.addStatement("%T(res, isBorrowed = ${struct.isReference})", returnType)
+                body.addStatement("val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret($structSize)", MemorySegment::class)
+                if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
+                body.addStatement("%T(res, isBorrowed = ${(method.ret as XrossType.Struct).isReference})", returnType)
+                body.endControlFlow()
             }
 
             else -> {
-                // プリミティブ型などの処理
                 if (method.methodType == XrossMethodType.OwnedInstance) {
+                    body.beginControlFlow("run")
                     body.addStatement("val res = $call as %T", returnType)
-                    body.addStatement("segment = %T.NULL", MemorySegment::class)
+                    body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                     body.addStatement("res")
+                    body.endControlFlow()
                 } else {
                     body.addStatement("$call as %T", returnType)
                 }
             }
         }
-
-        if (lockType != null) body.endControlFlow()
     }
     private fun generatePublicConstructor(classBuilder: TypeSpec.Builder, method: XrossMethod) {
         val builder = FunSpec.constructorBuilder()

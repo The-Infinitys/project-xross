@@ -1,8 +1,8 @@
 package org.xross.generator
 
-import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.FileSpec
+import com.squareup.kotlinpoet.TypeSpec
 import org.xross.structures.XrossClass
-import org.xross.structures.XrossMethodType
 import org.xross.structures.XrossThreadSafety
 import java.io.File
 
@@ -17,7 +17,7 @@ object XrossGenerator {
 
         // 2. ハンドル定義 (HandleGenerator)
         val companionBuilder = TypeSpec.companionObjectBuilder()
-        HandleGenerator.generateHandles(companionBuilder, meta)
+        CompanionGenerator.generateCompanions(companionBuilder, meta)
 
         // 3. メソッド (MethodGenerator)
         MethodGenerator.generateMethods(classBuilder, companionBuilder, meta)
@@ -48,13 +48,6 @@ object XrossGenerator {
                 // Atomic 操作がある場合、VarHandle と ValueLayout をインポート
                 if (meta.fields.any { it.safety == XrossThreadSafety.Atomic }) {
                     addImport("java.lang.invoke", "VarHandle")
-                }
-
-                // ロックが必要な場合 (safety = Lock のメソッドやフィールドが一つでもある場合)
-                val needsLock = meta.fields.any { it.safety == XrossThreadSafety.Lock } ||
-                        meta.methods.any { it.safety == XrossThreadSafety.Lock && it.methodType != XrossMethodType.Static }
-                if (needsLock) {
-                    addImport("kotlin.concurrent", "withLock")
                 }
             }
             .addType(classBuilder.build())

@@ -7,7 +7,7 @@ import java.lang.foreign.MemorySegment
 
 object StructureGenerator {
     fun buildBase(classBuilder: TypeSpec.Builder, meta: XrossClass) {
-        // FieldMemoryInfo: companion から参照するため INTERNAL
+        // FieldMemoryInfo: 内部データ構造
         classBuilder.addType(
             TypeSpec.classBuilder("FieldMemoryInfo")
                 .addModifiers(KModifier.INTERNAL, KModifier.DATA)
@@ -21,7 +21,7 @@ object StructureGenerator {
                 .build()
         )
 
-        // AliveFlag: 参照型と共有するため INTERNAL
+        // AliveFlag: 生存確認フラグ
         classBuilder.addType(
             TypeSpec.classBuilder("AliveFlag")
                 .addModifiers(KModifier.INTERNAL)
@@ -30,7 +30,7 @@ object StructureGenerator {
                 .build()
         )
 
-        // プライマリコンストラクタ: PRIVATE
+        // プライマリコンストラクタ
         classBuilder.primaryConstructor(
             FunSpec.constructorBuilder()
                 .addModifiers(KModifier.PRIVATE)
@@ -56,11 +56,13 @@ object StructureGenerator {
                 .build()
         )
 
+        // --- StampedLock (sl) の定義 ---
+        // メソッドやフィールドが存在する場合、同期用の StampedLock を追加
         if (meta.methods.any { it.methodType != XrossMethodType.Static } || meta.fields.isNotEmpty()) {
             classBuilder.addProperty(
-                PropertySpec.builder("lock", ClassName("java.util.concurrent.locks", "ReentrantReadWriteLock"))
+                PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
                     .addModifiers(KModifier.PRIVATE)
-                    .initializer("ReentrantReadWriteLock()")
+                    .initializer("%T()", ClassName("java.util.concurrent.locks", "StampedLock"))
                     .build()
             )
         }
@@ -85,22 +87,36 @@ object StructureGenerator {
                 .build()
         )
 
+        // close メソッドの実装
         val closeBody = CodeBlock.builder()
             .beginControlFlow("if (segment != %T.NULL)", MemorySegment::class)
             .addStatement("aliveFlag.isValid = false")
             .apply {
                 val hasLock = meta.methods.any { it.methodType != XrossMethodType.Static } || meta.fields.isNotEmpty()
-                if (hasLock) beginControlFlow("lock.writeLock().withLock")
-                addStatement("cleanable?.clean()")
-                addStatement("segment = %T.NULL", MemorySegment::class)
-                if (hasLock) endControlFlow()
+                if (hasLock) {
+                    // StampedLock での WriteLock 取得
+                    addStatement("val stamp = sl.writeLock()")
+                    beginControlFlow("try")
+                    addStatement("cleanable?.clean()")
+                    addStatement("segment = %T.NULL", MemorySegment::class)
+                    nextControlFlow("finally")
+                    addStatement("sl.unlockWrite(stamp)")
+                    endControlFlow()
+                } else {
+                    addStatement("cleanable?.clean()")
+                    addStatement("segment = %T.NULL", MemorySegment::class)
+                }
             }
             .endControlFlow()
 
         classBuilder.addFunction(
-            FunSpec.builder("close").addModifiers(KModifier.OVERRIDE).addCode(closeBody.build()).build()
+            FunSpec.builder("close")
+                .addModifiers(KModifier.OVERRIDE)
+                .addCode(closeBody.build())
+                .build()
         )
     }
+
 
     private fun buildDeallocator(handleType: TypeName) = TypeSpec.classBuilder("Deallocator")
         .addModifiers(KModifier.PRIVATE)
