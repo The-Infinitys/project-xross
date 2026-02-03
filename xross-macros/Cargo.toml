@@ -2,7 +2,7 @@
 name = "xross-macros"
 version = "0.1.0"
 edition = "2024"
-
+build = "build.rs"
 [lib]
 # これにより proc-macro としてコンパイルされます
 proc-macro = true
@@ -12,5 +12,5 @@ serde_json.workspace = true
 xross-metadata = { path = "../xross-metadata" }
 syn = { version = "2.0", features = ["full"] }
 quote = "1.0"
-regex = "1.12.2"
 heck = "0.5.0"
+proc-macro2 = "1.0.106"

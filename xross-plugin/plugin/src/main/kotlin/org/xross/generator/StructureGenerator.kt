@@ -1,12 +1,12 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
-import org.xross.structures.XrossClass
+import org.xross.structures.XrossDefinition
 import org.xross.structures.XrossMethodType
 import java.lang.foreign.MemorySegment
 
 object StructureGenerator {
-    fun buildBase(classBuilder: TypeSpec.Builder, meta: XrossClass) {
+    fun buildBase(classBuilder: TypeSpec.Builder, meta: XrossDefinition) {
         // --- AliveFlag: 生存確認フラグ ---
         classBuilder.addType(
             TypeSpec.classBuilder("AliveFlag")
@@ -16,19 +16,26 @@ object StructureGenerator {
                 .build()
         )
 
-        // プライマリコンストラクタ
-        classBuilder.primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addModifiers(KModifier.PRIVATE)
-                .addParameter("raw", MemorySegment::class)
-                .addParameter(ParameterSpec.builder("isBorrowed", Boolean::class).defaultValue("false").build())
-                .addParameter(
-                    ParameterSpec.builder("sharedFlag", ClassName("", "AliveFlag").copy(nullable = true))
-                        .defaultValue("null").build()
-                )
-                .build()
-        )
+        // --- コンストラクタの設定 ---
+        val constructorBuilder = FunSpec.constructorBuilder()
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("raw", MemorySegment::class)
+            .addParameter(ParameterSpec.builder("isBorrowed", Boolean::class).defaultValue("false").build())
+            .addParameter(
+                ParameterSpec.builder("sharedFlag", ClassName("", "AliveFlag").copy(nullable = true))
+                    .defaultValue("null").build()
+            )
 
+        // Enum Class (フィールドなし) の場合は、引数なしコンストラクタにするため調整が必要
+        if (meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }) {
+            // Enum class の各要素は自身のコンパニオン等からセグメントを取得するため、
+            // デフォルト値を設定するか、初期化ロジックを init に逃がす
+            classBuilder.primaryConstructor(constructorBuilder.build())
+        } else {
+            classBuilder.primaryConstructor(constructorBuilder.build())
+        }
+
+        // --- プロパティの定義 ---
         classBuilder.addProperty(
             PropertySpec.builder("aliveFlag", ClassName("", "AliveFlag"), KModifier.PRIVATE)
                 .initializer("sharedFlag ?: AliveFlag(true)")
@@ -36,14 +43,15 @@ object StructureGenerator {
         )
 
         classBuilder.addProperty(
-            PropertySpec.builder("segment", MemorySegment::class, KModifier.PRIVATE)
+            PropertySpec.builder("segment", MemorySegment::class, KModifier.PROTECTED)
                 .mutable()
                 .initializer("raw")
                 .build()
         )
 
         // --- StampedLock (sl) の定義 ---
-        if (meta.methods.any { it.methodType != XrossMethodType.Static } || meta.fields.isNotEmpty()) {
+        // Enum でもメソッド呼び出しがある場合はロックが必要
+        if (meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())) {
             classBuilder.addProperty(
                 PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
                     .addModifiers(KModifier.PRIVATE)
@@ -51,8 +59,26 @@ object StructureGenerator {
                     .build()
             )
         }
+
+        // --- Enum class 専用の初期化 (各定数へのポインタ割り当て) ---
+        if (meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }) {
+            // Simple Enum の場合、各定数に対応する Rust インスタンスを init で生成
+            val initBlock = CodeBlock.builder()
+                .beginControlFlow("if (raw == %T.NULL)", MemorySegment::class)
+                .beginControlFlow("segment = when (this.name)")
+                .apply {
+                    meta.variants.forEach { variant ->
+                        addStatement("%S -> %L_new_%L.invokeExact() as %T", variant.name, meta.symbolPrefix, variant.name, MemorySegment::class)
+                    }
+                    addStatement("else -> %T.NULL", MemorySegment::class)
+                }
+                .endControlFlow()
+                .endControlFlow()
+            classBuilder.addInitializerBlock(initBlock.build())
+        }
     }
-    fun addFinalBlocks(classBuilder: TypeSpec.Builder, meta: XrossClass) {
+
+    fun addFinalBlocks(classBuilder: TypeSpec.Builder, meta: XrossDefinition) {
         val deallocatorName = "Deallocator"
         val handleType = ClassName("java.lang.invoke", "MethodHandle")
         classBuilder.addType(buildDeallocator(handleType))
@@ -65,8 +91,8 @@ object StructureGenerator {
             )
                 .mutable()
                 .initializer(
-                    "if (isBorrowed) null else CLEANER.register(this, %L(segment, dropHandle))",
-                    deallocatorName
+                    "if (isBorrowed || segment == %T.NULL) null else CLEANER.register(this, %L(segment, dropHandle))",
+                    MemorySegment::class, deallocatorName
                 )
                 .build()
         )
@@ -76,9 +102,8 @@ object StructureGenerator {
             .beginControlFlow("if (segment != %T.NULL)", MemorySegment::class)
             .addStatement("aliveFlag.isValid = false")
             .apply {
-                val hasLock = meta.methods.any { it.methodType != XrossMethodType.Static } || meta.fields.isNotEmpty()
+                val hasLock = meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())
                 if (hasLock) {
-                    // StampedLock での WriteLock 取得
                     addStatement("val stamp = sl.writeLock()")
                     beginControlFlow("try")
                     addStatement("cleanable?.clean()")
@@ -101,7 +126,6 @@ object StructureGenerator {
         )
     }
 
-
     private fun buildDeallocator(handleType: TypeName) = TypeSpec.classBuilder("Deallocator")
         .addModifiers(KModifier.PRIVATE)
         .addSuperinterface(Runnable::class)
@@ -123,7 +147,6 @@ object StructureGenerator {
                 .beginControlFlow("try")
                 .addStatement("dropHandle.invokeExact(segment)")
                 .nextControlFlow("catch (e: Throwable)")
-                // 修正箇所: %S がリテラル文字列として展開されるようにします
                 .addStatement("System.err.println(%S + e.message)", "Xross: Failed to drop native object: ")
                 .endControlFlow()
                 .endControlFlow()

@@ -1,9 +1,46 @@
+#![feature(offset_of_enum)]
 use xross_core::{JvmClass, jvm_class};
 
-#[derive(JvmClass, Clone)]
 /// 巨大なメモリを確保してリークテストを行うためのサービス
+#[derive(JvmClass, Clone)]
 pub struct MyService {
     _boxes: Vec<i32>,
+
+    // JvmClassが付与されていない外部構造体。
+    // 明示的に opaque 指定を行うことで、Java側へ signature を伝える。
+    #[jvm_field]
+    #[xross(opaque = "com.example.UnknownStruct")]
+    pub unknown_struct: UnknownStruct,
+}
+
+#[derive(Clone)]
+pub struct UnknownStruct {
+    pub i: i32,
+    pub f: f32,
+    pub s: String,
+}
+
+#[derive(Clone, JvmClass)]
+pub enum XrossTestEnum {
+    A,
+    B {
+        #[jvm_field]
+        i: i32,
+    },
+    C {
+        #[jvm_field]
+        #[xross(opaque = "com.example.UnknownStruct")]
+        j: UnknownStruct,
+    },
+}
+impl Default for UnknownStruct {
+    fn default() -> Self {
+        Self {
+            i: 32,
+            f: 64.0,
+            s: "Hello, World!".to_string(),
+        }
+    }
 }
 
 #[jvm_class]
@@ -11,16 +48,19 @@ impl MyService {
     #[jvm_new]
     pub fn new() -> Self {
         let boxes = vec![0; 1_000_000]; // 約4MB
-        MyService { _boxes: boxes }
+        MyService {
+            _boxes: boxes,
+            unknown_struct: UnknownStruct::default(),
+        }
     }
 
-    /// Defaultトレイトの代わりに、Java側から利用しやすいよう明示的に統合
+    /// Self は自動的に RustStruct { signature: "MyService" } として解析されます
     #[jvm_method]
     pub fn default() -> Self {
         Self::new()
     }
 
-    #[jvm_method(safety = Unsafe)] // 計算のみなのでLock不要
+    #[jvm_method(safety = Unsafe)]
     pub fn execute(&self, data: i32) -> i32 {
         data * 2
     }
@@ -36,6 +76,7 @@ impl MyService {
         self._boxes.len() as i32
     }
 
+    /// &mut Self も RustStruct として正しくポインタ経由で扱われます
     #[jvm_method]
     pub fn get_mut_ref(&mut self) -> &mut Self {
         self
@@ -46,29 +87,30 @@ pub mod test {
     use super::*;
 
     #[derive(JvmClass, Clone)]
+    #[jvm_package("test.test2")]
     pub struct MyService2 {
-        /// safety = Atomic を指定することで、Java側での VarHandle 生成を促す
         #[jvm_field(safety = Atomic)]
         pub val: i32,
     }
 
-    #[jvm_class(test.test2)]
+    #[jvm_class]
     impl MyService2 {
         #[jvm_new]
         pub fn new(val: i32) -> Self {
             MyService2 { val }
         }
 
-        #[jvm_method(safety = Atomic)] // Atomic指定でLockをスキップ
+        #[jvm_method(safety = Atomic)]
         pub fn execute(&self) -> i64 {
             self.val as i64 * 2i64
         }
 
-        #[jvm_method(safety = Atomic)] // 同様にAtomic指定
+        #[jvm_method(safety = Atomic)]
         pub fn mut_test(&mut self) {
             self.val += 1;
         }
 
+        /// パッケージ化された Self (test.test2.MyService2) を自動解決します
         #[jvm_method]
         pub fn get_self_ref(&self) -> &Self {
             self

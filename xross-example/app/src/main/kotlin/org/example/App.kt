@@ -26,9 +26,10 @@ fun main() {
         // 2. 参照と所有権テスト
         executeReferenceAndOwnershipTest()
 
-        // 3. アトミック並行アクセステスト (今回の目玉)
+        // 3. アトミック並行アクセステスト
         executeConcurrencyTest()
-
+        // 4. Enumに関するテスト
+        executeEnumTest()
     } catch (e: Exception) {
         println("Test failed with exception:")
         e.printStackTrace()
@@ -39,7 +40,9 @@ fun main() {
         }
     }
 }
-
+fun executeEnumTest(){
+    val enum1= XrossTestEnum.A
+}
 fun executeMemoryLeakTest() {
     println("\n--- [1] Memory Leak & Stability Test ---")
     val iterations = (10.0).pow(8).toInt()

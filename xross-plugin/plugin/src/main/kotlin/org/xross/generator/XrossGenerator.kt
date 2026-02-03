@@ -1,80 +1,146 @@
 package org.xross.generator
 
-import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.TypeSpec
-import org.xross.structures.XrossClass
-import org.xross.structures.XrossThreadSafety
+import com.squareup.kotlinpoet.*
+import org.xross.structures.XrossDefinition
+import org.xross.structures.XrossType
 import java.io.File
+import java.lang.foreign.MemorySegment
+import java.util.concurrent.ConcurrentHashMap
 
 object XrossGenerator {
-    fun generate(meta: XrossClass, outputDir: File, targetPackage: String) {
-        val className = meta.structName
-        val classBuilder = TypeSpec.classBuilder(className)
-            .addSuperinterface(AutoCloseable::class)
+    private val opaqueObjects = ConcurrentHashMap.newKeySet<String>()
 
-        // 1. 基礎構造 (StructureGenerator)
+    fun generate(meta: XrossDefinition, outputDir: File, targetPackage: String) {
+        val className = meta.name
+
+        // 不透明型の収集
+        collectOpaqueTypes(meta)
+
+        // 1. クラスの基本構造を決定
+        val classBuilder = when (meta) {
+            is XrossDefinition.Struct -> {
+                TypeSpec.classBuilder(className)
+                    .addModifiers(KModifier.OPEN) // 継承を許可
+                    .addSuperinterface(AutoCloseable::class)
+            }
+
+            is XrossDefinition.Enum -> {
+                // すべてのバリアントが空なら単純な enum class、そうでなければ sealed class
+                if (meta.variants.all { it.fields.isEmpty() }) {
+                    TypeSpec.enumBuilder(className)
+                        .addSuperinterface(AutoCloseable::class)
+                } else {
+                    TypeSpec.classBuilder(className)
+                        .addModifiers(KModifier.SEALED) // 網羅性チェックを可能にする
+                        .addSuperinterface(AutoCloseable::class)
+                }
+            }
+        }
+
+        // 2. 基本構成（コンストラクタ、segment, isBorrowed, aliveFlag 等）の追加
         StructureGenerator.buildBase(classBuilder, meta)
 
-        // 2. ハンドル定義 (HandleGenerator)
+        // 3. Companion Object の構築 (Handle 解決とレイアウト解決)
         val companionBuilder = TypeSpec.companionObjectBuilder()
         CompanionGenerator.generateCompanions(companionBuilder, meta)
 
-        // 3. メソッド (MethodGenerator)
+        // 4. メソッドの生成 (downcallHandle を通じた Rust 関数呼び出し)
         MethodGenerator.generateMethods(classBuilder, companionBuilder, meta)
 
-        // 4. プロパティ (PropertyGenerator)
-        PropertyGenerator.generateFields(classBuilder, meta)
+        // 5. プロパティ / バリアントの生成
+        when (meta) {
+            is XrossDefinition.Struct -> {
+                PropertyGenerator.generateFields(classBuilder, meta)
+            }
 
-        // 5. 仕上げ
+            is XrossDefinition.Enum -> {
+                // EnumVariantGenerator 内で sealed class のサブクラスおよび Factory 関数を生成
+                EnumVariantGenerator.generateVariants(classBuilder, meta)
+            }
+        }
+
+        // 6. 仕上げ
         classBuilder.addType(companionBuilder.build())
         StructureGenerator.addFinalBlocks(classBuilder, meta)
 
-        // FileSpecの構築
-        val fileSpec = FileSpec.builder(targetPackage, className)
-            .indent("    ")
-            .apply {
-                // 基本の FFI
-                addImport("java.lang.foreign", "MemorySegment")
-
-                // メソッドが存在する場合
-                if (meta.methods.isNotEmpty()) {
-                    addImport("java.lang.foreign", "FunctionDescriptor", "Linker", "SymbolLookup")
-                    // 文字列またはスライスを扱う場合は Arena が必要
-                    if (meta.methods.any { m -> m.args.any { a -> a.ty.kotlinType.toString().contains("String") } }) {
-                        addImport("java.lang.foreign", "Arena")
-                    }
-                }
-
-                // Atomic 操作がある場合、VarHandle と ValueLayout をインポート
-                if (meta.fields.any { it.safety == XrossThreadSafety.Atomic }) {
-                    addImport("java.lang.invoke", "VarHandle")
-                }
-            }
-            .addType(classBuilder.build())
-            .build()
-
-        // 置換ロジックの実行
-        val cleanedContent = cleanKotlinCode(fileSpec.toString())
-
-        // ファイル書き出し
-        val fileDir = outputDir.resolve(targetPackage.replace('.', '/'))
-        if (!fileDir.exists()) fileDir.mkdirs()
-        fileDir.resolve("$className.kt").writeText(cleanedContent)
+        writeToDisk(classBuilder.build(), targetPackage, className, outputDir)
     }
 
-    private fun cleanKotlinCode(rawContent: String): String {
-        return rawContent.let { content ->
-            // 1. 公開修飾子の整理 (単語境界 \b を利用して安全に置換)
-            val publicKeywords = listOf("class", "fun", "constructor", "val", "var", "companion object", "typealias")
-            val stage1 = publicKeywords.fold(content) { acc, keyword ->
-                acc.replace(Regex("""\bpublic\s+$keyword\b"""), keyword)
+    private fun collectOpaqueTypes(meta: XrossDefinition) {
+        meta.methods.forEach { m ->
+            (m.args.map { it.ty } + m.ret).filterIsInstance<XrossType.Object>().forEach {
+                opaqueObjects.add(it.signature)
             }
-            // 2. 冗長な Unit 戻り値の削除
-            val stage2 = stage1.replace(Regex(""":\s*Unit\s*\{"""), " {")
-
-            // 3. ゲッター/セッターの public 整理
-            stage2.replace(Regex("""\bpublic\s+get\b\(\)"""), "get()")
-                .replace(Regex("""\bpublic\s+set\b"""), "set")
         }
+    }
+
+    /**
+     * 定義が見つからなかった Object 型を、最小限のラッパーとして生成
+     */
+    fun generateOpaqueWrappers(outputDir: File) {
+        opaqueObjects.forEach { signature ->
+            val lastDot = signature.lastIndexOf('.')
+            val pkg = if (lastDot != -1) signature.substring(0, lastDot) else "org.xross.generated"
+            val name = signature.substring(lastDot + 1)
+
+            val wrapper = TypeSpec.classBuilder(name)
+                .addModifiers(KModifier.OPEN)
+                .addSuperinterface(AutoCloseable::class)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter("segment", MemorySegment::class)
+                        .addParameter(ParameterSpec.builder("isBorrowed", Boolean::class).defaultValue("true").build())
+                        .build()
+                )
+                .addProperty(
+                    PropertySpec.builder("segment", MemorySegment::class, KModifier.PROTECTED)
+                        .initializer("segment")
+                        .mutable()
+                        .build()
+                )
+                .addFunction(
+                    FunSpec.builder("close")
+                        .addModifiers(KModifier.OVERRIDE)
+                        .addStatement("// Opaque types usually managed by native owners")
+                        .build()
+                )
+                .build()
+
+            writeToDisk(wrapper, pkg, name, outputDir)
+        }
+    }
+
+    private fun writeToDisk(typeSpec: TypeSpec, pkg: String, name: String, outputDir: File) {
+        val fileSpec = FileSpec.builder(pkg, name)
+            .addType(typeSpec)
+            .build()
+
+        // 1. 文字列として書き出す
+        var content = fileSpec.toString()
+
+        // 2. 冗長な "public " 修飾子を削除 (class, interface, fun, val, var, object, sealed)
+        // Kotlin では public はデフォルトなので削除しても動作は変わりません
+        val redundantKeywords =
+            listOf(
+                "class",
+                "interface",
+                "fun",
+                "val",
+                "var",
+                "object",
+                "sealed",
+                "constructor",
+                "data class",
+                "companion"
+            )
+        redundantKeywords.forEach { keyword ->
+            content = content.replace("public $keyword", keyword)
+        }
+
+        // 4. ディレクトリ作成と書き込み
+        val fileDir = outputDir.resolve(pkg.replace('.', '/'))
+        if (!fileDir.exists()) fileDir.mkdirs()
+
+        fileDir.resolve("$name.kt").writeText(content)
     }
 }

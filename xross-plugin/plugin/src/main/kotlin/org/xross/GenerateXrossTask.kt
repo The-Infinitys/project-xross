@@ -9,6 +9,7 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.workers.WorkerExecutor
+import org.xross.generator.XrossGenerator
 import javax.inject.Inject
 
 // --- 並列実行タスク ---
@@ -37,5 +38,6 @@ abstract class GenerateXrossTask @Inject constructor(private val workerExecutor:
                 params.packageName.set(packageName)
             }
         }
+        XrossGenerator.generateOpaqueWrappers(outDir)
     }
 }

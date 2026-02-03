@@ -3,7 +3,7 @@ package org.xross
 import kotlinx.serialization.json.Json
 import org.gradle.workers.WorkAction
 import org.xross.generator.XrossGenerator
-import org.xross.structures.XrossClass
+import org.xross.structures.XrossDefinition
 
 abstract class GenerateAction : WorkAction<GenerateParameters> {
     private val json = Json { ignoreUnknownKeys = true }
@@ -11,7 +11,7 @@ abstract class GenerateAction : WorkAction<GenerateParameters> {
     override fun execute() {
         val file = parameters.jsonFile.get()
         val fileText = file.readText()
-        val meta = json.decodeFromString<XrossClass>(fileText)
+        val meta = json.decodeFromString<XrossDefinition>(fileText)
         // 1. ベースパッケージ (org.example)
         val basePackage = parameters.packageName.get()
 

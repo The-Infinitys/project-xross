@@ -3,77 +3,68 @@ package org.xross.generator
 import com.squareup.kotlinpoet.*
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
-import org.xross.structures.XrossClass
-import org.xross.structures.XrossMethod
-import org.xross.structures.XrossMethodType
-import org.xross.structures.XrossThreadSafety
-import org.xross.structures.XrossType
+import org.xross.structures.*
 import java.lang.foreign.MemorySegment
+import java.util.concurrent.ConcurrentHashMap
 
 object MethodGenerator {
+    // 収集した不透明オブジェクトの型（signature）を保存する
+    val opaqueObjects: ConcurrentHashMap.KeySetView<String, Boolean> = ConcurrentHashMap.newKeySet()
 
-    fun generateMethods(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossClass) {
+    fun generateMethods(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossDefinition) {
         meta.methods.forEach { method ->
             if (method.isConstructor) {
-                generatePublicConstructor(classBuilder, method)
+                if (meta is XrossDefinition.Struct) generatePublicConstructor(classBuilder, method)
                 return@forEach
             }
 
-            val isStringRet = method.ret is XrossType.RustString
-            val isStructRet = method.ret is XrossType.Struct
+            // 戻り値の型判定
+            val returnType = resolveReturnType(method.ret, meta)
+            val isComplexRet = method.ret is XrossType.RustStruct ||
+                    method.ret is XrossType.RustEnum ||
+                    method.ret is XrossType.Object
 
-            val returnType = when {
-                isStringRet -> String::class.asTypeName()
-                isStructRet -> {
-                    val struct = method.ret
-                    val name = if (struct.name == "Self") meta.structName else struct.name
-                    ClassName("", name)
-                }
-
-                else -> method.ret.kotlinType
-            }
-
-            // メソッド名のエスケープ
             val funBuilder = FunSpec.builder(method.name.toCamelCase().escapeKotlinKeyword())
                 .returns(returnType)
 
-            // 引数名のエスケープ
-            method.args.forEach {
-                funBuilder.addParameter(it.name.toCamelCase().escapeKotlinKeyword(), it.ty.kotlinType)
+            // 引数の追加
+            method.args.forEach { arg ->
+                funBuilder.addParameter(arg.name.toCamelCase().escapeKotlinKeyword(), resolveReturnType(arg.ty, meta))
             }
 
             val body = CodeBlock.builder()
+            // インスタンス生存確認
             if (method.methodType != XrossMethodType.Static) {
                 body.addStatement("val currentSegment = segment")
-                body.addStatement(
-                    "if (currentSegment == %T.NULL) throw %T(%S)",
-                    MemorySegment::class,
-                    NullPointerException::class,
-                    "Object dropped"
-                )
+                body.beginControlFlow("if (currentSegment == %T.NULL)", MemorySegment::class)
+                body.addStatement("throw %T(%S)", NullPointerException::class, "Object dropped or invalid")
+                body.endControlFlow()
             }
 
             if (method.ret !is XrossType.Void) body.add("return ")
 
             body.beginControlFlow("try")
 
-            val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Slice }
-            if (needsArena) body.beginControlFlow(
-                "%T.ofConfined().use { arena ->",
-                ClassName("java.lang.foreign", "Arena")
-            )
+            // Arenaが必要なケース（文字列引数）
+            val needsArena = method.args.any { it.ty is XrossType.RustString }
+            if (needsArena) {
+                body.beginControlFlow("%T.ofConfined().use { arena ->", ClassName("java.lang.foreign", "Arena"))
+            }
 
             val invokeArgs = mutableListOf<String>()
             if (method.methodType != XrossMethodType.Static) invokeArgs.add("currentSegment")
 
-            // 引数呼び出し時もエスケープした名前を使用
-            method.args.forEach {
-                invokeArgs.add(it.name.toCamelCase().escapeKotlinKeyword())
+            method.args.forEach { arg ->
+                val name = arg.name.toCamelCase().escapeKotlinKeyword()
+                when (arg.ty) {
+                    is XrossType.RustString -> invokeArgs.add("arena.allocateFrom($name)")
+                    is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> invokeArgs.add("$name.segment")
+                    else -> invokeArgs.add(name)
+                }
             }
 
-            // ハンドル名自体はエスケープ不要（内部プロパティのため）
             val call = "${method.name}Handle.invokeExact(${invokeArgs.joinToString(", ")})"
-            applyMethodCall(body, method, call, isStringRet, isStructRet, returnType)
+            applyMethodCall(body, method, call, returnType, isComplexRet)
 
             if (needsArena) body.endControlFlow()
 
@@ -88,147 +79,111 @@ object MethodGenerator {
         }
     }
 
+    private fun resolveReturnType(type: XrossType, meta: XrossDefinition): TypeName {
+        return when (type) {
+            is XrossType.RustString -> String::class.asTypeName()
+            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> {
+                val signature = when (type) {
+                    is XrossType.RustStruct -> type.signature
+                    is XrossType.RustEnum -> type.signature
+                    is XrossType.Object -> {
+                        opaqueObjects.add(type.signature) // Opaque型として記録
+                        type.signature
+                    }
+
+                }
+
+                if (signature == "Self" || signature == meta.name || signature == "${meta.packageName}.${meta.name}") {
+                    // 自分自身なら単純名
+                    ClassName("", meta.name)
+                } else {
+                    // 外部パッケージなら packageName.signature
+                    val fqn = if (signature.contains(".")) signature else "${meta.packageName}.$signature"
+                    val lastDot = fqn.lastIndexOf('.')
+                    ClassName(fqn.substring(0, lastDot), fqn.substring(lastDot + 1))
+                }
+            }
+            else -> type.kotlinType
+        }
+    }
+
     private fun applyMethodCall(
         body: CodeBlock.Builder,
         method: XrossMethod,
         call: String,
-        isStringRet: Boolean,
-        isStructRet: Boolean,
-        returnType: TypeName
+        returnType: TypeName,
+        isComplexRet: Boolean
     ) {
-        val safety = method.safety
-        val methodType = method.methodType
         val isVoid = method.ret is XrossType.Void
-
-        // StaticかInstanceかに関わらず、同じ名前 "sl" を参照する
-        // ※ HandleGenerator で Companion にも sl を追加した前提
-        val lockName = "sl"
-
-        val effectiveSafety = if (methodType == XrossMethodType.MutInstance || methodType == XrossMethodType.OwnedInstance) {
-            XrossThreadSafety.Immutable
+        val safety = if (method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance) {
+            XrossThreadSafety.Immutable // 書き込みロック強制
         } else {
-            safety
+            method.safety
         }
 
-        when (effectiveSafety) {
-            XrossThreadSafety.Unsafe -> {
-                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
-            }
-
+        when (safety) {
             XrossThreadSafety.Lock -> {
                 if (!isVoid) body.addStatement("var resValue: %T", returnType)
-                body.addStatement("var stamp = %L.tryOptimisticRead()", lockName)
-
+                body.addStatement("var stamp = sl.tryOptimisticRead()")
                 if (!isVoid) body.add("resValue = ")
-                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+                generateInvokeLogic(body, method, call, returnType, isComplexRet)
 
-                body.beginControlFlow("if (!%L.validate(stamp))", lockName)
-                body.addStatement("stamp = %L.readLock()", lockName)
+                body.beginControlFlow("if (!sl.validate(stamp))")
+                body.addStatement("stamp = sl.readLock()")
                 body.beginControlFlow("try")
                 if (!isVoid) body.add("resValue = ")
-                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
+                generateInvokeLogic(body, method, call, returnType, isComplexRet)
                 body.nextControlFlow("finally")
-                body.addStatement("%L.unlockRead(stamp)", lockName)
+                body.addStatement("sl.unlockRead(stamp)")
                 body.endControlFlow()
                 body.endControlFlow()
-
                 if (!isVoid) body.addStatement("resValue")
             }
-
-            XrossThreadSafety.Atomic -> {
-                body.addStatement("val stamp = %L.readLock()", lockName)
-                body.beginControlFlow("try")
-                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
-                body.nextControlFlow("finally")
-                body.addStatement("%L.unlockRead(stamp)", lockName)
-                body.endControlFlow()
-            }
-
-            XrossThreadSafety.Immutable -> {
-                body.addStatement("val stamp = %L.writeLock()", lockName)
-                body.beginControlFlow("try")
-                generateCallBody(body, method, call, isStringRet, isStructRet, returnType)
-                body.nextControlFlow("finally")
-                body.addStatement("%L.unlockWrite(stamp)", lockName)
-                body.endControlFlow()
-            }
+            else -> generateInvokeLogic(body, method, call, returnType, isComplexRet)
         }
     }
 
-    private fun generateCallBody(
+    private fun generateInvokeLogic(
         body: CodeBlock.Builder,
         method: XrossMethod,
         call: String,
-        isStringRet: Boolean,
-        isStructRet: Boolean,
-        returnType: TypeName
+        returnType: TypeName,
+        isComplexRet: Boolean
     ) {
-        // STRUCT_SIZE は常に Companion にあるため、どこからでもアクセス可能
-        val structSize = "STRUCT_SIZE"
-
         when {
             method.ret is XrossType.Void -> {
                 body.addStatement("$call as Unit")
-                if (method.methodType == XrossMethodType.OwnedInstance) {
-                    body.addStatement("this.segment = %T.NULL", MemorySegment::class)
-                }
+                if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
             }
-
-            isStringRet -> {
+            method.ret is XrossType.RustString -> {
                 body.beginControlFlow("run")
                 body.addStatement("val res = $call as %T", MemorySegment::class)
-                // reinterpret の引数に reinterpret(Long.MAX_VALUE) を使うハックを維持
-                body.addStatement(
-                    "val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)",
-                    MemorySegment::class, Long::class
-                )
+                body.addStatement("val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)", MemorySegment::class, Long::class)
                 body.addStatement("if (res != %T.NULL) xross_free_stringHandle.invokeExact(res)", MemorySegment::class)
-                if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                 body.addStatement("str")
                 body.endControlFlow()
             }
-
-            isStructRet -> {
+            isComplexRet -> {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = $call as %T", MemorySegment::class)
-                body.addStatement("val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret($structSize)", MemorySegment::class)
-                if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
-                body.addStatement("%T(res, isBorrowed = ${(method.ret as XrossType.Struct).isReference})", returnType)
+                body.addStatement("val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret(STRUCT_SIZE)", MemorySegment::class)
+                // コンストラクタ呼び出し
+                body.addStatement("%T(res, isBorrowed = false)", returnType)
                 body.endControlFlow()
             }
-
-            else -> {
-                if (method.methodType == XrossMethodType.OwnedInstance) {
-                    body.beginControlFlow("run")
-                    body.addStatement("val res = $call as %T", returnType)
-                    body.addStatement("this.segment = %T.NULL", MemorySegment::class)
-                    body.addStatement("res")
-                    body.endControlFlow()
-                } else {
-                    body.addStatement("$call as %T", returnType)
-                }
-            }
+            else -> body.addStatement("$call as %T", returnType)
         }
     }
+
     private fun generatePublicConstructor(classBuilder: TypeSpec.Builder, method: XrossMethod) {
         val builder = FunSpec.constructorBuilder()
-
-        // 引数のセットアップ
-        method.args.forEach {
-            builder.addParameter(it.name.toCamelCase().escapeKotlinKeyword(), it.ty.kotlinType)
-        }
+        method.args.forEach { builder.addParameter(it.name.toCamelCase().escapeKotlinKeyword(), it.ty.kotlinType) }
         val args = method.args.joinToString(", ") { it.name.toCamelCase().escapeKotlinKeyword() }
-        val delegateCode = CodeBlock.builder()
-            .add("(\n") // 改行して読みやすく
-            .indent()
-            .add("(newHandle.invokeExact($args) as %T).let { raw ->\n", MemorySegment::class)
-            .add("    if (raw == %T.NULL) raw else raw.reinterpret(STRUCT_SIZE)\n", MemorySegment::class)
-            .add("}),\n")
-            .unindent()
-            .add("false")
-            .build()
 
-        builder.callThisConstructor(delegateCode)
+        builder.callThisConstructor(
+            CodeBlock.of("((newHandle.invokeExact($args) as %T).let { raw -> if (raw == %T.NULL) raw else raw.reinterpret(STRUCT_SIZE) }), false",
+                MemorySegment::class, MemorySegment::class)
+        )
         classBuilder.addFunction(builder.build())
     }
 }
