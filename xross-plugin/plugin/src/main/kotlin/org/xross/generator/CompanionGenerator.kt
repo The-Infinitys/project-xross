@@ -26,14 +26,14 @@ object CompanionGenerator {
         resolveAllHandles(init, meta)
 
         init.add("\n// --- Native Layout Resolution ---\n")
-        init.addStatement("val layoutRaw: %T", MemorySegment::class)
-        init.addStatement("val layoutStr: %T", String::class)
+        init.addStatement("var layoutRaw: %T = %T.NULL", MemorySegment::class, MemorySegment::class)
+        init.addStatement("var layoutStr: %T = %S", String::class, "")
+
         init.beginControlFlow("try")
             .addStatement("layoutRaw = layoutHandle.invokeExact() as %T", MemorySegment::class)
-            .addStatement(
-                "layoutStr = if (layoutRaw == %T.NULL) \"\" else layoutRaw.reinterpret(%T.MAX_VALUE).getString(0)",
-                MemorySegment::class, Long::class
-            )
+            .beginControlFlow("if (layoutRaw != %T.NULL)", MemorySegment::class)
+            .addStatement("layoutStr = layoutRaw.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
+            .endControlFlow()
             .nextControlFlow("catch (e: %T)", Throwable::class)
             .addStatement("throw %T(e)", RuntimeException::class)
             .endControlFlow()
@@ -45,12 +45,13 @@ object CompanionGenerator {
         when (meta) {
             is XrossDefinition.Struct -> buildStructLayoutInit(init, meta)
             is XrossDefinition.Enum -> buildEnumLayoutInit(init, meta)
+            is XrossDefinition.Opaque -> { /* Opaque handles size/layout manually */
+            }
         }
 
-        init.addStatement(
-            "if (layoutRaw != %T.NULL) xross_free_stringHandle.invokeExact(layoutRaw)",
-            MemorySegment::class
-        )
+        init.beginControlFlow("if (layoutRaw != %T.NULL)", MemorySegment::class)
+            .addStatement("xross_free_stringHandle.invokeExact(layoutRaw)")
+            .endControlFlow()
             .nextControlFlow("else")
             .addStatement("this.STRUCT_SIZE = 0L")
             .addStatement("this.LAYOUT = %T.structLayout()", MemoryLayout::class)
@@ -60,55 +61,67 @@ object CompanionGenerator {
     }
 
     private fun defineProperties(builder: TypeSpec.Builder, meta: XrossDefinition) {
-        // StampedLock
         builder.addProperty(PropertySpec.builder("sl", SL_TYPE, KModifier.PRIVATE).mutable().build())
 
-        // ハンドル類 (lateinitにせず、ダミー初期化を避けるため型のみ宣言はできないので、
-        // initで代入されることを前提に、ここではlateinitを使わない形式でプロパティを並べる)
-        val handleProps = mutableListOf<String>()
-        handleProps.addAll(listOf("dropHandle", "cloneHandle", "layoutHandle", "xross_free_stringHandle"))
+        val handles = mutableListOf("dropHandle", "cloneHandle", "layoutHandle", "xross_free_stringHandle")
 
         when (meta) {
             is XrossDefinition.Struct -> {
-                handleProps.add("newHandle")
+                handles.add("newHandle")
                 meta.fields.forEach {
-                    // VarHandle のみ lateinit
-                    builder.addProperty(PropertySpec.builder("VH_${it.name.toCamelCase()}", VH_TYPE, KModifier.PRIVATE).addModifiers(KModifier.LATEINIT).mutable().build())
+                    builder.addProperty(
+                        PropertySpec.builder(
+                            "VH_${it.name.toCamelCase()}", VH_TYPE, KModifier.PRIVATE,
+                            KModifier.LATEINIT
+                        ).mutable().build()
+                    )
                 }
             }
+
             is XrossDefinition.Enum -> {
-                handleProps.add("get_tagHandle")
+                handles.add("get_tagHandle")
                 meta.variants.forEach { v ->
-                    handleProps.add("new_${v.name}Handle")
+                    handles.add("new_${v.name}Handle")
                     v.fields.forEach { f ->
-                        // VarHandle のみ lateinit
-                        builder.addProperty(PropertySpec.builder("VH_${v.name}_${f.name.toCamelCase()}", VH_TYPE, KModifier.PRIVATE).addModifiers(KModifier.LATEINIT).mutable().build())
+                        builder.addProperty(
+                            PropertySpec.builder(
+                                "VH_${v.name}_${f.name.toCamelCase()}",
+                                VH_TYPE,
+                                KModifier.PRIVATE, KModifier.LATEINIT
+                            ).mutable().build()
+                        )
                     }
                 }
             }
-        }
-        meta.methods.filter { !it.isConstructor }.forEach { handleProps.add("${it.name}Handle") }
 
-        // MethodHandle系のプロパティ生成 (lateinitを使わない)
-        handleProps.forEach { name ->
+            is XrossDefinition.Opaque -> { /* No additional fields for Opaque here */
+            }
+        }
+
+        meta.methods.filter { !it.isConstructor }.forEach { handles.add("${it.name}Handle") }
+
+        handles.distinct().forEach { name ->
             builder.addProperty(PropertySpec.builder(name, HANDLE_TYPE, KModifier.PRIVATE).mutable().build())
         }
 
-        // LAYOUT は StructLayout なので lateinit 無し (init内で代入)
-        builder.addProperty(PropertySpec.builder("LAYOUT", LAYOUT_TYPE, KModifier.PRIVATE).mutable().build())
-
-        // STRUCT_SIZE
-        builder.addProperty(PropertySpec.builder("STRUCT_SIZE", Long::class, KModifier.PRIVATE).mutable().initializer("0L").build())
-
-        // CLEANER
-        builder.addProperty(PropertySpec.builder("CLEANER", ClassName("java.lang.ref", "Cleaner"), KModifier.PRIVATE)
-            .initializer("%T.create()", ClassName("java.lang.ref", "Cleaner")).build())
+        builder.addProperty(
+            PropertySpec.builder("LAYOUT", LAYOUT_TYPE, KModifier.PRIVATE).mutable()
+                .build()
+        )
+        builder.addProperty(
+            PropertySpec.builder("STRUCT_SIZE", Long::class, KModifier.PRIVATE).mutable().initializer("0L").build()
+        )
+        builder.addProperty(
+            PropertySpec.builder("CLEANER", ClassName("java.lang.ref", "Cleaner"), KModifier.PRIVATE)
+                .initializer("%T.create()", ClassName("java.lang.ref", "Cleaner")).build()
+        )
     }
 
     private fun resolveAllHandles(init: CodeBlock.Builder, meta: XrossDefinition) {
         init.addStatement(
             "this.xross_free_stringHandle = linker.downcallHandle(lookup.find(\"xross_free_string\").get(), %T.ofVoid(%M))",
-            FunctionDescriptor::class, ADDRESS
+            FunctionDescriptor::class,
+            ADDRESS
         )
 
         listOf("drop", "layout", "clone").forEach { suffix ->
@@ -126,17 +139,28 @@ object CompanionGenerator {
             val argLayouts = constructor?.args?.map { CodeBlock.of("%M", it.ty.layoutMember) } ?: emptyList()
             val desc = if (argLayouts.isEmpty()) CodeBlock.of("%T.of(%M)", FunctionDescriptor::class, ADDRESS)
             else CodeBlock.of("%T.of(%M, %L)", FunctionDescriptor::class, ADDRESS, argLayouts.joinToCode(", "))
-            init.addStatement("this.newHandle = linker.downcallHandle(lookup.find(%S).get(), %L)", "${meta.symbolPrefix}_new", desc)
+            init.addStatement(
+                "this.newHandle = linker.downcallHandle(lookup.find(%S).get(), %L)",
+                "${meta.symbolPrefix}_new",
+                desc
+            )
         } else if (meta is XrossDefinition.Enum) {
             init.addStatement(
                 "this.get_tagHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%T.JAVA_INT, %M))",
-                "${meta.symbolPrefix}_get_tag", FunctionDescriptor::class, ValueLayout::class, ADDRESS
+                "${meta.symbolPrefix}_get_tag",
+                FunctionDescriptor::class,
+                ValueLayout::class,
+                ADDRESS
             )
             meta.variants.forEach { v ->
                 val argLayouts = v.fields.map { CodeBlock.of("%M", it.ty.layoutMember) }
                 val desc = if (argLayouts.isEmpty()) CodeBlock.of("%T.of(%M)", FunctionDescriptor::class, ADDRESS)
                 else CodeBlock.of("%T.of(%M, %L)", FunctionDescriptor::class, ADDRESS, argLayouts.joinToCode(", "))
-                init.addStatement("this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)", "${meta.symbolPrefix}_new_${v.name}", desc)
+                init.addStatement(
+                    "this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",
+                    "${meta.symbolPrefix}_new_${v.name}",
+                    desc
+                )
             }
         }
 
@@ -144,15 +168,31 @@ object CompanionGenerator {
             val args = mutableListOf<CodeBlock>()
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
             method.args.forEach { args.add(CodeBlock.of("%M", it.ty.layoutMember)) }
-            val desc = if (method.ret is XrossType.Void) CodeBlock.of("%T.ofVoid(%L)", FunctionDescriptor::class, args.joinToCode(", "))
-            else CodeBlock.of("%T.of(%M, %L)", FunctionDescriptor::class, method.ret.layoutMember, args.joinToCode(", "))
-            init.addStatement("this.${method.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)", method.symbol, desc)
+            val desc = if (method.ret is XrossType.Void) CodeBlock.of(
+                "%T.ofVoid(%L)",
+                FunctionDescriptor::class,
+                args.joinToCode(", ")
+            )
+            else CodeBlock.of(
+                "%T.of(%M, %L)",
+                FunctionDescriptor::class,
+                method.ret.layoutMember,
+                args.joinToCode(", ")
+            )
+            init.addStatement(
+                "this.${method.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",
+                method.symbol,
+                desc
+            )
         }
     }
 
+    // CompanionGenerator.kt 内の buildStructLayoutInit を修正
     private fun buildStructLayoutInit(init: CodeBlock.Builder, meta: XrossDefinition.Struct) {
         init.addStatement("val layouts = mutableListOf<%T>()", MemoryLayout::class)
         init.addStatement("var currentOffsetPos = 0L")
+
+        // レイアウト文字列のパースループ
         init.beginControlFlow("for (i in 1 until parts.size)")
             .addStatement("val f = parts[i].split(':')")
             .addStatement("if (f.size < 3) continue")
@@ -160,6 +200,8 @@ object CompanionGenerator {
             .beginControlFlow("if (fOffset > currentOffsetPos)")
             .addStatement("layouts.add(%T.paddingLayout(fOffset - currentOffsetPos))", MemoryLayout::class)
             .endControlFlow()
+
+        // 各フィールド名と一致した時にレイアウトを登録する
         meta.fields.forEachIndexed { idx, field ->
             val branch = if (idx == 0) "if" else "else if"
             init.beginControlFlow("$branch (fName == %S)", field.name)
@@ -168,12 +210,20 @@ object CompanionGenerator {
                 .endControlFlow()
         }
         init.endControlFlow()
+
         init.beginControlFlow("if (currentOffsetPos < STRUCT_SIZE)")
             .addStatement("layouts.add(%T.paddingLayout(STRUCT_SIZE - currentOffsetPos))", MemoryLayout::class)
             .endControlFlow()
+
+        // LAYOUT の確定
         init.addStatement("this.LAYOUT = %T.structLayout(*layouts.toTypedArray())", MemoryLayout::class)
+
+        // 【重要】各フィールドの VarHandle を初期化するコードを生成
         meta.fields.forEach { field ->
-            init.addStatement("this.VH_${field.name.toCamelCase()} = LAYOUT.varHandle(%T.PathElement.groupElement(%S))", MemoryLayout::class, field.name)
+            init.addStatement(
+                "this.VH_${field.name.toCamelCase()} = LAYOUT.varHandle(%T.PathElement.groupElement(%S))",
+                MemoryLayout::class, field.name
+            )
         }
     }
 
@@ -183,19 +233,25 @@ object CompanionGenerator {
             .addStatement("val match = variantRegex.find(parts[i]) ?: continue")
             .addStatement("val vName = match.groupValues[1]")
             .addStatement("val vFields = match.groupValues[2]")
-            .beginControlFlow("if (vFields.isNotEmpty())")
+
+        init.beginControlFlow("if (vFields.isNotEmpty())")
             .beginControlFlow("for (fInfo in vFields.split(';'))")
             .addStatement("if (fInfo.isBlank()) continue")
             .addStatement("val f = fInfo.split(':')")
             .addStatement("val fName = f[0]; val fOffsetL = f[1].toLong(); val fSizeL = f[2].toLong()")
+
         meta.variants.forEach { variant ->
             init.beginControlFlow("if (vName == %S)", variant.name)
             variant.fields.forEach { field ->
                 init.beginControlFlow("if (fName == %S)", field.name)
-                    .addStatement(
-                        "val vLayout = %T.structLayout(%T.paddingLayout(fOffsetL), %M.withName(fName), %T.paddingLayout(STRUCT_SIZE - fOffsetL - fSizeL))",
-                        MemoryLayout::class, MemoryLayout::class, field.ty.layoutMember, MemoryLayout::class
-                    )
+                    .addStatement("val vLayouts = mutableListOf<%T>()", MemoryLayout::class)
+                    // Rust側の offset_of! は Enum 先頭からの絶対オフセットなので、それをそのままパディングに使用
+                    .addStatement("if (fOffsetL > 0) vLayouts.add(%T.paddingLayout(fOffsetL))", MemoryLayout::class)
+                    .addStatement("vLayouts.add(%M.withName(fName))", field.ty.layoutMember)
+                    // Enum全体のサイズに合わせるための末尾パディング
+                    .addStatement("val remaining = STRUCT_SIZE - fOffsetL - fSizeL")
+                    .addStatement("if (remaining > 0) vLayouts.add(%T.paddingLayout(remaining))", MemoryLayout::class)
+                    .addStatement("val vLayout = %T.structLayout(*vLayouts.toTypedArray())", MemoryLayout::class)
                     .addStatement(
                         "this.VH_${variant.name}_${field.name.toCamelCase()} = vLayout.varHandle(%T.PathElement.groupElement(fName))",
                         MemoryLayout::class
@@ -204,13 +260,15 @@ object CompanionGenerator {
             }
             init.endControlFlow()
         }
-        init.endControlFlow()
-            .endControlFlow()
-            .endControlFlow()
-            .addStatement(
-                "this.LAYOUT = %T.structLayout(%T.paddingLayout(STRUCT_SIZE))",
-                MemoryLayout::class,
-                MemoryLayout::class
-            )
+        init.endControlFlow() // fInfo loop
+            .endControlFlow() // if vFields not empty
+            .endControlFlow() // parts loop
+
+        init.addStatement(
+            "this.LAYOUT = if (STRUCT_SIZE > 0) %T.structLayout(%T.paddingLayout(STRUCT_SIZE)) else %T.structLayout()",
+            MemoryLayout::class,
+            MemoryLayout::class,
+            MemoryLayout::class
+        )
     }
 }

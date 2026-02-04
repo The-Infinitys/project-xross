@@ -4,7 +4,7 @@ use quote::{format_ident, quote};
 use std::fs;
 use std::path::{Path, PathBuf};
 use syn::{Attribute, Expr, ExprLit, Lit, Meta, Type};
-use xross_metadata::{ThreadSafety, XrossDefinition, XrossType};
+use xross_metadata::{Ownership, ThreadSafety, XrossDefinition, XrossType};
 
 const XROSS_DIR: &str = "target/xross";
 
@@ -145,14 +145,50 @@ pub fn resolve_type_with_attr(
     current_ident: Option<&syn::Ident>,
     strict: bool,
 ) -> XrossType {
-    // --- 1. 参照を剥いて中身を確認 (Self 判定のため) ---
-    let mut current_ty = ty;
-    while let Type::Reference(r) = current_ty {
-        current_ty = &r.elem;
-    }
-    let ty = current_ty;
+    // 1. まず参照かどうかを判定し、中身の型(inner_ty)を特定する
+    let (inner_ty, ownership) = match ty {
+        Type::Reference(r) => {
+            let ow = if r.mutability.is_some() {
+                Ownership::MutRef
+            } else {
+                Ownership::Ref
+            };
+            (&*r.elem, ow)
+        }
+        _ => (ty, Ownership::Owned),
+    };
 
-    if let Type::Path(tp) = ty {
+    // 2. 属性による明示的な指定をチェック
+    let mut xross_ty = None;
+    for attr in attrs {
+        if attr.path().is_ident("xross") {
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("struct") {
+                    xross_ty = Some(XrossType::RustStruct {
+                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
+                        ownership: ownership.clone(), // 判定した所有権を適用
+                    });
+                } else if meta.path.is_ident("enum") {
+                    xross_ty = Some(XrossType::RustEnum {
+                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
+                        ownership: ownership.clone(),
+                    });
+                } else if meta.path.is_ident("opaque") {
+                    xross_ty = Some(XrossType::Object {
+                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
+                        ownership: ownership.clone(),
+                    });
+                }
+                Ok(())
+            });
+        }
+    }
+    if let Some(ty) = xross_ty {
+        return ty;
+    }
+
+    // 3. Self 判定 (inner_ty を使用)
+    if let Type::Path(tp) = inner_ty {
         if tp.path.is_ident("Self") {
             if let Some(ident) = current_ident {
                 let sig = if current_pkg.is_empty() {
@@ -160,72 +196,83 @@ pub fn resolve_type_with_attr(
                 } else {
                     format!("{}.{}", current_pkg, ident)
                 };
-                // Self は現在の定義対象と同じ型なので、シグネチャを持たせて返す
-                return XrossType::Object { signature: sig };
-            }
-        }
-    }
-
-    // --- 2. 属性による明示的な指定をチェック ---
-    for attr in attrs {
-        if attr.path().is_ident("xross") {
-            let mut xross_ty = None;
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("struct") {
-                    xross_ty = Some(XrossType::RustStruct {
-                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
-                    });
-                } else if meta.path.is_ident("enum") {
-                    xross_ty = Some(XrossType::RustEnum {
-                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
-                    });
-                } else if meta.path.is_ident("opaque") {
-                    xross_ty = Some(XrossType::Object {
-                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
-                    });
-                }
-                Ok(())
-            });
-            if let Some(ty) = xross_ty {
-                return ty;
-            }
-        }
-    }
-
-    // --- 3. 標準的な型マッピング ---
-    let xross_ty = map_type(ty);
-
-    // --- 4. map_typeの結果が Object(Unknown) だった場合のフォールバック ---
-    if let XrossType::Object { signature } = &xross_ty {
-        // 現在解析中の型名そのものを使っている場合 (例: MyService)
-        if let Some(ident) = current_ident {
-            let self_name = ident.to_string();
-            if signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name) {
                 return XrossType::Object {
-                    signature: if current_pkg.is_empty() {
-                        self_name
-                    } else {
-                        format!("{}.{}", current_pkg, self_name)
-                    },
+                    signature: sig,
+                    ownership: ownership.clone(),
                 };
             }
         }
+    }
 
-        // FFI公開対象(strict=true)なのに解決できなかったらエラー
-        if strict {
-            panic!(
-                "Unknown type '{}' at '{}'. \n\
-                If this is a JvmClass, ensure the name matches or use Self. \n\
-                Otherwise, use #[xross(opaque = \"pkg.Name\")] to define it.",
-                signature,
-                current_ident.map(|i| i.to_string()).unwrap_or_default()
-            );
+    // 4. 標準的な型マッピング (inner_ty を map_type に渡す)
+    // ※ map_type が返す XrossType に ownership プロパティが含まれるよう修正されている前提
+    let mut final_ty = map_type(inner_ty);
+
+    // --- 5. Ownership の反映と Object(Unknown) のフォールバック ---
+    match &mut final_ty {
+        XrossType::RustStruct {
+            ownership: o,
+            signature,
+            ..
+        }
+        | XrossType::RustEnum {
+            ownership: o,
+            signature,
+            ..
+        }
+        | XrossType::Object {
+            ownership: o,
+            signature,
+            ..
+        } => {
+            *o = ownership; // 冒頭で判定した参照情報を適用
+
+            // 現在解析中の型名そのものを使っている場合 (例: MyService) の補完
+            if let Some(ident) = current_ident {
+                let self_name = ident.to_string();
+                // 型名単体、またはフルパスで一致するか確認
+                if signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
+                {
+                    *signature = if current_pkg.is_empty() {
+                        self_name
+                    } else {
+                        format!("{}.{}", current_pkg, self_name)
+                    };
+                }
+            }
+        }
+        _ => {} // プリミティブ型などは Ownership を持たないので何もしない
+    }
+
+    // --- 6. 未解決型のバリデーション (strict = true の場合) ---
+    if strict {
+        if let XrossType::Object { signature, .. } = &final_ty {
+            // プロジェクト内で定義された型(current_ident)でない、
+            // かつ map_type でも解決できなかった型は、バインディング生成不能としてエラーにする
+            let is_known_self = current_ident.map_or(false, |ident| {
+                let self_name = ident.to_string();
+                signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
+            });
+
+            if !is_known_self {
+                panic!(
+                    "\n[Xross Error] Failed to resolve type: '{}'\n\
+                    Context: Inside implementation of '{}'\n\n\
+                    Possible solutions:\n\
+                    1. If this is another JvmClass, use its full signature.\n\
+                    2. Use 'Self' if you are referring to the current type.\n\
+                    3. Use #[xross(opaque = \"package.Name\")] to explicitly define it as an opaque pointer.\n",
+                    signature,
+                    current_ident
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "Unknown".into())
+                );
+            }
         }
     }
 
-    xross_ty
+    final_ty
 }
-
 pub fn generate_struct_layout(s: &syn::ItemStruct) -> proc_macro2::TokenStream {
     let name = &s.ident;
     let mut field_parts = Vec::new();
@@ -277,7 +324,9 @@ pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
                     quote! { #v_name . #index }
                 };
 
-                let f_display_name = field.ident.as_ref()
+                let f_display_name = field
+                    .ident
+                    .as_ref()
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| i.to_string());
 

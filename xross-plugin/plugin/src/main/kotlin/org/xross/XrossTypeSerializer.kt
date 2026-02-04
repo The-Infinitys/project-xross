@@ -34,23 +34,24 @@ object XrossTypeSerializer : KSerializer<XrossType> {
                 val name = element.content
                 nameToPrimitive[name] ?: throw IllegalArgumentException("Unknown primitive type: $name")
             }
-            is JsonObject -> {
-                // key は "RustStruct", "RustEnum", "Object" のいずれか
-                val typeKey = element.keys.firstOrNull()
-                val body = element[typeKey]?.jsonObject
-                    ?: throw IllegalArgumentException("Invalid XrossType object: $element")
 
-                val signature = body["signature"]?.jsonPrimitive?.content
-                    ?: throw IllegalArgumentException("Missing signature in $typeKey")
+            is JsonObject -> {
+                val typeKey = element.keys.firstOrNull()
+                val body = element[typeKey]?.jsonObject ?: throw IllegalArgumentException("Invalid body")
+
+                val signature = body["signature"]?.jsonPrimitive?.content ?: ""
+                val ownershipStr = body["ownership"]?.jsonPrimitive?.content ?: "Owned"
+                val ownership = XrossType.Ownership.valueOf(ownershipStr)
 
                 when (typeKey) {
-                    "RustStruct" -> XrossType.RustStruct(signature)
-                    "RustEnum" -> XrossType.RustEnum(signature)
-                    "Object" -> XrossType.Object(signature)
-                    else -> throw IllegalArgumentException("Unknown complex type: $typeKey")
+                    "RustStruct" -> XrossType.RustStruct(signature, ownership)
+                    "RustEnum" -> XrossType.RustEnum(signature, ownership)
+                    "Object" -> XrossType.Object(signature, ownership)
+                    else -> throw IllegalArgumentException("Unknown type: $typeKey")
                 }
             }
-            else -> throw IllegalArgumentException("Invalid JSON element for XrossType")
+
+            else -> throw IllegalArgumentException("Invalid JSON")
         }
     }
 
@@ -58,14 +59,26 @@ object XrossTypeSerializer : KSerializer<XrossType> {
         val jsonOutput = encoder as? JsonEncoder ?: throw IllegalStateException("Only JSON is supported")
         val element = when (value) {
             is XrossType.RustStruct -> buildJsonObject {
-                putJsonObject("RustStruct") { put("signature", value.signature) }
+                putJsonObject("RustStruct") {
+                    put("signature", value.signature)
+                    put("ownership", value.ownership.name)
+                }
             }
+
             is XrossType.RustEnum -> buildJsonObject {
-                putJsonObject("RustEnum") { put("signature", value.signature) }
+                putJsonObject("RustEnum") {
+                    put("signature", value.signature)
+                    put("ownership", value.ownership.name)
+                }
             }
+
             is XrossType.Object -> buildJsonObject {
-                putJsonObject("Object") { put("signature", value.signature) }
+                putJsonObject("Object") {
+                    put("signature", value.signature)
+                    put("ownership", value.ownership.name)
+                }
             }
+
             else -> {
                 val name = nameToPrimitive.entries.find { it.value == value }?.key
                     ?: throw IllegalArgumentException("Unknown type instance: $value")

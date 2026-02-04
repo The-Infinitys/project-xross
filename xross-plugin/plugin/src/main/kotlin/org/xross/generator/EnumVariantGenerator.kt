@@ -1,78 +1,173 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
+import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
+import org.xross.structures.XrossField
+import org.xross.structures.XrossThreadSafety
+import org.xross.structures.XrossType
 import java.lang.foreign.MemorySegment
 
 object EnumVariantGenerator {
+
+    private fun resolveFqn(type: XrossType, meta: XrossDefinition, targetPackage: String): String {
+        val signature = when (type) {
+            is XrossType.RustStruct -> type.signature
+            is XrossType.RustEnum -> type.signature
+            is XrossType.Object -> type.signature
+            else -> return (type.kotlinType as ClassName).canonicalName
+        }
+        return listOf(targetPackage, meta.packageName, signature)
+            .filter { it.isNotEmpty() }
+            .joinToString(".")
+    }
+
     fun generateVariants(
         classBuilder: TypeSpec.Builder,
-        meta: XrossDefinition.Enum
+        meta: XrossDefinition.Enum,
+        targetPackage: String
     ) {
-        val baseClassName = ClassName(meta.packageName.ifEmpty { "org.example" }, meta.name)
+        val baseClassName = ClassName(targetPackage, meta.name)
 
         meta.variants.forEach { variant ->
             val isObject = variant.fields.isEmpty()
-
             val variantTypeBuilder = if (isObject) {
-                // 引数がない場合は object
                 TypeSpec.objectBuilder(variant.name)
             } else {
-                // 引数がある場合は class
                 TypeSpec.classBuilder(variant.name)
             }
 
             variantTypeBuilder.superclass(baseClassName)
 
+            // --- コンストラクタ / 親クラスへの値渡し ---
             if (isObject) {
-                // object の場合、引数なしでスーパークラスを初期化
                 variantTypeBuilder.addSuperclassConstructorParameter(
                     "(new_${variant.name}Handle.invokeExact() as %T).reinterpret(STRUCT_SIZE)",
                     MemorySegment::class
                 )
                 variantTypeBuilder.addSuperclassConstructorParameter("false")
             } else {
-                // class の場合、プライマリコンストラクタで引数を受け取る
                 val constructorBuilder = FunSpec.constructorBuilder()
-                variant.fields.forEach { field ->
-                    constructorBuilder.addParameter(field.name.toCamelCase(), field.ty.kotlinType)
-                }
+                val argsList = mutableListOf<String>()
 
-                val argsList = variant.fields.joinToString { it.name.toCamelCase() }
+                variant.fields.forEach { field ->
+                    val fqn = resolveFqn(field.ty, meta, targetPackage)
+                    val kType = TypeVariableName(" $fqn")
+                    val camelName = field.name.toCamelCase().escapeKotlinKeyword()
+                    constructorBuilder.addParameter(camelName, kType)
+
+                    // 型に応じた引数変換
+                    val argExpr = when (field.ty) {
+                        is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> "$camelName.segment"
+                        is XrossType.Bool -> "if ($camelName) 1.toByte() else 0.toByte()"
+                        else -> camelName
+                    }
+                    argsList.add(argExpr)
+                }
 
                 variantTypeBuilder.primaryConstructor(constructorBuilder.build())
-                    .addSuperclassConstructorParameter(
-                        "(new_${variant.name}Handle.invokeExact($argsList) as %T).reinterpret(STRUCT_SIZE)",
-                        MemorySegment::class
-                    )
-                    .addSuperclassConstructorParameter("false")
+                variantTypeBuilder.addSuperclassConstructorParameter(
+                    "(new_${variant.name}Handle.invokeExact(${argsList.joinToString()}) as %T).reinterpret(STRUCT_SIZE)",
+                    MemorySegment::class
+                )
+                variantTypeBuilder.addSuperclassConstructorParameter("false")
 
-                // フィールドの Getter 定義
+                // --- フィールドプロパティ生成 ---
                 variant.fields.forEach { field ->
-                    val vhName = "VH_${variant.name}_${field.name.toCamelCase()}"
-                    val prop = PropertySpec.builder(field.name.toCamelCase(), field.ty.kotlinType)
-                        .getter(
-                            FunSpec.getterBuilder()
-                                .addStatement("return $vhName.get(segment, 0L) as %T", field.ty.kotlinType)
-                                .build()
-                        )
-                        .build()
-                    variantTypeBuilder.addProperty(prop)
+                    val baseCamelName = field.name.toCamelCase()
+                    val vhName = "VH_${variant.name}_$baseCamelName"
+                    val fqn = resolveFqn(field.ty, meta, targetPackage)
+                    val kType = TypeVariableName(" $fqn")
+
+                    if (field.safety == XrossThreadSafety.Atomic) {
+                        generateAtomicPropertyInVariant(variantTypeBuilder, baseCamelName, vhName, fqn)
+                    } else {
+                        val isMutable = field.safety != XrossThreadSafety.Immutable
+                        val propBuilder = PropertySpec.builder(baseCamelName.escapeKotlinKeyword(), kType)
+                            .mutable(isMutable)
+                            .getter(buildVariantGetter(field, vhName, fqn))
+
+                        if (isMutable) {
+                            propBuilder.setter(buildVariantSetter(field, vhName, fqn))
+                        }
+                        variantTypeBuilder.addProperty(propBuilder.build())
+                    }
                 }
             }
-
             classBuilder.addType(variantTypeBuilder.build())
         }
+    }
 
-        // タグ取得プロパティをベースに追加
-        classBuilder.addProperty(
-            PropertySpec.builder("tag", Int::class)
-                .getter(
-                    FunSpec.getterBuilder()
-                        .addStatement("return get_tagHandle.invokeExact(segment) as Int")
-                        .build()
-                )
+    private fun buildVariantGetter(field: XrossField, vhName: String, fqn: String): FunSpec {
+        val isBorrowed = !field.ty.isOwned
+
+        val segRef = "segment"
+
+        val rawReadExpr = when (field.ty) {
+            is XrossType.Bool -> "($vhName.get($segRef, 0L) as Byte) != (0).toByte()"
+            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object ->
+                "$fqn($vhName.get($segRef, 0L) as java.lang.foreign.MemorySegment, isBorrowed = $isBorrowed)"
+            else -> "$vhName.get($segRef, 0L) as $fqn"
+        }
+
+        return FunSpec.getterBuilder().addCode("""
+            var stamp = sl.tryOptimisticRead()
+            var res = $rawReadExpr
+            if (!sl.validate(stamp)) {
+                stamp = sl.readLock()
+                try { res = $rawReadExpr } finally { sl.unlockRead(stamp) }
+            }
+            return res
+        """.trimIndent() + "\n").build()
+    }
+
+    private fun buildVariantSetter(field: XrossField, vhName: String, fqn: String): FunSpec {
+        val segRef = "segment"
+
+        val rawWriteExpr = when (field.ty) {
+            is XrossType.Bool -> "$vhName.set($segRef, 0L, if (v) 1.toByte() else 0.toByte())"
+            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> "$vhName.set($segRef, 0L, v.segment)"
+            else -> "$vhName.set($segRef, 0L, v)"
+        }
+
+        return FunSpec.setterBuilder().addParameter("v", TypeVariableName(" $fqn")).addCode("""
+            val stamp = sl.writeLock()
+            try { $rawWriteExpr } finally { sl.unlockWrite(stamp) }
+        """.trimIndent() + "\n").build()
+    }
+
+    private fun generateAtomicPropertyInVariant(
+        builder: TypeSpec.Builder,
+        baseName: String,
+        vhName: String,
+        fqn: String
+    ) {
+        val kType = TypeVariableName(" $fqn")
+        val innerClassName = "AtomicFieldOf${baseName.replaceFirstChar { it.uppercase() }}"
+        val segRef = "segment"
+
+        val innerClass = TypeSpec.classBuilder(innerClassName).addModifiers(KModifier.INNER)
+            .addProperty(PropertySpec.builder("value", kType)
+                .getter(FunSpec.getterBuilder()
+                    .addStatement("return $vhName.getVolatile($segRef, 0L) as $fqn").build())
+                .build())
+            .addFunction(FunSpec.builder("update")
+                .addParameter("block", LambdaTypeName.get(null, kType, returnType = kType))
+                .returns(kType)
+                .beginControlFlow("while (true)")
+                .addStatement("val current = value")
+                .addStatement("val next = block(current)")
+                .beginControlFlow("if ($vhName.compareAndSet($segRef, 0L, current, next))")
+                .addStatement("return next")
+                .endControlFlow()
+                .endControlFlow().build())
+            .build()
+
+        builder.addType(innerClass)
+        builder.addProperty(
+            PropertySpec.builder(baseName.escapeKotlinKeyword(), ClassName("", innerClassName))
+                .initializer("%L()", innerClassName)
                 .build()
         )
     }

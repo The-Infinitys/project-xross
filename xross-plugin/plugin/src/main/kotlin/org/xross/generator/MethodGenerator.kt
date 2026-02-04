@@ -156,6 +156,7 @@ object MethodGenerator {
                 if (method.methodType == XrossMethodType.OwnedInstance) body.addStatement("this.segment = %T.NULL", MemorySegment::class)
             }
             method.ret is XrossType.RustString -> {
+                // ... (既存の文字列処理) ...
                 body.beginControlFlow("run")
                 body.addStatement("val res = $call as %T", MemorySegment::class)
                 body.addStatement("val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)", MemorySegment::class, Long::class)
@@ -167,14 +168,25 @@ object MethodGenerator {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = $call as %T", MemorySegment::class)
                 body.addStatement("val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret(STRUCT_SIZE)", MemorySegment::class)
-                // コンストラクタ呼び出し
-                body.addStatement("%T(res, isBorrowed = false)", returnType)
+
+                // --- ここが修正箇所 ---
+                // メタデータの Ownership を判定
+                val isBorrowed = when (val retType = method.ret) {
+                    is XrossType.RustStruct -> retType.ownership != XrossType.Ownership.Owned
+                    is XrossType.RustEnum -> retType.ownership != XrossType.Ownership.Owned
+                    is XrossType.Object -> retType.ownership != XrossType.Ownership.Owned
+                    else -> false
+                }
+
+                // 動的に isBorrowed の値を埋め込む
+                body.addStatement("%T(res, isBorrowed = $isBorrowed)", returnType)
+                // ----------------------
+
                 body.endControlFlow()
             }
             else -> body.addStatement("$call as %T", returnType)
         }
     }
-
     private fun generatePublicConstructor(classBuilder: TypeSpec.Builder, method: XrossMethod) {
         val builder = FunSpec.constructorBuilder()
         method.args.forEach { builder.addParameter(it.name.toCamelCase().escapeKotlinKeyword(), it.ty.kotlinType) }

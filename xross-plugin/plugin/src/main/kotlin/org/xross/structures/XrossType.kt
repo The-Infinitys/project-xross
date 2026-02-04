@@ -18,9 +18,11 @@ sealed class XrossType {
     object Pointer : XrossType()
     object RustString : XrossType() // Rust String
 
-    data class RustStruct(val signature: String) : XrossType()
-    data class RustEnum(val signature: String) : XrossType()
-    data class Object(val signature: String) : XrossType()
+    enum class Ownership { Owned, Ref, MutRef }
+
+    data class RustStruct(val signature: String, val ownership: Ownership = Ownership.Owned) : XrossType()
+    data class RustEnum(val signature: String, val ownership: Ownership = Ownership.Owned) : XrossType()
+    data class Object(val signature: String, val ownership: Ownership = Ownership.Owned) : XrossType()
 
     /** KotlinPoet 用の型取得 */
     val kotlinType: TypeName
@@ -64,4 +66,12 @@ sealed class XrossType {
         val JAVA_CHAR = MemberName(PKG, "JAVA_CHAR")
         val ADDRESS = MemberName(PKG, "ADDRESS")
     }
+
+    val isOwned: Boolean
+        get() = when (this) {
+            is RustStruct -> ownership == Ownership.Owned
+            is RustEnum -> ownership == Ownership.Owned
+            is Object -> ownership == Ownership.Owned
+            else -> false
+        }
 }

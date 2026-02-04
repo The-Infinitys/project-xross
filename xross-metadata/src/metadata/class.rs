@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum XrossDefinition {
     Struct(XrossStruct),
     Enum(XrossEnum),
+    Opaque(XrossOpaque), // 追加
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -32,10 +33,22 @@ pub struct XrossEnum {
     pub docs: Vec<String>,
 }
 
+// 追加: メソッドやフィールドを持たない、ポインタ管理専用の定義
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct XrossOpaque {
+    pub signature: String,
+    pub symbol_prefix: String,
+    pub package_name: String,
+    pub name: String,
+    pub docs: Vec<String>,
+    pub is_clonable: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct XrossVariant {
     pub name: String,
-    pub fields: Vec<XrossField>, // 名前なしフィールドは "0", "1" と命名
+    pub fields: Vec<XrossField>,
     pub docs: Vec<String>,
 }

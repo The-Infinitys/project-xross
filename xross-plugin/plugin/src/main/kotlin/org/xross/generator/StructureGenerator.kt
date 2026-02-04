@@ -7,7 +7,7 @@ import java.lang.foreign.MemorySegment
 
 object StructureGenerator {
     fun buildBase(classBuilder: TypeSpec.Builder, meta: XrossDefinition) {
-        // --- AliveFlag: 生存確認フラグ ---
+        // --- AliveFlag ---
         classBuilder.addType(
             TypeSpec.classBuilder("AliveFlag")
                 .addModifiers(KModifier.PRIVATE)
@@ -16,7 +16,7 @@ object StructureGenerator {
                 .build()
         )
 
-        // --- コンストラクタの設定 ---
+        // --- プライマリコンストラクタ ---
         val constructorBuilder = FunSpec.constructorBuilder()
             .addModifiers(KModifier.PRIVATE)
             .addParameter("raw", MemorySegment::class)
@@ -25,16 +25,7 @@ object StructureGenerator {
                 ParameterSpec.builder("sharedFlag", ClassName("", "AliveFlag").copy(nullable = true))
                     .defaultValue("null").build()
             )
-
-        // Enum Class (フィールドなし) の場合は、引数なしコンストラクタにするため調整が必要
-        if (meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }) {
-            // Enum class の各要素は自身のコンパニオン等からセグメントを取得するため、
-            // デフォルト値を設定するか、初期化ロジックを init に逃がす
-            classBuilder.primaryConstructor(constructorBuilder.build())
-        } else {
-            classBuilder.primaryConstructor(constructorBuilder.build())
-        }
-
+        classBuilder.primaryConstructor(constructorBuilder.build())
         // --- プロパティの定義 ---
         classBuilder.addProperty(
             PropertySpec.builder("aliveFlag", ClassName("", "AliveFlag"), KModifier.PRIVATE)
@@ -50,7 +41,6 @@ object StructureGenerator {
         )
 
         // --- StampedLock (sl) の定義 ---
-        // Enum でもメソッド呼び出しがある場合はロックが必要
         if (meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())) {
             classBuilder.addProperty(
                 PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
@@ -60,19 +50,26 @@ object StructureGenerator {
             )
         }
 
-        // --- Enum class 専用の初期化 (各定数へのポインタ割り当て) ---
         if (meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }) {
-            // Simple Enum の場合、各定数に対応する Rust インスタンスを init で生成
             val initBlock = CodeBlock.builder()
                 .beginControlFlow("if (raw == %T.NULL)", MemorySegment::class)
-                .beginControlFlow("segment = when (this.name)")
+                .beginControlFlow("val res = when (this.name)")
                 .apply {
                     meta.variants.forEach { variant ->
-                        addStatement("%S -> %L_new_%L.invokeExact() as %T", variant.name, meta.symbolPrefix, variant.name, MemorySegment::class)
+                        addStatement(
+                            "%S -> new_%LHandle.invokeExact() as %T",
+                            variant.name,
+                            variant.name,
+                            MemorySegment::class
+                        )
                     }
                     addStatement("else -> %T.NULL", MemorySegment::class)
                 }
                 .endControlFlow()
+                .addStatement(
+                    "segment = if (res == %T.NULL || STRUCT_SIZE <= 0L) res else res.reinterpret(STRUCT_SIZE)",
+                    MemorySegment::class
+                )
                 .endControlFlow()
             classBuilder.addInitializerBlock(initBlock.build())
         }
@@ -83,6 +80,7 @@ object StructureGenerator {
         val handleType = ClassName("java.lang.invoke", "MethodHandle")
         classBuilder.addType(buildDeallocator(handleType))
 
+        // cleanable の登録
         classBuilder.addProperty(
             PropertySpec.builder(
                 "cleanable",
@@ -97,16 +95,19 @@ object StructureGenerator {
                 .build()
         )
 
-        // close メソッドの実装
+        // close メソッド
         val closeBody = CodeBlock.builder()
             .beginControlFlow("if (segment != %T.NULL)", MemorySegment::class)
             .addStatement("aliveFlag.isValid = false")
             .apply {
-                val hasLock = meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())
+                // ロックを保持しているかチェック
+                val hasLock =
+                    meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())
                 if (hasLock) {
                     addStatement("val stamp = sl.writeLock()")
                     beginControlFlow("try")
                     addStatement("cleanable?.clean()")
+                    // 2重解放防止のため、clean後にNULLをセット
                     addStatement("segment = %T.NULL", MemorySegment::class)
                     nextControlFlow("finally")
                     addStatement("sl.unlockWrite(stamp)")

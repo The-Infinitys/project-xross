@@ -6,7 +6,7 @@ use quote::{format_ident, quote};
 use syn::{FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type, parse_macro_input};
 use utils::*;
 use xross_metadata::{
-    ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
+    Ownership, ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
     XrossStruct, XrossType, XrossVariant,
 };
 
@@ -35,22 +35,22 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
             if let syn::Fields::Named(f) = &s.fields {
                 for field in &f.named {
                     if field.attrs.iter().any(|a| a.path().is_ident("jvm_field")) {
+                        let xross_ty = resolve_type_with_attr(
+                            &field.ty,
+                            &field.attrs,
+                            &package,
+                            Some(name),
+                            false,
+                        );
                         fields.push(XrossField {
                             name: field.ident.as_ref().unwrap().to_string(),
-                            ty: resolve_type_with_attr(
-                                &field.ty,
-                                &field.attrs,
-                                &package,
-                                Some(name),
-                                false,
-                            ),
+                            ty: xross_ty,
                             safety: extract_safety_attr(&field.attrs, ThreadSafety::Lock),
                             docs: extract_docs(&field.attrs),
                         });
                     }
                 }
             }
-
             save_definition(
                 name,
                 &XrossDefinition::Struct(XrossStruct {
@@ -107,7 +107,7 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
 
                     v_fields.push(XrossField {
                         name: field_name,
-                        ty: ty.clone(),
+                        ty: ty.clone(), // ここに Ownership 情報が含まれている
                         safety: ThreadSafety::Lock,
                         docs: extract_docs(&field.attrs),
                     });
@@ -115,20 +115,25 @@ pub fn jvm_class_derive(input: TokenStream) -> TokenStream {
                     let arg_id = format_ident!("arg_{}", i);
                     let raw_ty = &field.ty;
 
-                    if matches!(
+                    // ty.is_owned() を使って Box::from_raw するか判定
+                    if ty.is_owned() {
+                        c_param_defs.push(quote! { #arg_id: *mut std::ffi::c_void });
+                        internal_conversions.push(
+                            quote! { let #arg_id = *Box::from_raw(#arg_id as *mut #raw_ty); },
+                        );
+                    } else if matches!(
                         ty,
                         XrossType::RustStruct { .. }
                             | XrossType::RustEnum { .. }
                             | XrossType::Object { .. }
                     ) {
+                        // 参照(&T)の場合
                         c_param_defs.push(quote! { #arg_id: *mut std::ffi::c_void });
-                        internal_conversions.push(
-                            quote! { let #arg_id = *Box::from_raw(#arg_id as *mut #raw_ty); },
-                        );
+                        internal_conversions
+                            .push(quote! { let #arg_id = &*(#arg_id as *const #raw_ty); });
                     } else {
                         c_param_defs.push(quote! { #arg_id: #raw_ty });
                     }
-
                     if let Some(id) = &field.ident {
                         call_args.push(quote! { #id: #arg_id });
                     } else {
@@ -212,6 +217,9 @@ pub fn jvm_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let (package_name, symbol_base, is_struct) = match &definition {
         XrossDefinition::Struct(s) => (s.package_name.clone(), s.symbol_prefix.clone(), true),
         XrossDefinition::Enum(e) => (e.package_name.clone(), e.symbol_prefix.clone(), false),
+        XrossDefinition::Opaque(_) => {
+            panic!("Unsupported. Why is there Opaque??????")
+        }
     };
 
     let mut extra_functions = Vec::new();
@@ -335,24 +343,56 @@ pub fn jvm_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     format!("{}.{}", package_name, type_name_ident)
                 };
+                // コンストラクタ(jvm_new)は常に所有権を返す
                 if is_struct {
-                    XrossType::RustStruct { signature: sig }
+                    XrossType::RustStruct {
+                        signature: sig,
+                        ownership: Ownership::Owned,
+                    }
                 } else {
-                    XrossType::RustEnum { signature: sig }
+                    XrossType::RustEnum {
+                        signature: sig,
+                        ownership: Ownership::Owned,
+                    }
                 }
             } else {
                 match &method.sig.output {
                     ReturnType::Default => XrossType::Void,
-                    ReturnType::Type(_, ty) => resolve_type_with_attr(
-                        ty,
-                        &method.attrs,
-                        &package_name,
-                        Some(type_name_ident),
-                        true,
-                    ),
+                    ReturnType::Type(_, ty) => {
+                        // 1. まず通常の型解決を行う
+                        let mut xross_ty = resolve_type_with_attr(
+                            ty,
+                            &method.attrs,
+                            &package_name,
+                            Some(type_name_ident),
+                            true,
+                        );
+
+                        // 2. 戻り値が参照 (&T や &mut T) かどうかを判定
+                        let ownership = match &**ty {
+                            Type::Reference(r) => {
+                                if r.mutability.is_some() {
+                                    Ownership::MutRef
+                                } else {
+                                    Ownership::Ref
+                                }
+                            }
+                            _ => Ownership::Owned,
+                        };
+
+                        // 3. XrossTypeが構造体やオブジェクトの場合、判定したOwnershipを上書きする
+                        match &mut xross_ty {
+                            XrossType::RustStruct { ownership: o, .. }
+                            | XrossType::RustEnum { ownership: o, .. }
+                            | XrossType::Object { ownership: o, .. } => {
+                                *o = ownership;
+                            }
+                            _ => {}
+                        }
+                        xross_ty
+                    }
                 }
             };
-
             methods_meta.push(XrossMethod {
                 name: rust_fn_name.to_string(),
                 symbol: symbol_name.clone(),
@@ -371,27 +411,25 @@ pub fn jvm_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     quote! { *mut std::ffi::c_char },
                     quote! { std::ffi::CString::new(#inner_call).unwrap_or_default().into_raw() },
                 ),
-                XrossType::RustStruct { .. }
-                | XrossType::RustEnum { .. }
-                | XrossType::Object { .. } => {
-                    let is_reference = if let ReturnType::Type(_, ty) = &method.sig.output {
-                        matches!(**ty, Type::Reference(_))
-                    } else {
-                        false
-                    };
-
-                    if is_reference {
-                        // 参照を返す場合は、すでに有効なメモリを指しているため Box 化せずそのままキャスト
-                        (
-                            quote! { *mut std::ffi::c_void },
-                            quote! { #inner_call as *const _ as *mut std::ffi::c_void },
-                        )
-                    } else {
-                        // 値（所有権）を返す場合は、ヒープに固定してポインタを渡す
-                        (
-                            quote! { *mut std::ffi::c_void },
-                            quote! { Box::into_raw(Box::new(#inner_call)) as *mut std::ffi::c_void },
-                        )
+                XrossType::RustStruct { ownership, .. }
+                | XrossType::RustEnum { ownership, .. }
+                | XrossType::Object { ownership, .. } => {
+                    // Ownership 列挙型に基づいて処理を分岐
+                    match ownership {
+                        Ownership::Ref | Ownership::MutRef => {
+                            // 参照を返す場合は、すでに有効なメモリを指しているためポインタへキャストするのみ
+                            (
+                                quote! { *mut std::ffi::c_void },
+                                quote! { #inner_call as *const _ as *mut std::ffi::c_void },
+                            )
+                        }
+                        Ownership::Owned => {
+                            // 所有権（値）を返す場合は、ヒープに固定(Box化)してポインタを渡す
+                            (
+                                quote! { *mut std::ffi::c_void },
+                                quote! { Box::into_raw(Box::new(#inner_call)) as *mut std::ffi::c_void },
+                            )
+                        }
                     }
                 }
                 _ => {
@@ -416,8 +454,93 @@ pub fn jvm_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
     match &mut definition {
         XrossDefinition::Struct(s) => s.methods = methods_meta,
         XrossDefinition::Enum(e) => e.methods = methods_meta,
+        XrossDefinition::Opaque(_) => {
+            panic!("Unsupported. Why is there Opaque??????")
+        }
     }
 
     save_definition(type_name_ident, &definition);
     quote! { #input_impl #(#extra_functions)* }.into()
+}
+
+
+#[proc_macro]
+pub fn opaque_class(input: TokenStream) -> TokenStream {
+    let input_str = input.to_string();
+    let parts: Vec<&str> = input_str.split(',').map(|s| s.trim()).collect();
+
+    let (package, name_str, is_clonable) = match parts.len() {
+        // パターン1: opaque_class!(UnknownStruct)
+        1 => ("".to_string(), parts[0], true),
+        // パターン2: opaque_class!(com.example, UnknownStruct)
+        //          or opaque_class!(UnknownStruct, false)
+        2 => {
+            let second = parts[1].to_lowercase();
+            if second == "true" || second == "false" {
+                ("".to_string(), parts[0], second.parse().unwrap())
+            } else {
+                (parts[0].replace(" ", ""), parts[1], true)
+            }
+        },
+        // パターン3: opaque_class!(com.example, UnknownStruct, false)
+        3 => (
+            parts[0].replace(" ", ""),
+            parts[1],
+            parts[2].to_lowercase().parse().unwrap_or(true)
+        ),
+        _ => panic!("opaque_class! expects 1 to 3 arguments: (ClassName), (Pkg, Class), or (Pkg, Class, IsClonable)"),
+    };
+    let name_ident = format_ident!("{}", name_str);
+
+    let crate_name = std::env::var("CARGO_PKG_NAME")
+        .unwrap_or_else(|_| "unknown_crate".to_string())
+        .replace("-", "_");
+
+    let symbol_base = build_symbol_base(&crate_name, &package, name_str);
+
+    // メタデータの保存 (is_clonable を追加)
+    let definition = XrossDefinition::Opaque(xross_metadata::XrossOpaque {
+        signature: if package.is_empty() { name_str.to_string() } else { format!("{}.{}", package, name_str) },
+        symbol_prefix: symbol_base.clone(),
+        package_name: package,
+        name: name_str.to_string(),
+        is_clonable, // メタデータに反映
+        docs: vec![format!("Opaque wrapper for {}", name_str)],
+    });
+    save_definition(&name_ident, &definition);
+
+    let drop_fn = format_ident!("{}_drop", symbol_base);
+    let size_fn = format_ident!("{}_size", symbol_base);
+
+    // Clone 関数の生成条件分岐
+    let clone_ffi = if is_clonable {
+        let clone_fn = format_ident!("{}_clone", symbol_base);
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #clone_fn(ptr: *mut #name_ident) -> *mut #name_ident {
+                if ptr.is_null() { return std::ptr::null_mut(); }
+                Box::into_raw(Box::new((*ptr).clone()))
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let generated = quote! {
+        #clone_ffi
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn #drop_fn(ptr: *mut #name_ident) {
+            if !ptr.is_null() {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn #size_fn() -> usize {
+            std::mem::size_of::<#name_ident>()
+        }
+    };
+
+    generated.into()
 }

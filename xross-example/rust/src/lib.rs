@@ -19,6 +19,15 @@ pub struct UnknownStruct {
     pub f: f32,
     pub s: String,
 }
+xross_core::opaque_class!(com.example, UnknownStruct);
+
+pub enum UnClonable {
+    S,
+    Y,
+    Z,
+}
+
+xross_core::opaque_class!(UnClonable, false);
 
 #[derive(Clone, JvmClass)]
 pub enum XrossTestEnum {
@@ -122,3 +131,4 @@ pub mod test {
         }
     }
 }
+

@@ -40,4 +40,17 @@ sealed class XrossDefinition {
         override val methods: List<XrossMethod> = emptyList(),
         override val docs: List<String> = emptyList()
     ) : XrossDefinition()
+
+    @Serializable
+    @SerialName("opaque")
+    data class Opaque(
+        override val signature: String,
+        override val symbolPrefix: String,
+        override val packageName: String,
+        override val name: String,
+        // 中身は公開されないため、メソッドやドキュメントは最小限（あるいは無し）
+        override val methods: List<XrossMethod> = emptyList(),
+        override val docs: List<String> = emptyList(),
+        val isClonable: Boolean = true
+    ) : XrossDefinition()
 }

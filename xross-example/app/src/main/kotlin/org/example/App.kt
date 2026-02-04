@@ -40,9 +40,20 @@ fun main() {
         }
     }
 }
-fun executeEnumTest(){
-    val enum1= XrossTestEnum.A
+
+fun executeEnumTest() {
+    val enum1 = XrossTestEnum.A
+    val enum2 = XrossTestEnum.B(1)
+    println(enum1)
+    println(enum2.i)
+    enum2.i = 10
+    println(enum2.i)
+    val myService = MyService()
+    val unknownStruct = myService.unknownStruct
+    val enum3 = XrossTestEnum.C(unknownStruct)
+    println(enum3.j)
 }
+
 fun executeMemoryLeakTest() {
     println("\n--- [1] Memory Leak & Stability Test ---")
     val iterations = (10.0).pow(8).toInt()
@@ -51,7 +62,7 @@ fun executeMemoryLeakTest() {
 
     for (i in 1..iterations) {
         service.createClone().use { clone ->
-            clone.`val`.set { i }
+            clone.`val`.update { i }
             val res = clone.execute()
             if (i % reportInterval == 0) {
                 val usedMem = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024
@@ -100,7 +111,7 @@ fun executeConcurrencyTest() {
         executor.submit {
             repeat(opsPerThread) {
                 // 生成された Atomic ヘルパーを使用
-                shared.`val`.set { it + 1 }
+                shared.`val`.update { it + 1 }
             }
         }
     }
@@ -108,7 +119,7 @@ fun executeConcurrencyTest() {
     executor.shutdown()
     if (executor.awaitTermination(1, TimeUnit.MINUTES)) {
         val end = System.currentTimeMillis()
-        val finalVal = shared.`val`.get()
+        val finalVal = shared.`val`.value
         println("Concurrency test finished in ${end - start}ms")
         println("Final shared value: $finalVal (Expected: $expectedFinalValue)")
 
