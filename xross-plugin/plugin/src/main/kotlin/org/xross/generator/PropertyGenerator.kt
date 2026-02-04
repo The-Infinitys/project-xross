@@ -49,7 +49,7 @@ object PropertyGenerator {
 
     private fun buildGetter(field: XrossField, vhName: String, isLocked: Boolean, fqn: String): FunSpec {
 
-        val isBorrowed = !field.ty.isOwned
+        val isBorrowed = !field.ty.isCopy
         // 内部クラスからのアクセスの場合は this@Parent.segment、そうでない場合は segment
         val segmentRef =
             "segment"
@@ -62,6 +62,7 @@ object PropertyGenerator {
             is XrossType.RustString -> "(($vhRef.get($segmentRef, 0L) as java.lang.foreign.MemorySegment).let { if (it == java.lang.foreign.MemorySegment.NULL) it else it.reinterpret(kotlin.Long.MAX_VALUE) })"
             is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object ->
                 "$fqn($vhRef.get($segmentRef, 0L) as java.lang.foreign.MemorySegment, isBorrowed = $isBorrowed)"
+
             else -> "$vhRef.get($segmentRef, 0L) as $fqn"
         }
 
@@ -69,7 +70,8 @@ object PropertyGenerator {
             if (!isLocked) {
                 addStatement("return $rawRead")
             } else {
-                addCode("""
+                addCode(
+                    """
                     var stamp = sl.tryOptimisticRead()
                     var res = $rawRead
                     if (!sl.validate(stamp)) {
@@ -77,7 +79,8 @@ object PropertyGenerator {
                         try { res = $rawRead } finally { sl.unlockRead(stamp) }
                     }
                     return res
-                """.trimIndent() + "\n")
+                """.trimIndent() + "\n"
+                )
             }
         }.build()
     }
@@ -100,34 +103,50 @@ object PropertyGenerator {
         }.build()
     }
 
-    private fun generateAtomicProperty(classBuilder: TypeSpec.Builder, baseName: String, escapedName: String, vhName: String, fqn: String) {
+    private fun generateAtomicProperty(
+        classBuilder: TypeSpec.Builder,
+        baseName: String,
+        escapedName: String,
+        vhName: String,
+        fqn: String
+    ) {
         val innerClassName = "AtomicFieldOf${baseName.replaceFirstChar { it.uppercase() }}"
         val kType = TypeVariableName(" $fqn")
 
         val innerClass = TypeSpec.classBuilder(innerClassName).addModifiers(KModifier.INNER)
-            .addProperty(PropertySpec.builder("value", kType)
-                .getter(FunSpec.getterBuilder()
-                    .addStatement("return $vhName.getVolatile(segment, 0L) as $fqn").build())
-                .build())
-            .addFunction(FunSpec.builder("update")
-                .addParameter("block", LambdaTypeName.get(null, kType, returnType = kType))
-                .returns(kType)
-                .beginControlFlow("while (true)")
-                .addStatement("val current = value")
-                .addStatement("val next = block(current)")
-                .beginControlFlow("if ($vhName.compareAndSet(segment, 0L, current, next))")
-                .addStatement("return next")
-                .endControlFlow()
-                .endControlFlow().build())
-            .addFunction(FunSpec.builder("compareAndSet")
-                .addParameter("expected", kType)
-                .addParameter("newValue", kType)
-                .returns(BOOLEAN)
-                .addStatement("return $vhName.compareAndSet(segment, 0L, expected, newValue)").build())
+            .addProperty(
+                PropertySpec.builder("value", kType)
+                    .getter(
+                        FunSpec.getterBuilder()
+                            .addStatement("return $vhName.getVolatile(segment, 0L) as $fqn").build()
+                    )
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("update")
+                    .addParameter("block", LambdaTypeName.get(null, kType, returnType = kType))
+                    .returns(kType)
+                    .beginControlFlow("while (true)")
+                    .addStatement("val current = value")
+                    .addStatement("val next = block(current)")
+                    .beginControlFlow("if ($vhName.compareAndSet(segment, 0L, current, next))")
+                    .addStatement("return next")
+                    .endControlFlow()
+                    .endControlFlow().build()
+            )
+            .addFunction(
+                FunSpec.builder("compareAndSet")
+                    .addParameter("expected", kType)
+                    .addParameter("newValue", kType)
+                    .returns(BOOLEAN)
+                    .addStatement("return $vhName.compareAndSet(segment, 0L, expected, newValue)").build()
+            )
             .build()
 
         classBuilder.addType(innerClass)
-        classBuilder.addProperty(PropertySpec.builder(escapedName, ClassName("", innerClassName))
-            .initializer("%L()", innerClassName).build())
+        classBuilder.addProperty(
+            PropertySpec.builder(escapedName, ClassName("", innerClassName))
+                .initializer("%L()", innerClassName).build()
+        )
     }
 }

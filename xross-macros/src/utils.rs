@@ -120,19 +120,27 @@ pub fn generate_common_ffi(
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #drop_id(ptr: *mut #name) {
-            if !ptr.is_null() { drop(unsafe { Box::from_raw(ptr) }); }
+            // Box::from_raw は「そのアドレスが malloc された先頭であること」を要求します。
+            // もしズレたアドレス（フィールドへのポインタ）が渡されるとここで死ぬため、
+            // Kotlin側の isBorrowed フラグが正しく機能していることが前提となります。
+            if !ptr.is_null() {
+                drop(unsafe { Box::from_raw(ptr) });
+            }
         }
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
             if ptr.is_null() { return std::ptr::null_mut(); }
-            Box::into_raw(Box::new(unsafe { &*ptr }.clone()))
-        }
 
+            if ptr.is_null() { return std::ptr::null_mut(); }
+            // ptr が有効な #name のインスタンスを指していることを仮定
+            let val_ref = &*ptr; // 生ポインタを安全に参照に変換
+            let cloned_val = val_ref.clone(); // 参照を介して clone() を呼び出す
+            Box::into_raw(Box::new(cloned_val)) // 新しい Box に入れてポインタを返す
+        }
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #layout_id() -> *mut std::ffi::c_char {
             let s = <#name as #trait_name>::xross_layout();
-            // CString::new は \0 を付加する
             std::ffi::CString::new(s).unwrap().into_raw()
         }
     });

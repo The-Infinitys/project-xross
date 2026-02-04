@@ -1,7 +1,0 @@
-[toolchain]
-# 1.95 系の nightly を指定
-channel = "nightly" 
-components = ["rustfmt", "clippy", "rust-src"]
-targets = []
-profile = "minimal"
-

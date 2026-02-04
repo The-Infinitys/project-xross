@@ -50,7 +50,7 @@ fun executeEnumTest() {
     println(enum2.i)
     val myService = MyService()
     val unknownStruct = myService.unknownStruct
-    val enum3 = XrossTestEnum.C(unknownStruct)
+    val enum3 = XrossTestEnum.C(unknownStruct.clone())
     println(enum3.j)
 }
 

@@ -463,7 +463,6 @@ pub fn jvm_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! { #input_impl #(#extra_functions)* }.into()
 }
 
-
 #[proc_macro]
 pub fn opaque_class(input: TokenStream) -> TokenStream {
     let input_str = input.to_string();
@@ -481,14 +480,16 @@ pub fn opaque_class(input: TokenStream) -> TokenStream {
             } else {
                 (parts[0].replace(" ", ""), parts[1], true)
             }
-        },
+        }
         // パターン3: opaque_class!(com.example, UnknownStruct, false)
         3 => (
             parts[0].replace(" ", ""),
             parts[1],
-            parts[2].to_lowercase().parse().unwrap_or(true)
+            parts[2].to_lowercase().parse().unwrap_or(true),
         ),
-        _ => panic!("opaque_class! expects 1 to 3 arguments: (ClassName), (Pkg, Class), or (Pkg, Class, IsClonable)"),
+        _ => panic!(
+            "opaque_class! expects 1 to 3 arguments: (ClassName), (Pkg, Class), or (Pkg, Class, IsClonable)"
+        ),
     };
     let name_ident = format_ident!("{}", name_str);
 
@@ -500,7 +501,11 @@ pub fn opaque_class(input: TokenStream) -> TokenStream {
 
     // メタデータの保存 (is_clonable を追加)
     let definition = XrossDefinition::Opaque(xross_metadata::XrossOpaque {
-        signature: if package.is_empty() { name_str.to_string() } else { format!("{}.{}", package, name_str) },
+        signature: if package.is_empty() {
+            name_str.to_string()
+        } else {
+            format!("{}.{}", package, name_str)
+        },
         symbol_prefix: symbol_base.clone(),
         package_name: package,
         name: name_str.to_string(),
@@ -519,7 +524,10 @@ pub fn opaque_class(input: TokenStream) -> TokenStream {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #clone_fn(ptr: *mut #name_ident) -> *mut #name_ident {
                 if ptr.is_null() { return std::ptr::null_mut(); }
-                Box::into_raw(Box::new((*ptr).clone()))
+                // ptr が有効な #name_ident のインスタンスを指していることを仮定
+                let val_ref = &*ptr; // 生ポインタを安全に参照に変換
+                let cloned_val = val_ref.clone(); // 参照を介して clone() を呼び出す
+                Box::into_raw(Box::new(cloned_val)) // 新しい Box に入れてポインタを返す
             }
         }
     } else {

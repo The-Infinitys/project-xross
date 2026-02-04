@@ -27,7 +27,11 @@ object OpaqueGenerator {
                 )
                 .build()
         )
-
+        classBuilder.addProperty(
+            PropertySpec.builder("isBorrowed", Boolean::class, KModifier.PRIVATE)
+                .initializer("isBorrowed")
+                .build()
+        )
         classBuilder.addProperty(
             PropertySpec.builder("segment", MemorySegment::class, KModifier.INTERNAL)
                 .mutable()
@@ -45,10 +49,8 @@ object OpaqueGenerator {
 
         // --- clone メソッド ---
         if (meta.isClonable) {
-            classBuilder.addSuperinterface(Cloneable::class)
             classBuilder.addFunction(
                 FunSpec.builder("clone")
-                    .addModifiers(KModifier.OVERRIDE)
                     .returns(ClassName(targetPackage, className))
                     .beginControlFlow("try")
                     .addStatement("val newPtr = cloneHandle.invokeExact(segment) as MemorySegment")
@@ -64,7 +66,7 @@ object OpaqueGenerator {
         classBuilder.addFunction(
             FunSpec.builder("close")
                 .addModifiers(KModifier.OVERRIDE)
-                .beginControlFlow("if (segment != MemorySegment.NULL)")
+                .beginControlFlow("if (segment != MemorySegment.NULL && !isBorrowed)")
                 .addStatement("cleanable?.clean()")
                 .addStatement("segment = MemorySegment.NULL")
                 .endControlFlow()

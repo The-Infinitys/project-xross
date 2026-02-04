@@ -247,7 +247,7 @@ object CompanionGenerator {
                     .addStatement("val vLayouts = mutableListOf<%T>()", MemoryLayout::class)
                     // Rust側の offset_of! は Enum 先頭からの絶対オフセットなので、それをそのままパディングに使用
                     .addStatement("if (fOffsetL > 0) vLayouts.add(%T.paddingLayout(fOffsetL))", MemoryLayout::class)
-                    .addStatement("vLayouts.add(%M.withName(fName))", field.ty.layoutMember)
+                    .addStatement("vLayouts.add(%M.withName(fName).withByteAlignment(1))", field.ty.layoutMember)
                     // Enum全体のサイズに合わせるための末尾パディング
                     .addStatement("val remaining = STRUCT_SIZE - fOffsetL - fSizeL")
                     .addStatement("if (remaining > 0) vLayouts.add(%T.paddingLayout(remaining))", MemoryLayout::class)

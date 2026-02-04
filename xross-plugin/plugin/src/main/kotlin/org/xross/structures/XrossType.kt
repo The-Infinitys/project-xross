@@ -74,4 +74,19 @@ sealed class XrossType {
             is Object -> ownership == Ownership.Owned
             else -> false
         }
+    val isCopy: Boolean
+        get() = when (this) {
+            I8, I16, I32, I64, U16, F32, F64, Bool -> true
+            // RustString はポインタ(MemorySegment)からKotlin Stringへ
+            // 変換（コピー）して取り出すため true
+            // ※取り出し後にRust側のバッファを管理する必要がないため
+            RustString -> true
+            // ポインタそのものはコピーしてやり取りする
+            Pointer -> isOwned
+            // 構造体、Enum、不透明オブジェクトは参照（MemorySegment）として
+            // 扱うためコピーではない
+            is RustStruct, is RustEnum, is Object -> false
+            // Voidはデータがない
+            Void -> true
+        }
 }
