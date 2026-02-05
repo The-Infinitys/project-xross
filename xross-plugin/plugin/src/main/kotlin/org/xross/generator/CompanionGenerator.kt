@@ -27,7 +27,7 @@ object CompanionGenerator {
 
         init.add("\n// --- Native Layout Resolution ---\n")
         init.addStatement("var layoutRaw: %T = %T.NULL", MemorySegment::class, MemorySegment::class)
-        init.addStatement("var layoutStr: %T = %S", String::class, "")
+        init.addStatement("var layoutStr = %S", "")
 
         init.beginControlFlow("try")
             .addStatement("layoutRaw = layoutHandle.invokeExact() as %T", MemorySegment::class)
@@ -146,18 +146,17 @@ object CompanionGenerator {
             )
         } else if (meta is XrossDefinition.Enum) {
             init.addStatement(
-                "this.get_tagHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%T.JAVA_INT, %M))",
+                "this.get_tagHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(JAVA_INT, %M))",
                 "${meta.symbolPrefix}_get_tag",
                 FunctionDescriptor::class,
-                ValueLayout::class,
                 ADDRESS
             )
             meta.variants.forEach { v ->
                 val argLayouts = v.fields.map { CodeBlock.of("%M", it.ty.layoutMember) }
                 val desc = if (argLayouts.isEmpty()) CodeBlock.of("%T.of(%M)", FunctionDescriptor::class, ADDRESS)
-                else CodeBlock.of("%T.of(%M, %L)", FunctionDescriptor::class, ADDRESS, argLayouts.joinToCode(", "))
+                else CodeBlock.of("%T.of(%M%L)", FunctionDescriptor::class, ADDRESS, argLayouts)
                 init.addStatement(
-                    "this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",
+                    "this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get()%L)",
                     "${meta.symbolPrefix}_new_${v.name}",
                     desc
                 )
@@ -174,10 +173,10 @@ object CompanionGenerator {
                 args.joinToCode(", ")
             )
             else CodeBlock.of(
-                "%T.of(%M, %L)",
+                "%T.of(%M%L)",
                 FunctionDescriptor::class,
                 method.ret.layoutMember,
-                args.joinToCode(", ")
+                if (args.isEmpty()) "" else ", " + args.joinToCode(", ")
             )
             init.addStatement(
                 "this.${method.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",

@@ -45,25 +45,36 @@ object MethodGenerator {
 
             body.beginControlFlow("try")
 
-            // Arenaが必要なケース（文字列引数）
-            val needsArena = method.args.any { it.ty is XrossType.RustString }
-            if (needsArena) {
-                body.beginControlFlow("%T.ofConfined().use { arena ->", ClassName("java.lang.foreign", "Arena"))
-            }
+            val callArgs = mutableListOf<String>()
+            if (method.methodType != XrossMethodType.Static) callArgs.add("currentSegment")
 
-            val invokeArgs = mutableListOf<String>()
-            if (method.methodType != XrossMethodType.Static) invokeArgs.add("currentSegment")
-
+            // Argument preparation and null checks
+            val argPreparationBody = CodeBlock.builder()
             method.args.forEach { arg ->
                 val name = arg.name.toCamelCase().escapeKotlinKeyword()
                 when (arg.ty) {
-                    is XrossType.RustString -> invokeArgs.add("arena.allocateFrom($name)")
-                    is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> invokeArgs.add("$name.segment")
-                    else -> invokeArgs.add(name)
+                    is XrossType.RustString -> {
+                        argPreparationBody.addStatement("val ${name}Memory = arena.allocateFrom($name)")
+                        callArgs.add("${name}Memory")
+                    }
+                    is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> {
+                        argPreparationBody.addStatement("if ($name.segment == %T.NULL) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Argument '${arg.name}' cannot be NULL")
+                        callArgs.add("$name.segment")
+                    }
+                    else -> callArgs.add(name)
                 }
             }
 
-            val call = "${method.name}Handle.invokeExact(${invokeArgs.joinToString(", ")})"
+            // Arena for RustString arguments
+            val needsArena = method.args.any { it.ty is XrossType.RustString }
+            if (needsArena) {
+                body.beginControlFlow("%T.ofConfined().use { arena ->", ClassName("java.lang.foreign", "Arena"))
+                body.add(argPreparationBody.build())
+            } else {
+                body.add(argPreparationBody.build())
+            }
+            
+            val call = "${method.name}Handle.invokeExact(${callArgs.joinToString(", ")})"
             applyMethodCall(body, method, call, returnType, isComplexRet)
 
             if (needsArena) body.endControlFlow()
@@ -179,12 +190,9 @@ object MethodGenerator {
             isComplexRet -> {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = $call as %T", MemorySegment::class)
-                body.addStatement(
-                    "val res = if (resRaw == %T.NULL) resRaw else resRaw.reinterpret(STRUCT_SIZE)",
-                    MemorySegment::class
-                )
+                body.addStatement("if (resRaw == %T.NULL) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Native method '${method.name}' returned a NULL reference for type '$returnType'")
+                body.addStatement("val res = resRaw.reinterpret(STRUCT_SIZE)") // No need for 'if (resRaw == NULL)' here anymore
 
-                // --- ここが修正箇所 ---
                 // メタデータの Ownership を判定
                 val isBorrowed = when (val retType = method.ret) {
                     is XrossType.RustStruct -> retType.ownership != XrossType.Ownership.Owned
@@ -198,10 +206,7 @@ object MethodGenerator {
                     "null"
                 }
 
-                // 動的に isBorrowed の値を埋め込む
                 body.addStatement("%T(res, parent=$parent)", returnType)
-                // ----------------------
-
                 body.endControlFlow()
             }
 

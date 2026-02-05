@@ -107,38 +107,72 @@ object EnumVariantGenerator {
         }
 
         val segRef = "segment"
+        val memSegmentClass = ClassName("java.lang.foreign", "MemorySegment")
+        val nullPointerExceptionClass = NullPointerException::class
+        val longClass = Long::class
 
-        val rawReadExpr = when (field.ty) {
-            is XrossType.Bool -> "($vhName.get($segRef, 0L) as Byte) != (0).toByte()"
-            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object ->
-                "$fqn($vhName.get($segRef, 0L) as java.lang.foreign.MemorySegment, parent = $parent)"
-            else -> "$vhName.get($segRef, 0L) as $fqn"
+        val readCodeBuilder = CodeBlock.builder()
+
+        if (!field.ty.isCopy) {
+            readCodeBuilder.addStatement("if ($segRef == %T.NULL) throw %T(%S)", memSegmentClass, nullPointerExceptionClass, "Attempted to access field '${field.name}' on a NULL native object")
+        }
+
+        when (field.ty) {
+            is XrossType.Bool -> readCodeBuilder.addStatement("res = ($vhName.get($segRef, 0L) as Byte) != (0).toByte()")
+            is XrossType.RustString -> {
+                readCodeBuilder.addStatement("val rawSegment = $vhName.get($segRef, 0L) as %T", memSegmentClass)
+                readCodeBuilder.addStatement("res = if (rawSegment == %T.NULL) \"\" else rawSegment.reinterpret(%T.MAX_VALUE).getString(0)", memSegmentClass, longClass)
+            }
+            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> {
+                readCodeBuilder.addStatement("val rawSegment = $vhName.get($segRef, 0L) as %T", memSegmentClass)
+                readCodeBuilder.addStatement("if (rawSegment == %T.NULL) throw %T(%S)", memSegmentClass, nullPointerExceptionClass, "Native reference for field '${field.name}' is NULL")
+                readCodeBuilder.addStatement("res = %L(rawSegment, parent = $parent)", fqn)
+            }
+            else -> readCodeBuilder.addStatement("res = $vhName.get($segRef, 0L) as %L", fqn)
         }
 
         return FunSpec.getterBuilder().addCode("""
             var stamp = sl.tryOptimisticRead()
-            var res = $rawReadExpr
+            var res: %T
+            
+            // Optimistic read
+            %L
+            
             if (!sl.validate(stamp)) {
                 stamp = sl.readLock()
-                try { res = $rawReadExpr } finally { sl.unlockRead(stamp) }
+                try { 
+                    // Pessimistic read
+                    %L
+                } finally { sl.unlockRead(stamp) }
             }
             return res
-        """.trimIndent() + "\n").build()
+        """.trimIndent(), TypeVariableName(" $fqn"), readCodeBuilder.build(), readCodeBuilder.build()).build()
     }
 
     private fun buildVariantSetter(field: XrossField, vhName: String, fqn: String): FunSpec {
         val segRef = "segment"
+        val memSegmentClass = ClassName("java.lang.foreign", "MemorySegment")
+        val nullPointerExceptionClass = NullPointerException::class
 
-        val rawWriteExpr = when (field.ty) {
-            is XrossType.Bool -> "$vhName.set($segRef, 0L, if (v) 1.toByte() else 0.toByte())"
-            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> "$vhName.set($segRef, 0L, v.segment)"
-            else -> "$vhName.set($segRef, 0L, v)"
+        val writeCodeBuilder = CodeBlock.builder()
+
+        if (!field.ty.isCopy) {
+            writeCodeBuilder.addStatement("if ($segRef == %T.NULL) throw %T(%S)", memSegmentClass, nullPointerExceptionClass, "Attempted to set field '${field.name}' on a NULL native object")
+        }
+
+        when (field.ty) {
+            is XrossType.Bool -> writeCodeBuilder.addStatement("$vhName.set($segRef, 0L, if (v) 1.toByte() else 0.toByte())")
+            is XrossType.RustStruct, is XrossType.RustEnum, is XrossType.Object -> {
+                writeCodeBuilder.addStatement("if (v.segment == %T.NULL) throw %T(%S)", memSegmentClass, nullPointerExceptionClass, "Cannot set field '${field.name}' with a NULL native reference")
+                writeCodeBuilder.addStatement("$vhName.set($segRef, 0L, v.segment)")
+            }
+            else -> writeCodeBuilder.addStatement("$vhName.set($segRef, 0L, v)")
         }
 
         return FunSpec.setterBuilder().addParameter("v", TypeVariableName(" $fqn")).addCode("""
             val stamp = sl.writeLock()
-            try { $rawWriteExpr } finally { sl.unlockWrite(stamp) }
-        """.trimIndent() + "\n").build()
+            try { %L } finally { sl.unlockWrite(stamp) }
+        """.trimIndent(), writeCodeBuilder.build()).build()
     }
 
     private fun generateAtomicPropertyInVariant(

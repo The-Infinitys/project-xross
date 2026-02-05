@@ -28,8 +28,7 @@ object XrossGenerator {
         // 1. クラスの基本構造を決定
         val classBuilder = when (meta) {
             is XrossDefinition.Struct -> {
-                TypeSpec.classBuilder(className)
-                    .addSuperinterface(AutoCloseable::class)
+                TypeSpec.classBuilder(className).addSuperinterface(AutoCloseable::class)
             }
 
             is XrossDefinition.Enum -> {
@@ -53,9 +52,7 @@ object XrossGenerator {
         when (meta) {
             is XrossDefinition.Struct -> PropertyGenerator.generateFields(classBuilder, meta, targetPackage)
             is XrossDefinition.Enum -> EnumVariantGenerator.generateVariants(
-                classBuilder,
-                meta,
-                targetPackage
+                classBuilder, meta, targetPackage
             )
         }
 
@@ -68,7 +65,7 @@ object XrossGenerator {
 
     private fun writeToDisk(typeSpec: TypeSpec, pkg: String, name: String, outputDir: File) {
         // パッケージ解決 (targetPackage と meta.packageName の結合は外部またはここで行う)
-        val fileSpec = FileSpec.builder(pkg, name).addType(typeSpec).build()
+        val fileSpec = FileSpec.builder(pkg, name).addType(typeSpec).indent("    ").build()
         var content = fileSpec.toString()
 
         val redundantKeywords =
