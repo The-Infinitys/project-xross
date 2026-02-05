@@ -132,11 +132,19 @@ pub fn generate_common_ffi(
         pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
             if ptr.is_null() { return std::ptr::null_mut(); }
 
-            if ptr.is_null() { return std::ptr::null_mut(); }
-            // ptr が有効な #name のインスタンスを指していることを仮定
-            let val_ref = &*ptr; // 生ポインタを安全に参照に変換
-            let cloned_val = val_ref.clone(); // 参照を介して clone() を呼び出す
-            Box::into_raw(Box::new(cloned_val)) // 新しい Box に入れてポインタを返す
+            // 1. 参照を作らず、ポインタから直接スタック上に値をビットコピーする。
+            // read_unaligned はアドレスがズレていても CPU 命令を駆使して安全に読み取ります。
+            let val_on_stack: #name = std::ptr::read_unaligned(ptr);
+
+            // 2. スタック上の値から clone() を呼び出す。
+            let cloned_val = val_on_stack.clone();
+
+            // 3. 元の値 (val_on_stack) が Drop されないように「忘れる」必要がある。
+            // これをしないと、ptr の指し先にあるデータの所有権を奪って破棄したことになってしまいます。
+            std::mem::forget(val_on_stack);
+
+            // 4. クローンした値を Box に入れて生ポインタとして返す。
+            Box::into_raw(Box::new(cloned_val))
         }
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #layout_id() -> *mut std::ffi::c_char {

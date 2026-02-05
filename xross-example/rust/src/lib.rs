@@ -10,7 +10,7 @@ pub struct MyService {
     // 明示的に opaque 指定を行うことで、Java側へ signature を伝える。
     #[jvm_field]
     #[xross(opaque = "com.example.UnknownStruct")]
-    pub unknown_struct: UnknownStruct,
+    pub unknown_struct: Box<UnknownStruct>,
 }
 
 #[derive(Clone)]
@@ -59,7 +59,7 @@ impl MyService {
         let boxes = vec![0; 1_000_000]; // 約4MB
         MyService {
             _boxes: boxes,
-            unknown_struct: UnknownStruct::default(),
+            unknown_struct: Box::new(UnknownStruct::default()),
         }
     }
 

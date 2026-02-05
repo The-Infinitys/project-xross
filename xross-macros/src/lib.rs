@@ -522,12 +522,31 @@ pub fn opaque_class(input: TokenStream) -> TokenStream {
         let clone_fn = format_ident!("{}_clone", symbol_base);
         quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #clone_fn(ptr: *mut #name_ident) -> *mut #name_ident {
+            pub unsafe extern "C" fn #clone_fn(ptr: *const #name_ident) -> *mut #name_ident {
                 if ptr.is_null() { return std::ptr::null_mut(); }
-                // ptr が有効な #name_ident のインスタンスを指していることを仮定
-                let val_ref = &*ptr; // 生ポインタを安全に参照に変換
-                let cloned_val = val_ref.clone(); // 参照を介して clone() を呼び出す
-                Box::into_raw(Box::new(cloned_val)) // 新しい Box に入れてポインタを返す
+
+                // 1. まず、型 T が安全に置けるスタック領域を確保する (MaybeUninit)
+                let mut temp = std::mem::MaybeUninit::<#name_ident>::uninit();
+
+                // 2. ptr から temp のメモリ領域へ、型のサイズ分だけ「生」でコピーする。
+                // read_unaligned よりも ptr::copy_nonoverlapping の方が、
+                // Rust のオブジェクトとしての整合性を問わずにビットを移せるので安全です。
+                std::ptr::copy_nonoverlapping(
+                    ptr as *const u8,
+                    temp.as_mut_ptr() as *mut u8,
+                    std::mem::size_of::<#name_ident>()
+                );
+
+                // 3. ここで初めて Rust の型として認識させる。
+                // ただし、もし ptr の計算が 1 バイトでも間違っていると、ここで死ぬ可能性は残ります。
+                let val_on_stack = temp.assume_init();
+
+                // 4. クローンを作成し、元の stack 上のコピーは forget する（二重解放防止）。
+                let cloned_val = val_on_stack.clone();
+                std::mem::forget(val_on_stack);
+
+                // 5. 新しい Box を作り、Java側へ返す。
+                Box::into_raw(Box::new(cloned_val))
             }
         }
     } else {

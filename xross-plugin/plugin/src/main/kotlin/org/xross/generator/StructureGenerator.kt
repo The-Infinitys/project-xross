@@ -34,7 +34,7 @@ object StructureGenerator {
         )
 
         classBuilder.addProperty(
-            PropertySpec.builder("segment", MemorySegment::class, KModifier.PRIVATE)
+            PropertySpec.builder("segment", MemorySegment::class, KModifier.PROTECTED)
                 .mutable()
                 .initializer("raw")
                 .build()

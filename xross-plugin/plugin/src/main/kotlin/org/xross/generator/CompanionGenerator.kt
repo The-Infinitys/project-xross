@@ -154,9 +154,9 @@ object CompanionGenerator {
             meta.variants.forEach { v ->
                 val argLayouts = v.fields.map { CodeBlock.of("%M", it.ty.layoutMember) }
                 val desc = if (argLayouts.isEmpty()) CodeBlock.of("%T.of(%M)", FunctionDescriptor::class, ADDRESS)
-                else CodeBlock.of("%T.of(%M%L)", FunctionDescriptor::class, ADDRESS, argLayouts)
+                else CodeBlock.of("%T.of(%M, %L)", FunctionDescriptor::class, ADDRESS, argLayouts.joinToCode(", "))
                 init.addStatement(
-                    "this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get()%L)",
+                    "this.new_${v.name}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",
                     "${meta.symbolPrefix}_new_${v.name}",
                     desc
                 )
