@@ -13,8 +13,8 @@ sealed class XrossType {
     object I32 : XrossType()
     object I64 : XrossType()
     object U16 : XrossType()
-    object F32 : XrossType()
-    object F64 : XrossType()
+    object f32 : XrossType()
+    object f64 : XrossType()
     object Pointer : XrossType()
     object RustString : XrossType() // Rust String
 
@@ -22,13 +22,12 @@ sealed class XrossType {
 
     data class Object(val signature: String, val ownership: Ownership = Ownership.Owned) : XrossType()
 
-    /** KotlinPoet 用の型取得 */
     val kotlinType: TypeName
         get() = when (this) {
             I32 -> INT
             I64 -> LONG
-            F32 -> FLOAT
-            F64 -> DOUBLE
+            f32 -> FLOAT
+            f64 -> DOUBLE
             Bool -> BOOLEAN
             I8 -> BYTE
             I16 -> SHORT
@@ -38,14 +37,13 @@ sealed class XrossType {
                 ClassName("java.lang.foreign", "MemorySegment")
         }
 
-    /** FFM API (ValueLayout) へのマッピング */
     val layoutMember: MemberName
         get() = when (this) {
             I32 -> ValueLayouts.JAVA_INT
             I64 -> ValueLayouts.JAVA_LONG
-            F32 -> ValueLayouts.JAVA_FLOAT
-            F64 -> ValueLayouts.JAVA_DOUBLE
-            Bool -> ValueLayouts.JAVA_BYTE // FFMにBooleanLayoutはないためByteで代用
+            f32 -> ValueLayouts.JAVA_FLOAT
+            f64 -> ValueLayouts.JAVA_DOUBLE
+            Bool -> ValueLayouts.JAVA_BYTE
             I8 -> ValueLayouts.JAVA_BYTE
             I16 -> ValueLayouts.JAVA_SHORT
             U16 -> ValueLayouts.JAVA_CHAR
@@ -53,36 +51,31 @@ sealed class XrossType {
             Pointer, RustString, is Object -> ValueLayouts.ADDRESS
         }
 
+    companion object {
+        val I8 = org.xross.structures.XrossType.I8
+        val I16 = org.xross.structures.XrossType.I16
+        val I32 = org.xross.structures.XrossType.I32
+        val I64 = org.xross.structures.XrossType.I64
+        val U16 = org.xross.structures.XrossType.U16
+        val F32 = org.xross.structures.XrossType.f32
+        val F64 = org.xross.structures.XrossType.f64
+    }
+
     private object ValueLayouts {
-        private const val PKG = "java.lang.foreign.ValueLayout"
-        val JAVA_INT:MemberName = MemberName(PKG, "JAVA_INT")
-        val JAVA_LONG = MemberName(PKG, "JAVA_LONG")
-        val JAVA_FLOAT = MemberName(PKG, "JAVA_FLOAT")
-        val JAVA_DOUBLE = MemberName(PKG, "JAVA_DOUBLE")
-        val JAVA_BYTE = MemberName(PKG, "JAVA_BYTE")
-        val JAVA_SHORT = MemberName(PKG, "JAVA_SHORT")
-        val JAVA_CHAR = MemberName(PKG, "JAVA_CHAR")
-        val ADDRESS = MemberName(PKG, "ADDRESS")
+        private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
+        val JAVA_INT = MemberName(VAL_LAYOUT, "JAVA_INT")
+        val JAVA_LONG = MemberName(VAL_LAYOUT, "JAVA_LONG")
+        val JAVA_FLOAT = MemberName(VAL_LAYOUT, "JAVA_FLOAT")
+        val JAVA_DOUBLE = MemberName(VAL_LAYOUT, "JAVA_DOUBLE")
+        val JAVA_BYTE = MemberName(VAL_LAYOUT, "JAVA_BYTE")
+        val JAVA_SHORT = MemberName(VAL_LAYOUT, "JAVA_SHORT")
+        val JAVA_CHAR = MemberName(VAL_LAYOUT, "JAVA_CHAR")
+        val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
     }
 
     val isOwned: Boolean
         get() = when (this) {
             is Object -> ownership == Ownership.Owned || ownership == Ownership.Boxed
             else -> false
-        }
-    val isCopy: Boolean
-        get() = when (this) {
-            I8, I16, I32, I64, U16, F32, F64, Bool -> true
-            // RustString はポインタ(MemorySegment)からKotlin Stringへ
-            // 変換（コピー）して取り出すため true
-            // ※取り出し後にRust側のバッファを管理する必要がないため
-            RustString -> true
-            // ポインタそのものはコピーしてやり取りする
-            Pointer -> isOwned
-            // 構造体、Enum、不透明オブジェクトは参照（MemorySegment）として
-            // 扱うためコピーではない
-            is Object -> false
-            // Voidはデータがない
-            Void -> true
         }
 }

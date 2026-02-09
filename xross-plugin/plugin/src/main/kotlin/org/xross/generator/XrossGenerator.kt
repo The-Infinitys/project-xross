@@ -1,75 +1,136 @@
 package org.xross.generator
 
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.TypeSpec
 import org.xross.structures.XrossDefinition
+import org.xross.structures.XrossType
 import java.io.File
 
-// 収集用の Set は削除（メタデータに Opaque が含まれる前提）
 object XrossGenerator {
-    fun generate(meta: XrossDefinition, outputDir: File, targetPackage: String) {
-        // メタデータの種類（kind）に応じて生成処理を完全に分離
-        when (meta) {
+    fun generate(meta: XrossDefinition, outputDir: File, targetPackage: String, resolver: TypeResolver) {
+        val basePackage = if (meta.packageName.isEmpty()) {
+            targetPackage
+        } else {
+            targetPackage.removeSuffix(meta.packageName).removeSuffix(".")
+        }
+
+        when (val resolvedMeta = resolveAllTypes(meta, resolver)) {
             is XrossDefinition.Opaque -> {
-                // Opaque の場合は専用のジェネレータに投げて終了
-                OpaqueGenerator.generateSingle(meta, outputDir, targetPackage)
+                OpaqueGenerator.generateSingle(resolvedMeta, outputDir, targetPackage)
             }
 
             is XrossDefinition.Struct, is XrossDefinition.Enum -> {
-                generateComplexType(meta, outputDir, targetPackage)
+                generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)
             }
         }
     }
 
-    private fun generateComplexType(meta: XrossDefinition, outputDir: File, targetPackage: String) {
-        val className = meta.name
+    fun isPureEnum(meta: XrossDefinition): Boolean {
+        return meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
+    }
 
-        // 1. クラスの基本構造を決定
-        val classBuilder = when (meta) {
-            is XrossDefinition.Struct -> {
+    private fun resolveAllTypes(meta: XrossDefinition, resolver: TypeResolver): XrossDefinition {
+        return when (meta) {
+            is XrossDefinition.Struct -> meta.copy(
+                fields = meta.fields.map { it.copy(ty = resolveType(it.ty, resolver, meta.name)) },
+                methods = meta.methods.map { m ->
+                    m.copy(
+                        args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "${meta.name}.${m.name}")) },
+                        ret = resolveType(m.ret, resolver, "${meta.name}.${m.name}")
+                    )
+                }
+            )
+            is XrossDefinition.Enum -> meta.copy(
+                variants = meta.variants.map { v ->
+                    v.copy(fields = v.fields.map { it.copy(ty = resolveType(it.ty, resolver, "${meta.name}.${v.name}")) })
+                },
+                methods = meta.methods.map { m ->
+                    m.copy(
+                        args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "${meta.name}.${m.name}")) },
+                        ret = resolveType(m.ret, resolver, "${meta.name}.${m.name}")
+                    )
+                }
+            )
+            is XrossDefinition.Opaque -> meta
+        }
+    }
+
+    private fun resolveType(type: XrossType, resolver: TypeResolver, context: String): XrossType {
+        return when (type) {
+            is XrossType.Object -> type.copy(signature = resolver.resolve(type.signature, context))
+            else -> type
+        }
+    }
+
+    private fun generateComplexType(meta: XrossDefinition, outputDir: File, targetPackage: String, basePackage: String) {
+        val className = meta.name
+        val isEnum = meta is XrossDefinition.Enum
+        val isPure = isPureEnum(meta)
+
+        val classBuilder = when {
+            meta is XrossDefinition.Struct -> {
                 TypeSpec.classBuilder(className).addSuperinterface(AutoCloseable::class)
             }
-
-            is XrossDefinition.Enum -> {
+            isPure -> {
+                TypeSpec.enumBuilder(className)
+            }
+            isEnum -> {
                 TypeSpec.classBuilder(className).addModifiers(KModifier.SEALED)
                     .addSuperinterface(AutoCloseable::class)
             }
-
             else -> throw IllegalArgumentException("Unsupported type")
         }
 
-        // 2~5. 既存の生成ロジック (Structure, Companion, Method, Property)
-        StructureGenerator.buildBase(classBuilder, meta)
         val companionBuilder = TypeSpec.companionObjectBuilder()
+        StructureGenerator.buildBase(classBuilder, companionBuilder, meta, basePackage)
         CompanionGenerator.generateCompanions(companionBuilder, meta)
-        MethodGenerator.generateMethods(classBuilder, companionBuilder, meta)
+        MethodGenerator.generateMethods(classBuilder, companionBuilder, meta, basePackage)
 
-        when (meta) {
-            is XrossDefinition.Struct -> PropertyGenerator.generateFields(classBuilder, meta, targetPackage)
-            is XrossDefinition.Enum -> EnumVariantGenerator.generateVariants(
-                classBuilder, companionBuilder, meta, targetPackage
+        when {
+            meta is XrossDefinition.Struct -> PropertyGenerator.generateFields(classBuilder, meta, basePackage)
+            isEnum -> EnumVariantGenerator.generateVariants(
+                classBuilder, companionBuilder, meta, targetPackage, basePackage
             )
         }
 
-        // 6. 仕上げ
         classBuilder.addType(companionBuilder.build())
-        StructureGenerator.addFinalBlocks(classBuilder, meta)
+        if (!isPure) {
+            StructureGenerator.addFinalBlocks(classBuilder, meta)
+        }
 
         writeToDisk(classBuilder.build(), targetPackage, className, outputDir)
     }
 
-    private fun writeToDisk(typeSpec: TypeSpec, pkg: String, name: String, outputDir: File) {
-        // パッケージ解決 (targetPackage と meta.packageName の結合は外部またはここで行う)
-        val fileSpec = FileSpec.builder(pkg, name).addType(typeSpec).indent("    ").build()
-        var content = fileSpec.toString()
+    fun getClassName(signature: String, basePackage: String): ClassName {
+        val fqn = if (basePackage.isEmpty()) signature else "$basePackage.$signature"
+        val lastDot = fqn.lastIndexOf('.')
+        return if (lastDot == -1) ClassName("", fqn)
+        else ClassName(fqn.substring(0, lastDot), fqn.substring(lastDot + 1))
+    }
 
-        val redundantKeywords =
-            listOf("class", "interface", "fun", "val", "var", "object", "sealed", "constructor", "companion")
-        redundantKeywords.forEach { content = content.replace("public $it", it) }
+    private fun writeToDisk(typeSpec: TypeSpec, pkg: String, name: String, outputDir: File) {
+        val fileSpec = FileSpec.builder(pkg, name).addType(typeSpec).indent("    ").build()
+        val content = cleanupPublic(fileSpec.toString())
 
         val fileDir = outputDir.resolve(pkg.replace('.', '/'))
         if (!fileDir.exists()) fileDir.mkdirs()
         fileDir.resolve("$name.kt").writeText(content)
+    }
+
+    /**
+     * Kotlin においてデフォルト（省略可能）な public 修飾子を正規表現で一括削除する。
+     */
+    fun cleanupPublic(content: String): String {
+        val keywords = listOf(
+            "class", "interface", "fun", "val", "var", "object", "enum",
+            "sealed", "open", "abstract", "constructor", "companion",
+            "init", "data", "override", "lateinit", "inner"
+        ).joinToString("|")
+        
+        // "public " の後にキーワードが続く場合、"public " を削除する
+        val regex = Regex("""public\s+(?=$keywords)""")
+        return content.replace(regex, "")
     }
 }

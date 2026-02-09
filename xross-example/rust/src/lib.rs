@@ -9,7 +9,6 @@ pub struct MyService {
     // JvmClassが付与されていない外部構造体。
     // 明示的に opaque 指定を行うことで、Java側へ signature を伝える。
     #[jvm_field]
-    #[xross(opaque = "com.example.UnknownStruct")]
     pub unknown_struct: Box<UnknownStruct>,
 }
 
@@ -28,6 +27,21 @@ pub enum UnClonable {
 }
 
 xross_core::opaque_class!(UnClonable, false);
+#[derive(Clone, Copy, JvmClass, Debug, PartialEq)]
+pub enum XrossSimpleEnum {
+    V,
+    W,
+    X,
+    Y,
+    Z,
+}
+#[jvm_class]
+impl XrossSimpleEnum {
+    #[jvm_method]
+    pub fn say_hello(self) {
+        println!("Hello from Simple::{:?}!", self);
+    }
+}
 
 #[derive(Clone, JvmClass)]
 pub enum XrossTestEnum {
@@ -38,7 +52,6 @@ pub enum XrossTestEnum {
     },
     C {
         #[jvm_field]
-        #[xross(opaque = "com.example.UnknownStruct")]
         j: UnknownStruct,
     },
 }
@@ -90,6 +103,19 @@ impl MyService {
     pub fn get_mut_ref(&mut self) -> &mut Self {
         self
     }
+
+    /// Enumを返すテスト
+    #[jvm_method]
+    pub fn ret_enum(&self) -> XrossTestEnum {
+        match rand::random_range(0..3) {
+            0 => XrossTestEnum::A,
+            1 => XrossTestEnum::B { i: rand::random() },
+            2 => XrossTestEnum::C {
+                j: UnknownStruct::default(),
+            },
+            _ => XrossTestEnum::A,
+        }
+    }
 }
 
 pub mod test {
@@ -131,4 +157,3 @@ pub mod test {
         }
     }
 }
-

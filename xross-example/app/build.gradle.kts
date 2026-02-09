@@ -15,7 +15,6 @@ plugins {
 xross{
     rustProjectDir = "../rust"
     packageName = "org.example"
-    metadataDir = "../../target/xross"
 }
 
 repositories {

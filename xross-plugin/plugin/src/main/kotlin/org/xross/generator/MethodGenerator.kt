@@ -9,23 +9,36 @@ import java.lang.foreign.MemorySegment
 import java.lang.foreign.Arena
 
 object MethodGenerator {
-    fun generateMethods(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossDefinition) {
-
+    fun generateMethods(
+        classBuilder: TypeSpec.Builder,
+        companionBuilder: TypeSpec.Builder,
+        meta: XrossDefinition,
+        basePackage: String
+    ) {
+        val selfType = XrossGenerator.getClassName(meta.signature, basePackage)
 
         meta.methods.forEach { method ->
             if (method.isConstructor) {
-                if (meta is XrossDefinition.Struct) generatePublicConstructor(classBuilder, companionBuilder, method)
+                if (meta is XrossDefinition.Struct) generatePublicConstructor(
+                    classBuilder,
+                    companionBuilder,
+                    method,
+                    basePackage
+                )
                 return@forEach
             }
 
-            val returnType = resolveReturnType(method.ret, meta)
+            val returnType = resolveReturnType(method.ret, basePackage)
             val isComplexRet = method.ret is XrossType.Object
 
             val funBuilder = FunSpec.builder(method.name.toCamelCase().escapeKotlinKeyword())
                 .returns(returnType)
 
             method.args.forEach { arg ->
-                funBuilder.addParameter(arg.name.toCamelCase().escapeKotlinKeyword(), resolveReturnType(arg.ty, meta))
+                funBuilder.addParameter(
+                    arg.name.toCamelCase().escapeKotlinKeyword(),
+                    resolveReturnType(arg.ty, basePackage)
+                )
             }
 
             val body = CodeBlock.builder()
@@ -51,12 +64,21 @@ object MethodGenerator {
                         argPreparationBody.addStatement("val ${name}Memory = this.arena.allocateFrom($name)")
                         callArgs.add("${name}Memory")
                     }
+
                     is XrossType.Object -> {
-                        argPreparationBody.beginControlFlow("if ($name.segment == %T.NULL || !$name.aliveFlag.isValid)", MemorySegment::class)
-                        argPreparationBody.addStatement("throw %T(%S)", NullPointerException::class, "Argument '${arg.name}' cannot be NULL or invalid")
+                        argPreparationBody.beginControlFlow(
+                            "if ($name.segment == %T.NULL || !$name.aliveFlag.isValid)",
+                            MemorySegment::class
+                        )
+                        argPreparationBody.addStatement(
+                            "throw %T(%S)",
+                            NullPointerException::class,
+                            "Argument '${arg.name}' cannot be NULL or invalid"
+                        )
                         argPreparationBody.endControlFlow()
                         callArgs.add("$name.segment")
                     }
+
                     else -> callArgs.add(name)
                 }
             }
@@ -69,8 +91,9 @@ object MethodGenerator {
                 body.add(argPreparationBody.build())
             }
 
-            val call = "${method.name}Handle.invokeExact(${callArgs.joinToString(", ")})"
-            body.add(applyMethodCall(method, call, returnType, isComplexRet))
+            val handleName = "${method.name.toCamelCase()}Handle"
+            val call = "$handleName.invokeExact(${callArgs.joinToString(", ")})"
+            body.add(applyMethodCall(method, call, returnType, isComplexRet, selfType))
 
             if (needsArena) body.endControlFlow()
 
@@ -85,55 +108,60 @@ object MethodGenerator {
         }
     }
 
-    private fun resolveReturnType(type: XrossType, meta: XrossDefinition): TypeName {
+    private fun resolveReturnType(type: XrossType, basePackage: String): TypeName {
         return when (type) {
             is XrossType.RustString -> String::class.asTypeName()
             is XrossType.Object -> {
-                val signature = type.signature
-                if (signature == "Self" || signature == meta.name || signature == "${meta.packageName}.${meta.name}") {
-                    ClassName("", meta.name)
-                } else {
-                    val fqn = if (signature.contains(".")) signature else "${meta.packageName}.$signature"
-                    val lastDot = fqn.lastIndexOf('.')
-                    if (lastDot == -1) ClassName("", fqn)
-                    else ClassName(fqn.substring(0, lastDot), fqn.substring(lastDot + 1))
-                }
+                XrossGenerator.getClassName(type.signature, basePackage)
             }
+
             else -> type.kotlinType
         }
     }
 
-    private fun applyMethodCall(method: XrossMethod, call: String, returnType: TypeName, isComplexRet: Boolean): CodeBlock {
+    private fun applyMethodCall(
+        method: XrossMethod,
+        call: String,
+        returnType: TypeName,
+        isComplexRet: Boolean,
+        selfType: ClassName
+    ): CodeBlock {
         val isVoid = method.ret is XrossType.Void
-        val safety = if (method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance) XrossThreadSafety.Immutable else method.safety
+        val safety =
+            if (method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance) XrossThreadSafety.Immutable else method.safety
         val body = CodeBlock.builder()
 
-        // 静的メソッドの場合はロックを使用しない (インスタンスがないため)
         val useLock = safety == XrossThreadSafety.Lock && method.methodType != XrossMethodType.Static
 
         if (useLock) {
             if (!isVoid) body.addStatement("var resValue: %T", returnType)
             body.addStatement("var stamp = this.sl.tryOptimisticRead()")
             if (!isVoid) body.add("resValue = ")
-            body.add(generateInvokeLogic(method, call, returnType, isComplexRet))
+            body.add(generateInvokeLogic(method, call, returnType, isComplexRet, selfType))
 
             body.beginControlFlow("if (!this.sl.validate(stamp))")
             body.addStatement("stamp = this.sl.readLock()")
             body.beginControlFlow("try")
             if (!isVoid) body.add("resValue = ")
-            body.add(generateInvokeLogic(method, call, returnType, isComplexRet))
+            body.add(generateInvokeLogic(method, call, returnType, isComplexRet, selfType))
             body.nextControlFlow("finally")
             body.addStatement("this.sl.unlockRead(stamp)")
             body.endControlFlow()
             body.endControlFlow()
             if (!isVoid) body.addStatement("resValue")
         } else {
-            body.add(generateInvokeLogic(method, call, returnType, isComplexRet))
+            body.add(generateInvokeLogic(method, call, returnType, isComplexRet, selfType))
         }
         return body.build()
     }
 
-    private fun generateInvokeLogic(method: XrossMethod, call: String, returnType: TypeName, isComplexRet: Boolean): CodeBlock {
+    private fun generateInvokeLogic(
+        method: XrossMethod,
+        call: String,
+        returnType: TypeName,
+        isComplexRet: Boolean,
+        selfType: ClassName
+    ): CodeBlock {
         val body = CodeBlock.builder()
         when {
             method.ret is XrossType.Void -> {
@@ -143,27 +171,53 @@ object MethodGenerator {
                     body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                 }
             }
+
             method.ret is XrossType.RustString -> {
                 body.beginControlFlow("run")
                 body.addStatement("val res = $call as %T", MemorySegment::class)
-                body.addStatement("val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)", MemorySegment::class, Long::class)
-                body.addStatement("if (res != %T.NULL) xross_free_stringHandle.invokeExact(res)", MemorySegment::class)
+                body.addStatement(
+                    "val str = if (res == %T.NULL) \"\" else res.reinterpret(%T.MAX_VALUE).getString(0)",
+                    MemorySegment::class,
+                    Long::class
+                )
+                body.addStatement("if (res != %T.NULL) xrossFreeStringHandle.invokeExact(res)", MemorySegment::class)
                 body.addStatement("str")
                 body.endControlFlow()
             }
+
             isComplexRet -> {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = $call as %T", MemorySegment::class)
-                body.addStatement("if (resRaw == %T.NULL) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Native method '${method.name}' returned a NULL reference for type '$returnType'")
+                body.addStatement(
+                    "if (resRaw == %T.NULL) throw %T(%S)",
+                    MemorySegment::class,
+                    NullPointerException::class,
+                    "Native method '${method.name}' returned a NULL reference for type '$returnType'"
+                )
                 val retType = method.ret as XrossType.Object
+                val isSelf = returnType == selfType
+                
                 if (retType.isOwned) {
                     body.addStatement("val retArena = Arena.ofConfined()")
-                    body.addStatement("val res = resRaw.reinterpret(%T.STRUCT_SIZE, retArena) { s -> %T.dropHandle.invokeExact(s) }", returnType, returnType)
-                    body.addStatement("%T(res, arena = retArena, isArenaOwner = true)", returnType)
+                    val sizeExpr = if (isSelf) "STRUCT_SIZE" else "%T.STRUCT_SIZE"
+                    val dropExpr = if (isSelf) "dropHandle" else "%T.dropHandle"
+                    val fromPointerExpr = if (isSelf) "fromPointer" else "%T.fromPointer"
+                    
+                    body.addStatement(
+                        "val res = resRaw.reinterpret($sizeExpr, retArena) { s -> $dropExpr.invokeExact(s) }",
+                        *(if (isSelf) emptyArray() else arrayOf(returnType, returnType))
+                    )
+                    body.addStatement(
+                        "$fromPointerExpr(res, retArena, isArenaOwner = true)",
+                        *(if (isSelf) emptyArray() else arrayOf(returnType))
+                    )
                 } else {
-                    body.addStatement("val res = resRaw.reinterpret(%T.STRUCT_SIZE)", returnType)
-                    if (method.methodType == XrossMethodType.Static) body.addStatement("%T(res, arena = Arena.global(), isArenaOwner = false)", returnType)
-                    else body.addStatement("%T(res, arena = this.arena, isArenaOwner = false)", returnType)
+                    val arenaCode = if (method.methodType == XrossMethodType.Static) "Arena.global()" else "this.arena"
+                    val fromPointerExpr = if (isSelf) "fromPointer" else "%T.fromPointer"
+                    body.addStatement(
+                        "$fromPointerExpr(resRaw, $arenaCode)",
+                        *(if (isSelf) emptyArray() else arrayOf(returnType))
+                    )
                 }
                 body.endControlFlow()
                 if (method.methodType == XrossMethodType.OwnedInstance) {
@@ -171,38 +225,64 @@ object MethodGenerator {
                     body.addStatement("this.segment = %T.NULL", MemorySegment::class)
                 }
             }
+
             else -> body.addStatement("$call as %T", returnType)
         }
         return body.build()
     }
 
-    private fun generatePublicConstructor(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, method: XrossMethod) {
-        val pairType = Pair::class.asClassName().parameterizedBy(MemorySegment::class.asClassName(), Arena::class.asClassName())
+    private fun generatePublicConstructor(
+        classBuilder: TypeSpec.Builder,
+        companionBuilder: TypeSpec.Builder,
+        method: XrossMethod,
+        basePackage: String
+    ) {
+        val pairType =
+            Pair::class.asClassName().parameterizedBy(MemorySegment::class.asClassName(), Arena::class.asClassName())
         val factoryBody = CodeBlock.builder()
             .addStatement("val newArena = Arena.ofAuto()")
-            .addStatement("val raw = newHandle.invokeExact(${method.args.joinToString(", ") { "arg_" + it.name.toCamelCase() }}) as %T", MemorySegment::class)
+            .addStatement(
+                "val raw = newHandle.invokeExact(${method.args.joinToString(", ") { "arg_" + it.name.toCamelCase() }}) as %T",
+                MemorySegment::class
+            )
             .beginControlFlow("if (raw == %T.NULL)", MemorySegment::class)
             .addStatement("throw %T(%S)", RuntimeException::class, "Failed to create native object")
             .endControlFlow()
             .addStatement("val res = raw.reinterpret(STRUCT_SIZE, newArena) { s -> dropHandle.invokeExact(s) }")
             .addStatement("return res to newArena")
 
-        companionBuilder.addFunction(FunSpec.builder("xross_new_internal")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameters(method.args.map { ParameterSpec.builder("arg_" + it.name.toCamelCase(), it.ty.kotlinType).build() })
-            .returns(pairType)
-            .addCode(factoryBody.build())
-            .build())
+        companionBuilder.addFunction(
+            FunSpec.builder("xrossNewInternal")
+                .addModifiers(KModifier.PRIVATE)
+                .addParameters(method.args.map {
+                    ParameterSpec.builder(
+                        "arg_" + it.name.toCamelCase(),
+                        resolveReturnType(it.ty, basePackage)
+                    ).build()
+                })
+                .returns(pairType)
+                .addCode(factoryBody.build())
+                .build()
+        )
 
-        classBuilder.addFunction(FunSpec.constructorBuilder()
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("p", pairType)
-            .callThisConstructor(CodeBlock.of("p.first"), CodeBlock.of("p.second"))
-            .build())
-        
-        classBuilder.addFunction(FunSpec.constructorBuilder()
-            .addParameters(method.args.map { ParameterSpec.builder("arg_" + it.name.toCamelCase(), it.ty.kotlinType).build() })
-            .callThisConstructor(CodeBlock.of("xross_new_internal(${method.args.joinToString(", ") { "arg_" + it.name.toCamelCase() }})"))
-            .build())
+        classBuilder.addFunction(
+            FunSpec.constructorBuilder()
+                .addModifiers(KModifier.PRIVATE)
+                .addParameter("p", pairType)
+                .callThisConstructor(CodeBlock.of("p.first"), CodeBlock.of("p.second"), CodeBlock.of("true"))
+                .build()
+        )
+
+        classBuilder.addFunction(
+            FunSpec.constructorBuilder()
+                .addParameters(method.args.map {
+                    ParameterSpec.builder(
+                        "arg_" + it.name.toCamelCase(),
+                        resolveReturnType(it.ty, basePackage)
+                    ).build()
+                })
+                .callThisConstructor(CodeBlock.of("xrossNewInternal(${method.args.joinToString(", ") { "arg_" + it.name.toCamelCase() }})"))
+                .build()
+        )
     }
 }

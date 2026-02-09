@@ -2,6 +2,7 @@ package org.xross
 
 import kotlinx.serialization.json.Json
 import org.gradle.workers.WorkAction
+import org.xross.generator.TypeResolver
 import org.xross.generator.XrossGenerator
 import org.xross.structures.XrossDefinition
 
@@ -28,11 +29,12 @@ abstract class GenerateAction : WorkAction<GenerateParameters> {
         // 4. 【重要】ディレクトリは「パッケージ階層を含めないベース」を渡す
         // Generator側が内部で fullPackage.replace('.', '/') を実行している前提です
         val outputBaseDir = parameters.outputDir.get().asFile
-
+        val resolver = TypeResolver(parameters.metadataDir.get())
         XrossGenerator.generate(
             meta,
             outputBaseDir, // ここで掘り進めない
-            fullPackage
+            fullPackage,
+            resolver
         )
     }
 }

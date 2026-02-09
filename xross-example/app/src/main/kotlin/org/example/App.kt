@@ -58,16 +58,46 @@ private fun loadFromResources(tempDir: File) {
 }
 
 fun executeEnumTest() {
+    println("\n--- [4] Enum Return & Pattern Matching Statistics ---")
+    val myService = MyService()
+
+    // 1. 基本的なフィールドアクセステスト
     val enum1 = XrossTestEnum.A
     val enum2 = XrossTestEnum.B(1)
-    println(enum1)
-    println(enum2.i)
+    println("Static Variant A: $enum1")
+    println("Static Variant B value: ${enum2.i}")
     enum2.i = 10
-    println(enum2.i)
-    val myService = MyService()
+    println("Modified Variant B value: ${enum2.i}")
+
     val unknownStruct = myService.unknownStruct
     val enum3 = XrossTestEnum.C(unknownStruct.clone())
-    println(enum3.j)
+    println("Static Variant C value (i): ${enum3.j}")
+
+    // 2. 統計取得
+    val iterations = 100000
+    var countA = 0
+    var countB = 0
+    var countC = 0
+
+    val startTime = System.currentTimeMillis()
+    repeat(iterations) {
+        // equals実装により A は定数として比較可能、B/C は型チェック(is)で分岐
+        when (myService.retEnum()) {
+            is XrossTestEnum.A -> countA++
+            is XrossTestEnum.B -> countB++
+            is XrossTestEnum.C -> countC++
+        }
+    }
+    val endTime = System.currentTimeMillis()
+
+    println("Finished $iterations iterations in ${endTime - startTime}ms:")
+    println("  - Variant A: $countA times")
+    println("  - Variant B: $countB times")
+    println("  - Variant C: $countC times")
+
+    myService.close()
+    val simpleEnum = XrossSimpleEnum.X
+    simpleEnum.sayHello()
 }
 
 fun executeMemoryLeakTest() {

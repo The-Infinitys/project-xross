@@ -9,6 +9,23 @@ pub enum XrossDefinition {
     Opaque(XrossOpaque), // 追加
 }
 
+impl XrossDefinition {
+    pub fn signature(&self) -> &str {
+        match self {
+            XrossDefinition::Struct(s) => &s.signature,
+            XrossDefinition::Enum(e) => &e.signature,
+            XrossDefinition::Opaque(o) => &o.signature,
+        }
+    }
+    pub fn name(&self) -> &str {
+        match self {
+            XrossDefinition::Struct(s) => &s.name,
+            XrossDefinition::Enum(e) => &e.name,
+            XrossDefinition::Opaque(o) => &o.name,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct XrossStruct {

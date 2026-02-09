@@ -9,4 +9,5 @@ interface GenerateParameters : WorkParameters {
     val jsonFile: Property<File>
     val outputDir: DirectoryProperty
     val packageName: Property<String>
+    val metadataDir: Property<File>
 }

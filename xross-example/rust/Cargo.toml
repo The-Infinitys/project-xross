@@ -9,4 +9,5 @@ crate-type = ["cdylib"]
 
 
 [dependencies]
+rand = "0.10.0"
 xross-core = { path = "../../xross-core" }

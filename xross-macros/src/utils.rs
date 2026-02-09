@@ -2,29 +2,166 @@ use crate::type_mapping::map_type;
 use heck::ToSnakeCase;
 use quote::{format_ident, quote};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use syn::{Attribute, Expr, ExprLit, Lit, Meta, Type};
 use xross_metadata::{Ownership, ThreadSafety, XrossDefinition, XrossType};
 
-const XROSS_DIR: &str = "target/xross";
+/// メタデータを出力する共通ディレクトリを取得する
+pub fn get_xross_dir() -> PathBuf {
+    // 1. 手動設定の環境変数を最優先
+    if let Ok(val) = std::env::var("XROSS_METADATA_DIR") {
+        return PathBuf::from(val);
+    }
 
-pub fn get_path(ident: &syn::Ident) -> PathBuf {
-    Path::new(XROSS_DIR).join(format!("{}.json", ident))
+    // 2. OUT_DIR から遡って target ディレクトリを特定する
+    // OUT_DIR は通常 target/debug/build/crate-hash/out のような形
+    if let Ok(out_dir) = std::env::var("OUT_DIR") {
+        let path = PathBuf::from(out_dir);
+        // target/ フォルダまで遡る (通常 4つ上)
+        let mut target = path.as_path();
+        while let Some(parent) = target.parent() {
+            if target.file_name().and_then(|n| n.to_str()) == Some("target") {
+                return target.join("xross");
+            }
+            target = parent;
+        }
+    }
+
+    // 3. CARGO_TARGET_DIR 環境変数をチェック
+    if let Ok(val) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(val).join("xross");
+    }
+
+    // 4. デフォルト: マクロがある場所からワークスペースのルートを探す
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap());
+
+    let mut current = manifest_dir.as_path();
+    let mut root = current;
+    while let Some(parent) = current.parent() {
+        if parent.join("Cargo.toml").exists() {
+            root = parent;
+            current = parent;
+        } else {
+            break;
+        }
+    }
+
+    root.join("target").join("xross")
 }
 
-pub fn save_definition(ident: &syn::Ident, def: &XrossDefinition) {
-    fs::create_dir_all(XROSS_DIR).ok();
+pub fn get_path_by_signature(signature: &str) -> PathBuf {
+    get_xross_dir().join(format!("{}.json", signature))
+}
+
+pub fn save_definition(_ident: &syn::Ident, def: &XrossDefinition) {
+    let xross_dir = get_xross_dir();
+    fs::create_dir_all(&xross_dir).ok();
+    let signature = def.signature();
+    let path = get_path_by_signature(signature);
+
+    if path.exists() {
+        if let Ok(existing_content) = fs::read_to_string(&path) {
+            if let Ok(existing_def) = serde_json::from_str::<XrossDefinition>(&existing_content) {
+                if !is_structurally_compatible(&existing_def, def) {
+                    panic!(
+                        "\n[Xross Error] Duplicate definition detected for signature: '{}'\n\
+                        The same signature is being defined multiple times with different structures.\n\
+                        Please ensure that each JvmClass has a unique package or name.\n",
+                        signature
+                    );
+                }
+            }
+        }
+    }
+
     if let Ok(json) = serde_json::to_string(def) {
-        fs::write(get_path(ident), json).ok();
+        fs::write(&path, json).ok();
+    }
+}
+
+fn is_structurally_compatible(a: &XrossDefinition, b: &XrossDefinition) -> bool {
+    match (a, b) {
+        (XrossDefinition::Struct(sa), XrossDefinition::Struct(sb)) => {
+            sa.package_name == sb.package_name
+                && sa.name == sb.name
+                && sa.fields.len() == sb.fields.len()
+        }
+        (XrossDefinition::Enum(ea), XrossDefinition::Enum(eb)) => {
+            ea.package_name == eb.package_name
+                && ea.name == eb.name
+                && ea.variants.len() == eb.variants.len()
+        }
+        (XrossDefinition::Opaque(oa), XrossDefinition::Opaque(ob)) => {
+            oa.package_name == ob.package_name && oa.name == ob.name
+        }
+        _ => false,
     }
 }
 
 pub fn load_definition(ident: &syn::Ident) -> Option<XrossDefinition> {
-    let path = get_path(ident);
-    if let Ok(content) = fs::read_to_string(&path) {
-        return serde_json::from_str(&content).ok();
+    let xross_dir = get_xross_dir();
+    if !xross_dir.exists() {
+        return None;
+    }
+
+    if let Ok(entries) = fs::read_dir(xross_dir) {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let Ok(def) = serde_json::from_str::<XrossDefinition>(&content) {
+                    if def.name() == ident.to_string() {
+                        return Some(def);
+                    }
+                }
+            }
+        }
     }
     None
+}
+
+pub fn discover_signature(type_name: &str) -> Option<String> {
+    let xross_dir = get_xross_dir();
+    if !xross_dir.exists() {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(xross_dir) {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let Ok(def) = serde_json::from_str::<XrossDefinition>(&content) {
+                    if def.name() == type_name {
+                        candidates.push(def.signature().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+
+    if candidates.len() == 1 {
+        Some(candidates.remove(0))
+    } else if candidates.len() > 1 {
+        panic!(
+            "\n[Xross Error] Ambiguous type reference: '{}'\n\
+            Multiple types with the same name were found in different packages:\n\
+            {}\n\
+            Please use an explicit signature to disambiguate, for example:\n\
+            #[xross(struct = \"full.package.Name\")]\n",
+            type_name,
+            candidates
+                .iter()
+                .map(|s| format!("  - {}", s))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    } else {
+        None
+    }
 }
 
 pub fn extract_package(attrs: &[Attribute]) -> String {
@@ -95,7 +232,6 @@ pub fn build_symbol_base(crate_name: &str, package: &str, type_name: &str) -> St
     }
 }
 
-// 共通関数の生成ロジック
 pub fn generate_common_ffi(
     name: &syn::Ident,
     base: &str,
@@ -120,9 +256,6 @@ pub fn generate_common_ffi(
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #drop_id(ptr: *mut #name) {
-            // Box::from_raw は「そのアドレスが malloc された先頭であること」を要求します。
-            // もしズレたアドレス（フィールドへのポインタ）が渡されるとここで死ぬため、
-            // Kotlin側の isBorrowed フラグが正しく機能していることが前提となります。
             if !ptr.is_null() {
                 drop(unsafe { Box::from_raw(ptr) });
             }
@@ -131,19 +264,9 @@ pub fn generate_common_ffi(
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
             if ptr.is_null() { return std::ptr::null_mut(); }
-
-            // 1. 参照を作らず、ポインタから直接スタック上に値をビットコピーする。
-            // read_unaligned はアドレスがズレていても CPU 命令を駆使して安全に読み取ります。
             let val_on_stack: #name = std::ptr::read_unaligned(ptr);
-
-            // 2. スタック上の値から clone() を呼び出す。
             let cloned_val = val_on_stack.clone();
-
-            // 3. 元の値 (val_on_stack) が Drop されないように「忘れる」必要がある。
-            // これをしないと、ptr の指し先にあるデータの所有権を奪って破棄したことになってしまいます。
             std::mem::forget(val_on_stack);
-
-            // 4. クローンした値を Box に入れて生ポインタとして返す。
             Box::into_raw(Box::new(cloned_val))
         }
         #[unsafe(no_mangle)]
@@ -159,12 +282,10 @@ pub fn resolve_type_with_attr(
     attrs: &[Attribute],
     current_pkg: &str,
     current_ident: Option<&syn::Ident>,
-    strict: bool,
+    _strict: bool,
 ) -> XrossType {
-    // 1. まず通常の型解決を行って、Box などの内部情報を取得する
     let base_ty = map_type(ty);
 
-    // 2. 基本的な所有権を判定
     let (inner_ty, mut ownership) = match ty {
         Type::Reference(r) => {
             let ow = if r.mutability.is_some() {
@@ -177,29 +298,23 @@ pub fn resolve_type_with_attr(
         _ => (ty, Ownership::Owned),
     };
 
-    // 3. もし map_type で Boxed と判定されていたら、それを採用する
-    if let XrossType::Object { ownership: base_ow, .. } = &base_ty {
+    if let XrossType::Object {
+        ownership: base_ow, ..
+    } = &base_ty
+    {
         if *base_ow == Ownership::Boxed {
             ownership = Ownership::Boxed;
         }
     }
 
-    // 4. 属性による明示的な指定をチェック
     let mut xross_ty = None;
     for attr in attrs {
         if attr.path().is_ident("xross") {
             let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("struct") {
-                    xross_ty = Some(XrossType::Object {
-                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
-                        ownership: ownership.clone(), // 判定した所有権を適用
-                    });
-                } else if meta.path.is_ident("enum") {
-                    xross_ty = Some(XrossType::Object {
-                        signature: meta.value()?.parse::<syn::LitStr>()?.value(),
-                        ownership: ownership.clone(),
-                    });
-                } else if meta.path.is_ident("opaque") {
+                if meta.path.is_ident("struct")
+                    || meta.path.is_ident("enum")
+                    || meta.path.is_ident("opaque")
+                {
                     xross_ty = Some(XrossType::Object {
                         signature: meta.value()?.parse::<syn::LitStr>()?.value(),
                         ownership: ownership.clone(),
@@ -218,7 +333,6 @@ pub fn resolve_type_with_attr(
         return ty;
     }
 
-    // 3. Self 判定 (inner_ty を使用)
     if let Type::Path(tp) = inner_ty {
         if tp.path.is_ident("Self") {
             if let Some(ident) = current_ident {
@@ -235,68 +349,40 @@ pub fn resolve_type_with_attr(
         }
     }
 
-    // 4. 標準的な型マッピング (inner_ty を map_type に渡す)
-    // ※ map_type が返す XrossType に ownership プロパティが含まれるよう修正されている前提
     let mut final_ty = map_type(inner_ty);
 
-    // --- 5. Ownership の反映と Object(Unknown) のフォールバック ---
     match &mut final_ty {
         XrossType::Object {
             ownership: o,
             signature,
-            ..
         } => {
-            // もし ownership が Ref/MutRef なら、map_type での判定(Owned/Boxed)を上書きする
             if ownership != Ownership::Owned {
                 *o = ownership;
             }
 
-            // 現在解析中の型名そのものを使っている場合 (例: MyService) の補完
-            if let Some(ident) = current_ident {
-                let self_name = ident.to_string();
-                // 型名単体、またはフルパスで一致するか確認
-                if signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
-                {
-                    *signature = if current_pkg.is_empty() {
-                        self_name
-                    } else {
-                        format!("{}.{}", current_pkg, self_name)
-                    };
-                }
-            }
-        }
-        _ => {} // プリミティブ型などは Ownership を持たないので何もしない
-    }
-
-    // --- 6. 未解決型のバリデーション (strict = true の場合) ---
-    if strict {
-        if let XrossType::Object { signature, .. } = &final_ty {
-            // プロジェクト内で定義された型(current_ident)でない、
-            // かつ map_type でも解決できなかった型は、バインディング生成不能としてエラーにする
-            let is_known_self = current_ident.map_or(false, |ident| {
+            let is_self = current_ident.map_or(false, |ident| {
                 let self_name = ident.to_string();
                 signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
             });
 
-            if !is_known_self {
-                panic!(
-                    "\n[Xross Error] Failed to resolve type: '{}'\n\
-                    Context: Inside implementation of '{}'\n\n\
-                    Possible solutions:\n\
-                    1. If this is another JvmClass, use its full signature.\n\
-                    2. Use 'Self' if you are referring to the current type.\n\
-                    3. Use #[xross(opaque = \"package.Name\")] to explicitly define it as an opaque pointer.\n",
-                    signature,
-                    current_ident
-                        .map(|i| i.to_string())
-                        .unwrap_or_else(|| "Unknown".into())
-                );
+            if is_self {
+                *signature = if current_pkg.is_empty() {
+                    current_ident.unwrap().to_string()
+                } else {
+                    format!("{}.{}", current_pkg, current_ident.unwrap())
+                };
+            } else {
+                if let Some(discovered) = discover_signature(signature) {
+                    *signature = discovered;
+                }
             }
         }
+        _ => {}
     }
 
     final_ty
 }
+
 pub fn generate_struct_layout(s: &syn::ItemStruct) -> proc_macro2::TokenStream {
     let name = &s.ident;
     let mut field_parts = Vec::new();
@@ -330,7 +416,6 @@ pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
         let v_name = &v.ident;
 
         if v.fields.is_empty() {
-            // フィールドがない場合は名前のみ。セパレーターは後で ";" になる。
             variant_specs.push(quote! {
                 stringify!(#v_name).to_string()
             });
@@ -338,9 +423,6 @@ pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
             let mut fields_info = Vec::new();
             for (i, field) in v.fields.iter().enumerate() {
                 let f_ty = &field.ty;
-
-                // バリアント名とフィールド名（またはインデックス）を連結
-                // 標準の offset_of! で Enum を扱うための構文: offset_of!(Enum, Variant.field)
                 let f_access = if let Some(ident) = &field.ident {
                     quote! { #v_name . #ident }
                 } else {
@@ -356,7 +438,6 @@ pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
 
                 fields_info.push(quote! {
                     {
-                        // Enumのバリアント内オフセット取得 (Nightly/Recent Stable)
                         let offset = std::mem::offset_of!(#name, #f_access) as u64;
                         let size = std::mem::size_of::<#f_ty>() as u64;
                         format!("{}:{}:{}", #f_display_name, offset, size)

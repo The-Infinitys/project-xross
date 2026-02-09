@@ -47,12 +47,13 @@ object OpaqueGenerator {
         )
         classBuilder.addProperty(
             PropertySpec.builder("isArenaOwner", Boolean::class, KModifier.INTERNAL)
+                .mutable()
                 .initializer("isArenaOwner")
                 .build()
         )
         classBuilder.addProperty(
             PropertySpec.builder("aliveFlag", ClassName("", "AliveFlag"), KModifier.INTERNAL)
-                .initializer("sharedFlag ?: AliveFlag(true)")
+                .initializer(CodeBlock.of("sharedFlag ?: AliveFlag(true)"))
                 .build()
         )
         classBuilder.addProperty(
@@ -70,8 +71,8 @@ object OpaqueGenerator {
                     .beginControlFlow("try")
                     .addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Object dropped or invalid")
                     .addStatement("val newArena = Arena.ofConfined()")
-                    .addStatement("val raw = %T.Companion.cloneHandle.invokeExact(this.segment) as MemorySegment", ClassName(targetPackage, className))
-                    .addStatement("val res = raw.reinterpret(%T.Companion.STRUCT_SIZE, newArena) { s -> %T.Companion.dropHandle.invokeExact(s) }", ClassName(targetPackage, className), ClassName(targetPackage, className))
+                    .addStatement("val raw = cloneHandle.invokeExact(this.segment) as MemorySegment")
+                    .addStatement("val res = raw.reinterpret(STRUCT_SIZE, newArena) { s -> dropHandle.invokeExact(s) }")
                     .addStatement("return %L(res, newArena, isArenaOwner = true)", className)
                     .nextControlFlow("catch (e: Throwable)")
                     .addStatement("throw RuntimeException(e)")
@@ -102,6 +103,16 @@ object OpaqueGenerator {
         val companion = TypeSpec.companionObjectBuilder()
             .addProperty(PropertySpec.builder("dropHandle", MethodHandle::class, KModifier.INTERNAL).build())
             .addProperty(PropertySpec.builder("STRUCT_SIZE", Long::class, KModifier.INTERNAL).initializer("0L").mutable().build())
+
+        val fromPointerBuilder = FunSpec.builder("fromPointer")
+            .addParameter("ptr", MemorySegment::class)
+            .addParameter("arena", ClassName("java.lang.foreign", "Arena"))
+            .addParameter(ParameterSpec.builder("isArenaOwner", Boolean::class).defaultValue("false").build())
+            .returns(ClassName(targetPackage, className))
+            .addModifiers(KModifier.INTERNAL)
+            .addCode("return %L(ptr.reinterpret(STRUCT_SIZE), arena, isArenaOwner = isArenaOwner)\n", className)
+        
+        companion.addFunction(fromPointerBuilder.build())
             
         if (meta.isClonable) {
             companion.addProperty(PropertySpec.builder("cloneHandle", MethodHandle::class, KModifier.PRIVATE).build())
@@ -123,23 +134,16 @@ object OpaqueGenerator {
         classBuilder.addType(companion.build())
 
         // --- ファイル書き出し ---
-        val fileSpecBuilder = FileSpec.builder(targetPackage, className)
+        val fileSpec = FileSpec.builder(targetPackage, className)
             .addImport("java.lang.foreign", "Linker", "SymbolLookup", "FunctionDescriptor", "ValueLayout", "Arena")
             .addType(classBuilder.build())
-        if (meta.isClonable) {
-            fileSpecBuilder
-                .addImport("java.lang", "RuntimeException")
-        }
-        val fileSpec = fileSpecBuilder.build()
+            .build()
+        
         writeToDisk(fileSpec, targetPackage, className, outputDir)
     }
 
     private fun writeToDisk(fileSpec: FileSpec, pkg: String, name: String, outputDir: File) {
-        var content = fileSpec.toString()
-        // 不要な public 等を削る置換
-        listOf("class", "fun", "val", "var", "constructor", "open", "companion", "init", "private").forEach {
-            content = content.replace("public $it", it)
-        }
+        val content = XrossGenerator.cleanupPublic(fileSpec.toString())
         val fileDir = outputDir.resolve(pkg.replace('.', '/'))
         if (!fileDir.exists()) fileDir.mkdirs()
         fileDir.resolve("$name.kt").writeText(content)

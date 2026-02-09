@@ -35,6 +35,7 @@ abstract class GenerateXrossTask @Inject constructor(private val workerExecutor:
                 params.jsonFile.set(file)
                 params.outputDir.set(outDir)
                 params.packageName.set(packageName)
+                params.metadataDir.set(metadataDir.get().asFile)
             }
         }
         queue.await()
