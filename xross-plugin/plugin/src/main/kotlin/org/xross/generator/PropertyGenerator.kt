@@ -7,12 +7,10 @@ import org.xross.structures.XrossDefinition
 import org.xross.structures.XrossField
 import org.xross.structures.XrossThreadSafety
 import org.xross.structures.XrossType
-import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
 
 object PropertyGenerator {
-    private val MEMORY_SEGMENT = ClassName("java.lang.foreign", "MemorySegment")
-    fun generateFields(classBuilder: TypeSpec.Builder, meta: XrossDefinition.Struct, targetPackage: String, basePackage: String) {
+    fun generateFields(classBuilder: TypeSpec.Builder, meta: XrossDefinition.Struct, basePackage: String) {
         val selfType = XrossGenerator.getClassName(meta.signature, basePackage)
         meta.fields.forEach { field ->
             val baseName = field.name.toCamelCase()
@@ -55,7 +53,7 @@ object PropertyGenerator {
 
         val isSelf = kType == selfType
         val baseName = field.name.toCamelCase()
-        val offsetName = "Companion.OFFSET_$baseName"
+        val offsetName = "OFFSET_$baseName"
 
         when (field.ty) {
             is XrossType.Object -> {
@@ -63,8 +61,8 @@ object PropertyGenerator {
                 readCodeBuilder.addStatement("res = this.$backingFieldName!!")
                 readCodeBuilder.nextControlFlow("else")
 
-                val sizeExpr = if (isSelf) "Companion.STRUCT_SIZE" else "%T.Companion.STRUCT_SIZE"
-                val fromPointerExpr = if (isSelf) "Companion.fromPointer" else "%T.Companion.fromPointer"
+                val sizeExpr = if (isSelf) "STRUCT_SIZE" else "%T.STRUCT_SIZE"
+                val fromPointerExpr = if (isSelf) "fromPointer" else "%T.fromPointer"
                 val isOwned = field.ty.ownership == XrossType.Ownership.Owned
 
                 val resolveArgs = mutableListOf<Any?>()
@@ -73,7 +71,7 @@ object PropertyGenerator {
                 resolveArgs.add(isOwned)
 
                 readCodeBuilder.addStatement(
-                    "val resSeg = resolveFieldSegment(this.segment, if (%L) null else Companion.$vhName, $offsetName, $sizeExpr, %L)",
+                    "val resSeg = resolveFieldSegment(this.segment, if (%L) null else $vhName, $offsetName, $sizeExpr, %L)",
                     *resolveArgs.toTypedArray()
                 )
                 
@@ -87,10 +85,10 @@ object PropertyGenerator {
                 readCodeBuilder.addStatement("this.$backingFieldName = res")
                 readCodeBuilder.endControlFlow()
             }
-            is XrossType.Bool -> readCodeBuilder.addStatement("res = (Companion.$vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
+            is XrossType.Bool -> readCodeBuilder.addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
             is XrossType.RustString -> {
                 readCodeBuilder.addStatement(
-                    "val rawSegment = Companion.$vhName.get(this.segment, $offsetName) as %T",
+                    "val rawSegment = $vhName.get(this.segment, $offsetName) as %T",
                     MemorySegment::class
                 )
                 readCodeBuilder.addStatement(
@@ -100,7 +98,7 @@ object PropertyGenerator {
                 )
             }
 
-            else -> readCodeBuilder.addStatement("res = Companion.$vhName.get(this.segment, $offsetName) as %T", kType)
+            else -> readCodeBuilder.addStatement("res = $vhName.get(this.segment, $offsetName) as %T", kType)
         }
 
         return FunSpec.getterBuilder().addCode(
@@ -131,10 +129,10 @@ object PropertyGenerator {
 
         val isSelf = kType == selfType
         val baseName = field.name.toCamelCase()
-        val offsetName = "Companion.OFFSET_$baseName"
+        val offsetName = "OFFSET_$baseName"
 
         when (field.ty) {
-            is XrossType.Bool -> writeCodeBuilder.addStatement("Companion.$vhName.set(this.segment, $offsetName, if (v) 1.toByte() else 0.toByte())")
+            is XrossType.Bool -> writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, if (v) 1.toByte() else 0.toByte())")
             is XrossType.Object -> {
                 writeCodeBuilder.addStatement(
                     "if (v.segment == %T.NULL || !v.aliveFlag.isValid) throw %T(%S)",
@@ -144,13 +142,13 @@ object PropertyGenerator {
                 )
 
                 if (field.ty.ownership == XrossType.Ownership.Owned) {
-                    val sizeExpr = if (isSelf) "Companion.STRUCT_SIZE" else "%T.Companion.STRUCT_SIZE"
+                    val sizeExpr = if (isSelf) "STRUCT_SIZE" else "%T.STRUCT_SIZE"
                     writeCodeBuilder.addStatement(
                         "this.segment.asSlice($offsetName, $sizeExpr).copyFrom(v.segment)",
                         *(if (isSelf) emptyArray() else arrayOf(kType))
                     )
                 } else {
-                    writeCodeBuilder.addStatement("Companion.$vhName.set(this.segment, $offsetName, v.segment)")
+                    writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, v.segment)")
                 }
 
                 if (backingFieldName != null) {
@@ -158,7 +156,7 @@ object PropertyGenerator {
                 }
             }
 
-            else -> writeCodeBuilder.addStatement("Companion.$vhName.set(this.segment, $offsetName, v)")
+            else -> writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, v)")
         }
 
         return FunSpec.setterBuilder().addParameter("v", kType).addCode(
@@ -176,13 +174,13 @@ object PropertyGenerator {
         kType: TypeName
     ) {
         val innerClassName = "AtomicFieldOf${baseName.replaceFirstChar { it.uppercase() }}"
-        val offsetName = "Companion.OFFSET_$baseName"
+        val offsetName = "OFFSET_$baseName"
         val innerClass = TypeSpec.classBuilder(innerClassName).addModifiers(KModifier.INNER)
             .addProperty(
                 PropertySpec.builder("value", kType)
                     .getter(
                         FunSpec.getterBuilder()
-                            .addStatement("return Companion.$vhName.getVolatile(this@${className(classBuilder)}.segment, $offsetName) as %T", kType)
+                            .addStatement("return $vhName.getVolatile(this@${className(classBuilder)}.segment, $offsetName) as %T", kType)
                             .build()
                     ).build()
             )
@@ -193,7 +191,7 @@ object PropertyGenerator {
                     .beginControlFlow("try")
                     .addStatement("val current = value")
                     .addStatement("val next = block(current)")
-                    .beginControlFlow("if (Companion.$vhName.compareAndSet(this@${className(classBuilder)}.segment, $offsetName, current, next))")
+                    .beginControlFlow("if ($vhName.compareAndSet(this@${className(classBuilder)}.segment, $offsetName, current, next))")
                     .addStatement("return next")
                     .endControlFlow()
                     .nextControlFlow("catch (e: %T)", Throwable::class)

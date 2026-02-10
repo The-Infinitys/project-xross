@@ -120,13 +120,13 @@ object EnumVariantGenerator {
                             } else {
                                 field.ty.kotlinType
                             }
-                            ParameterSpec.builder("arg_" + field.name.toCamelCase(), kType).build()
+                            ParameterSpec.builder("argOf" + field.name.toCamelCase(), kType).build()
                         })
                         .returns(pairType)
                         .addCode(CodeBlock.builder()
                             .addStatement("val newArena = Arena.ofAuto()")
                             .addStatement("val resRaw = Companion.new${variant.name}Handle.invokeExact(${variant.fields.joinToString(", ") { field ->
-                                val argName = "arg_" + field.name.toCamelCase()
+                                val argName = "argOf" + field.name.toCamelCase()
                                 if (field.ty is XrossType.Bool) "if ($argName) 1.toByte() else 0.toByte()" 
                                 else if (field.ty is XrossType.Object) "$argName.segment"
                                 else argName

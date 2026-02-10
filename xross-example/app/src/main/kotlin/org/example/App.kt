@@ -27,16 +27,16 @@ fun main() {
 
         // 1. メモリリークテスト
         executeMemoryLeakTest()
-
         // 2. 参照と所有権テスト
         executeReferenceAndOwnershipTest()
-
         // 3. アトミック並行アクセステスト
         executeConcurrencyTest()
         // 4. Enumに関するテスト
         executeEnumTest()
         // 5. Optionに関するテスト
         executeCollectionAndOptionalTest()
+        // 6. プロパティに関するテスト
+        executePropertyTest()
     } catch (e: Exception) {
         println("Test failed with exception:")
         e.printStackTrace()
@@ -57,6 +57,13 @@ private fun loadFromResources(tempDir: File) {
     resourceStream.use { input -> libFile.outputStream().use { output -> input.copyTo(output) } }
     System.load(libFile.absolutePath)
     println("Native library loaded from: ${libFile.absolutePath}")
+}
+
+fun executePropertyTest(){
+    val unknownStruct= UnknownStruct(1,"Hello",1f);
+    println(unknownStruct.s)
+    unknownStruct.s = "Hello, World. from modified"
+    println(unknownStruct.s)
 }
 
 fun executeEnumTest() {

@@ -120,7 +120,6 @@ object XrossGenerator {
             meta is XrossDefinition.Struct -> PropertyGenerator.generateFields(
                 classBuilder,
                 meta,
-                targetPackage,
                 basePackage
             )
 

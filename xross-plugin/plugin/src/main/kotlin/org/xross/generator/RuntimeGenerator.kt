@@ -1,13 +1,10 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
-import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import java.io.File
 import java.lang.foreign.MemorySegment
 
 object RuntimeGenerator {
-    private val ITERATOR = ClassName("kotlin.collections", "Iterator")
-    private val LIST_ITERATOR = ClassName("kotlin.collections", "ListIterator")
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
     fun generate(outputDir: File, basePackage: String) {
