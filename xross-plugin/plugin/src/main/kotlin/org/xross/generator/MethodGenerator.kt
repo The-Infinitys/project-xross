@@ -127,8 +127,13 @@ object MethodGenerator {
                 if (isPureEnum && !isCopy) {
                     // 消費されたが Copy ではない Pure Enum の場合、再初期化する
                     body.addStatement("// Re-initialize consumed segment for fieldless enum")
-                    body.addStatement("this.segment = %T.NULL", MEMORY_SEGMENT)
-                    body.addStatement("this.segment") 
+                    body.addStatement("this.segment = when(this) {")
+                    (meta as XrossDefinition.Enum).variants.forEach { v ->
+                        body.addStatement("    %N -> Companion.new${v.name}Handle.invokeExact() as %T", v.name, MEMORY_SEGMENT)
+                    }
+                    body.addStatement("}")
+                } else if (meta is XrossDefinition.Enum && !isCopy) {
+                    body.addStatement("this.close()")
                 } else if (!isPureEnum) {
                     body.addStatement("this.aliveFlag.isValid = false")
                     body.addStatement("this.segment = %T.NULL", MEMORY_SEGMENT)
@@ -160,8 +165,13 @@ object MethodGenerator {
             if (method.methodType == XrossMethodType.OwnedInstance) {
                 if (isPureEnum && !isCopy) {
                     body.addStatement("// Re-initialize consumed segment for fieldless enum")
-                    body.addStatement("this.segment = %T.NULL", MEMORY_SEGMENT)
-                    body.addStatement("this.segment")
+                    body.addStatement("this.segment = when(this) {")
+                    (meta as XrossDefinition.Enum).variants.forEach { v ->
+                        body.addStatement("    %N -> Companion.new${v.name}Handle.invokeExact() as %T", v.name, MEMORY_SEGMENT)
+                    }
+                    body.addStatement("}")
+                } else if (meta is XrossDefinition.Enum && !isCopy) {
+                    body.addStatement("this.close()")
                 } else if (!isPureEnum) {
                     body.addStatement("this.close()")
                 }

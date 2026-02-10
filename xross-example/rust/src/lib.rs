@@ -1,16 +1,35 @@
 #![feature(offset_of_enum)]
-use xross_core::{XrossClass, xross_class};
+use std::sync::atomic::{AtomicIsize, Ordering};
+use xross_core::{xross_class, XrossClass};
 
-/// 巨大なメモリを確保してリークテストを行うためのサービス
+// --- グローバル・アナライザー・カウンター ---
+static SERVICE_COUNT: AtomicIsize = AtomicIsize::new(0);
+static UNKNOWN_STRUCT_COUNT: AtomicIsize = AtomicIsize::new(0);
+
+fn report_leak(name: &str, count: isize) {
+    if count > 0 {
+        // println! は JNI 経由だと標準出力で見えない場合があるため、
+        // 実際の実装では log crate 等を推奨します。
+        println!("[Xross Analyzer] {} dropped. Remaining: {}", name, count);
+    }
+}
+
+// --- 構造体定義 ---
+
 #[derive(XrossClass, Clone)]
 #[repr(C)]
 pub struct MyService {
     _boxes: Vec<i32>,
-
-    // XrossClassが付与されていない外部構造体。
-    // 明示的に opaque 指定を行うことで、Java側へ signature を伝える。
     #[xross_field]
     pub unknown_struct: Box<UnknownStruct>,
+}
+
+// 手動ドロップ実装でカウントを減らす
+impl Drop for MyService {
+    fn drop(&mut self) {
+        let count = SERVICE_COUNT.fetch_sub(1, Ordering::SeqCst) - 1;
+        report_leak("MyService", count);
+    }
 }
 
 #[derive(Clone, XrossClass)]
@@ -23,29 +42,48 @@ pub struct UnknownStruct {
     #[xross_field]
     pub s: String,
 }
+
+impl Drop for UnknownStruct {
+    fn drop(&mut self) {
+        let count = UNKNOWN_STRUCT_COUNT.fetch_sub(1, Ordering::SeqCst) - 1;
+        report_leak("UnknownStruct", count);
+    }
+}
+
 #[xross_class]
 impl UnknownStruct {
     #[xross_new]
     pub fn new(i: i32, s: String, f: f32) -> Self {
+        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst);
         Self { i, s, f }
     }
-}
-pub enum UnClonable {
-    S,
-    Y,
-    Z,
+
+    /// 現在のネイティブ側での生存数を文字列として返す分析関数
+    #[xross_method]
+    pub fn display_analysis() -> String {
+        let s_count = SERVICE_COUNT.load(Ordering::SeqCst);
+        let u_count = UNKNOWN_STRUCT_COUNT.load(Ordering::SeqCst);
+        format!(
+            "--- Xross Native Analysis ---\n\
+             Active MyService: {}\n\
+             Active UnknownStruct: {}\n\
+             Total Native Memory Pressure: ~{} MB\n\
+             -----------------------------",
+            s_count,
+            u_count,
+            s_count * 4 // MyServiceは約4MBのVecを持つため
+        )
+    }
 }
 
-xross_core::opaque_class!(UnClonable, false);
+// --- Enum 定義 ---
+
 #[derive(Clone, Copy, XrossClass, Debug, PartialEq)]
 #[repr(C)]
 pub enum XrossSimpleEnum {
-    V,
-    W,
-    X,
-    Y,
-    Z,
+    V, W, X, Y, Z,
 }
+
 #[xross_class]
 impl XrossSimpleEnum {
     #[xross_method]
@@ -58,29 +96,18 @@ impl XrossSimpleEnum {
 #[repr(C)]
 pub enum XrossTestEnum {
     A,
-    B {
-        #[xross_field]
-        i: i32,
-    },
-    C {
-        #[xross_field]
-        j: Box<UnknownStruct>,
-    },
+    B { #[xross_field] i: i32 },
+    C { #[xross_field] j: Box<UnknownStruct> },
 }
-impl Default for UnknownStruct {
-    fn default() -> Self {
-        Self {
-            i: 32,
-            f: 64.0,
-            s: "Hello, World!".to_string(),
-        }
-    }
-}
+
+// --- MyService 実装 ---
 
 #[xross_class]
 impl MyService {
     #[xross_new]
     pub fn new() -> Self {
+        SERVICE_COUNT.fetch_add(1, Ordering::SeqCst);
+        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst); // Box内部の分
         let boxes = vec![0; 1_000_000]; // 約4MB
         MyService {
             _boxes: boxes,
@@ -88,7 +115,6 @@ impl MyService {
         }
     }
 
-    /// Self は自動的に RustStruct { signature: "MyService" } として解析されます
     #[xross_method]
     pub fn default() -> Self {
         Self::new()
@@ -104,26 +130,26 @@ impl MyService {
         "Hello from Rust!".to_string()
     }
 
-    /// 所有権を消費して自分自身を消滅させる
     #[xross_method]
     pub fn consume_self(self) -> i32 {
         self._boxes.len() as i32
+        // ここで self がドロップされ、カウンターが減る
     }
 
-    /// &mut Self も RustStruct として正しくポインタ経由で扱われます
     #[xross_method]
     pub fn get_mut_ref(&mut self) -> &mut Self {
         self
     }
 
-    /// Enumを返すテスト
     #[xross_method]
     pub fn ret_enum(&self) -> XrossTestEnum {
         match rand::random_range(0..3) {
             0 => XrossTestEnum::A,
             1 => XrossTestEnum::B { i: rand::random() },
-            2 => XrossTestEnum::C {
-                j: Box::new(UnknownStruct::default()),
+            2 => {
+                XrossTestEnum::C {
+                    j: Box::new(UnknownStruct::default()),
+                }
             },
             _ => XrossTestEnum::A,
         }
@@ -148,8 +174,22 @@ impl MyService {
     }
 }
 
+impl Default for UnknownStruct {
+    fn default() -> Self {
+        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst);
+        Self {
+            i: 32,
+            f: 64.0,
+            s: "Hello, World!".to_string(),
+        }
+    }
+}
+
+// --- サブモジュール ---
+
 pub mod test {
     use super::*;
+    static SERVICE2_COUNT: AtomicIsize = AtomicIsize::new(0);
 
     #[derive(XrossClass, Clone)]
     #[xross_package("test.test2")]
@@ -159,10 +199,17 @@ pub mod test {
         pub val: i32,
     }
 
+    impl Drop for MyService2 {
+        fn drop(&mut self) {
+            SERVICE2_COUNT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
     #[xross_class]
     impl MyService2 {
         #[xross_new]
         pub fn new(val: i32) -> Self {
+            SERVICE2_COUNT.fetch_add(1, Ordering::SeqCst);
             MyService2 { val }
         }
 
@@ -171,12 +218,6 @@ pub mod test {
             self.val as i64 * 2i64
         }
 
-        #[xross_method(safety = Atomic)]
-        pub fn mut_test(&mut self) {
-            self.val += 1;
-        }
-
-        /// パッケージ化された Self (test.test2.MyService2) を自動解決します
         #[xross_method]
         pub fn get_self_ref(&self) -> &Self {
             self
@@ -184,7 +225,12 @@ pub mod test {
 
         #[xross_method]
         pub fn create_clone(&self) -> Self {
+            SERVICE2_COUNT.fetch_add(1, Ordering::SeqCst);
             self.clone()
         }
     }
 }
+
+// Opaque設定
+pub enum UnClonable { S, Y, Z }
+xross_core::opaque_class!(UnClonable, false);

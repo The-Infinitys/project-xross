@@ -31,19 +31,19 @@ fun main() {
         // 2-6. 安定性テストの繰り返し実行
         val repeatCount = 100
         println("\n--- Starting Repetitive Stability Test ($repeatCount cycles) ---")
-        
+
         for (i in 1..repeatCount) {
             executeReferenceAndOwnershipTest()
             executeConcurrencyTest()
             executeEnumTest()
             executeCollectionAndOptionalTest()
             executePropertyTest()
-            
+
             if (i % 10 == 0) {
                 println(">>> Completed cycle $i / $repeatCount")
             }
         }
-        
+
         println("\n✅ All $repeatCount cycles finished without any crashes or memory errors!")
     } catch (e: Exception) {
         println("Test failed with exception:")
@@ -53,6 +53,7 @@ fun main() {
             tempDir.deleteRecursively()
             println("\nTemporary directory deleted.")
         }
+        println(UnknownStruct.displayAnalysis())
     }
 }
 
@@ -67,8 +68,8 @@ private fun loadFromResources(tempDir: File) {
     println("Native library loaded from: ${libFile.absolutePath}")
 }
 
-fun executePropertyTest(){
-    val unknownStruct= UnknownStruct(1,"Hello",1f);
+fun executePropertyTest() {
+    val unknownStruct = UnknownStruct(1, "Hello", 1f)
     println(unknownStruct.s)
     unknownStruct.s = "Hello, World. from modified, 無限、❤"
     println(unknownStruct.s)
@@ -79,7 +80,7 @@ fun executeEnumTest() {
     val myService = MyService()
 
     // 1. 基本的なフィールドアクセステスト
-    val enum1 = XrossTestEnum.A
+    val enum1 = XrossTestEnum.A()
     val enum2 = XrossTestEnum.B(1)
     println("Static Variant A: $enum1")
     println("Static Variant B value: ${enum2.i}")
@@ -99,10 +100,12 @@ fun executeEnumTest() {
     val startTime = System.currentTimeMillis()
     repeat(iterations) {
         // equals実装により A は定数として比較可能、B/C は型チェック(is)で分岐
-        when (myService.retEnum()) {
-            is XrossTestEnum.A -> countA++
-            is XrossTestEnum.B -> countB++
-            is XrossTestEnum.C -> countC++
+        myService.retEnum().use {
+            when (it) {
+                is XrossTestEnum.A -> countA++
+                is XrossTestEnum.B -> countB++
+                is XrossTestEnum.C -> countC++
+            }
         }
     }
     val endTime = System.currentTimeMillis()
@@ -222,7 +225,7 @@ fun executeCollectionAndOptionalTest() {
     // 2. Result Test
     val okResult = service.getResultStruct(true)
     println("Result(true) isSuccess: ${okResult.isSuccess}, value: ${okResult.getOrNull()?.i}")
-    
+
     val errResult = service.getResultStruct(false)
     println("Result(false) isFailure: ${errResult.isFailure}, exception: ${errResult.exceptionOrNull()}")
     if (errResult.isFailure) {

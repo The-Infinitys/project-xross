@@ -54,6 +54,17 @@ object CompanionGenerator {
             .addStatement("this.STRUCT_SIZE = 0L").addStatement("this.LAYOUT = %T.structLayout()", MEMORY_LAYOUT)
             .endControlFlow()
 
+        if (XrossGenerator.isPureEnum(meta)) {
+            init.add("\n// --- Enum Segment Initialization ---\n")
+            init.beginControlFlow("entries.forEach { v ->")
+            init.beginControlFlow("v.segment = when(v)")
+            (meta as XrossDefinition.Enum).variants.forEach { v ->
+                init.addStatement("%N -> new${v.name}Handle.invokeExact() as %T", v.name, MEMORY_SEGMENT)
+            }
+            init.endControlFlow()
+            init.endControlFlow()
+        }
+
         companionBuilder.addInitializerBlock(init.build())
     }
 

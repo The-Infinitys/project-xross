@@ -19,17 +19,6 @@ object StructureGenerator {
             // --- Pure Enum Case (enum class) ---
             val segmentProp = PropertySpec.builder("segment", MEMORY_SEGMENT, KModifier.INTERNAL)
                 .mutable(true)
-                .getter(FunSpec.getterBuilder()
-                    .addCode("if (field == %T.NULL) field = when(this) {\n", MEMORY_SEGMENT)
-                    .apply {
-                        (meta as XrossDefinition.Enum).variants.forEach { v ->
-                            addCode("    %N -> Companion.new${v.name}Handle.invokeExact() as %T\n", v.name, MEMORY_SEGMENT)
-                        }
-                    }
-                    .addCode("}\n")
-                    .addCode("return field\n")
-                    .build())
-                .setter(FunSpec.setterBuilder().addParameter("value", MEMORY_SEGMENT).addCode("field = value").build())
                 .initializer("%T.NULL", MEMORY_SEGMENT)
                 .build()
             classBuilder.addProperty(segmentProp)
