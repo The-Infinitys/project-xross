@@ -1,13 +1,13 @@
 # Xross (クロス)
 
-Xross は、Rust と JVM (Kotlin/Java) 間のシームレスで高性能、かつメモリ安全な相互運用性を提供する次世代フレームワークです。
+Xross は、Rust と Jvm (Kotlin/Java) 間のシームレスで高性能、かつメモリ安全な相互運用性を提供する次世代フレームワークです。
 
 Java 25 で導入された **Project Panama (Foreign Function & Memory API)** を活用し、従来の JNI (Java Native Interface) における複雑なボイラープレートやオーバーヘッドを排除します。
 
 ## 主な特徴
 
 *   **高性能**: FFM API を使用した直接的なネイティブメモリ操作と関数呼び出しにより、JNI を超えるパフォーマンスを実現します。
-*   **Rust の所有権モデルを JVM へ**: Rust の `Owned`, `Ref`, `MutRef` セマンティクスをメタデータとして抽出し、Kotlin 側のコード生成に反映。メモリ安全性を言語境界を越えて保証します。
+*   **Rust の所有権モデルを Xross へ**: Rust の `Owned`, `Ref`, `MutRef` セマンティクスをメタデータとして抽出し、Kotlin 側のコード生成に反映。メモリ安全性を言語境界を越えて保証します。
 *   **自動バインディング生成**: Rust の構造体やメソッドにアノテーションを付与するだけで、スレッドセーフで型安全な Kotlin クラスを自動生成します。
 *   **柔軟なリソース管理**: `Arena.ofAuto()` による自動メモリ管理に加え、`AutoCloseable` による明示的な解放もサポート。
 *   **高度な型サポート**: 
@@ -19,7 +19,7 @@ Java 25 で導入された **Project Panama (Foreign Function & Memory API)** �
 ## プロジェクト構成
 
 *   `xross-core`: Rust 側のランタイムおよびアノテーション定義。
-*   `xross-macros`: `#[derive(JvmClass)]` や `#[jvm_class]` などのコード生成マクロ。
+*   `xross-macros`: `#[derive(XrossClass)]` や `#[xross_class]` などのコード生成マクロ。
 *   `xross-metadata`: 言語間で共有される型情報のシリアライズ定義。
 *   `xross-plugin`: Kotlin バインディングを生成する Gradle プラグイン。
 *   `xross-example`: 実装例と統合テスト。
@@ -38,22 +38,22 @@ xross-core = { path = "path/to/xross-core" }
 Rust のコードで公開したい型とメソッドを定義します。
 
 ```rust
-use xross_core::{JvmClass, jvm_class};
+use xross_core::{XrossClass, xross_class};
 
-#[derive(JvmClass, Clone)]
+#[derive(XrossClass, Clone)]
 pub struct MyService {
-    #[jvm_field]
+    #[xross_field]
     pub val: i32,
 }
 
-#[jvm_class]
+#[xross_class]
 impl MyService {
-    #[jvm_new]
+    #[xross_new]
     pub fn new(val: i32) -> Self {
         Self { val }
     }
 
-    #[jvm_method]
+    #[xross_method]
     pub fn calculate(&self, factor: i32) -> i32 {
         self.val * factor
     }
@@ -106,7 +106,7 @@ fun main() {
 *   **Gradle**: 8.0+
 
 ### 実行時の注意
-FFM API (Project Panama) を使用するため、実行時には以下の JVM 引数が必要です。
+FFM API (Project Panama) を使用するため、実行時には以下の Xross 引数が必要です。
 
 ```bash
 --enable-native-access=ALL-UNNAMED
@@ -116,7 +116,7 @@ Gradle プロジェクトでは、以下のように設定できます。
 
 ```kotlin
 tasks.withType<Test>().configureEach {
-    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    XrossArgs("--enable-native-access=ALL-UNNAMED")
 }
 ```
 
@@ -141,14 +141,14 @@ xross_core::opaque_class!(com.example, InternalData);
 ```
 
 ### パッケージ構成
-`#[jvm_package]` を使用して、生成される Kotlin クラスのパッケージを個別に指定可能です。
+`#[xross_package]` を使用して、生成される Kotlin クラスのパッケージを個別に指定可能です。
 
 ```rust
-#[derive(JvmClass)]
-#[jvm_package("com.example.service")]
+#[derive(XrossClass)]
+#[xross_package("com.example.service")]
 pub struct AdvancedService;
 ```
 
 ## 開発状況
 
-現在、Project Panama の最新機能を活用したメモリ管理モデルへの移行を進めています。
+現在、Project Panama の最新機能を活用した非同期関数の実装を進めています。
