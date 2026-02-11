@@ -50,9 +50,7 @@ object EnumVariantGenerator {
                     if (nameRaw != %T.NULL) Companion.xrossFreeStringHandle.invokeExact(nameRaw)
                     return valueOf(name)
                 } finally {
-                    if (confinedArena != null) {
-                        confinedArena.close()
-                    }
+                    // Manual close is removed because we use Arena.ofAuto() for safety
                 }
                 """.trimIndent(),
                 MEMORY_SEGMENT, NullPointerException::class.asTypeName(), MEMORY_SEGMENT, MEMORY_SEGMENT, Long::class.asTypeName(), MEMORY_SEGMENT

@@ -65,7 +65,7 @@ object OpaqueGenerator {
                     .addStatement("val newConfinedArena = Arena.ofConfined()")
                     .addStatement("val flag = %T(true, this.aliveFlag)", aliveFlagType)
                     .addStatement("val raw = cloneHandle.invokeExact(this.segment) as MemorySegment")
-                    .addStatement("val res = raw.reinterpret(STRUCT_SIZE, newAutoArena) { s -> if (flag.tryInvalidate()) { dropHandle.invokeExact(s); try { newConfinedArena.close() } catch (e: Throwable) {} } }")
+                    .addStatement("val res = raw.reinterpret(STRUCT_SIZE, newAutoArena) { s -> if (flag.tryInvalidate()) { dropHandle.invokeExact(s) } }")
                     .addStatement("return %L(res, newAutoArena, confinedArena = newConfinedArena, sharedFlag = flag)", className)
                     .nextControlFlow("catch (e: Throwable)")
                     .addStatement("throw RuntimeException(e)")

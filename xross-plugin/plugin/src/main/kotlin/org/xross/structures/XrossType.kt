@@ -13,7 +13,9 @@ sealed class XrossType {
     object I16 : XrossType()
     object I32 : XrossType()
     object I64 : XrossType()
+    object ISize : XrossType()
     object U16 : XrossType()
+    object USize : XrossType()
     object F32 : XrossType()
     object F64 : XrossType()
     object Pointer : XrossType()
@@ -30,6 +32,7 @@ sealed class XrossType {
         get() = when (this) {
             I32 -> INT
             I64 -> LONG
+            ISize, USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
             F32 -> FLOAT
             F64 -> DOUBLE
             Bool -> BOOLEAN
@@ -48,6 +51,7 @@ sealed class XrossType {
         get() = when (this) {
             I32 -> ValueLayouts.JAVA_INT
             I64 -> ValueLayouts.JAVA_LONG
+            ISize, USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) ValueLayouts.JAVA_INT else ValueLayouts.JAVA_LONG
             F32 -> ValueLayouts.JAVA_FLOAT
             F64 -> ValueLayouts.JAVA_DOUBLE
             Bool -> ValueLayouts.JAVA_BYTE

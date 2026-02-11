@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.test.test2.MyService2
+import java.awt.desktop.SystemSleepEvent
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.Executors
@@ -53,6 +54,12 @@ fun main() {
             tempDir.deleteRecursively()
             println("\nTemporary directory deleted.")
         }
+        println("\n--- Final Analysis before GC ---")
+        println(UnknownStruct.displayAnalysis())
+        // --- 強制的にGCを促して確認 ---
+        System.gc()
+        Thread.sleep(1000)
+        println("\n--- Final Analysis after GC ---")
         println(UnknownStruct.displayAnalysis())
     }
 }
@@ -159,6 +166,7 @@ fun executeReferenceAndOwnershipTest() {
         println("✅ Success: Parent is still alive after closing a borrowed reference.")
     } catch (e: NullPointerException) {
         println("❌ Failure: Parent was incorrectly invalidated by closing a borrowed reference!")
+        println("Reason: ${e.message}")
     }
 
     val borrowed2 = parent.getSelfRef()
@@ -178,9 +186,9 @@ fun executeReferenceAndOwnershipTest() {
     val len = serviceToConsume.consumeSelf()
     println("Service consumed, len: $len")
     try {
-        serviceToConsume.execute(5)
+        serviceToConsume.execute(10)
         println("❌ Failure: Service should have been invalidated!")
-    } catch (e: NullPointerException) {
+    } catch (_: NullPointerException) {
         println("✅ Success: Caught expected NullPointerException for consumed service.")
     }
 }
@@ -228,14 +236,14 @@ fun executeCollectionAndOptionalTest() {
     println("\n--- [5] Optional Types Test ---")
     val service = MyService()
     // 1. Option Test
-    val someStruct = service.getOptionStruct(true)
-    println("Option(true) result: $someStruct (i=${someStruct?.i})")
-    val noneStruct = service.getOptionStruct(false)
-    println("Option(false) result: $noneStruct")
+    val someEnum = service.getOptionEnum(true)
+    println("Option(true) result: $someEnum")
+    val noneEnum = service.getOptionEnum(false)
+    println("Option(false) result: $noneEnum")
 
     // 2. Result Test
     val okResult = service.getResultStruct(true)
-    println("Result(true) isSuccess: ${okResult.isSuccess}, value: ${okResult.getOrNull()?.i}")
+    println("Result(true) isSuccess: ${okResult.isSuccess}, value: ${okResult.getOrNull()?.`val`?.value}")
 
     val errResult = service.getResultStruct(false)
     println("Result(false) isFailure: ${errResult.isFailure}, exception: ${errResult.exceptionOrNull()}")

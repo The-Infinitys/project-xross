@@ -1,38 +1,17 @@
 #![feature(offset_of_enum)]
-use std::sync::atomic::{AtomicIsize, Ordering};
-use xross_core::{xross_class, XrossClass};
 
-// --- グローバル・アナライザー・カウンター ---
+use std::cmp::{max, min};
+use std::sync::atomic::{AtomicIsize, Ordering};
+use xross_core::{XrossClass, xross_class};
+
+// --- グローバル・カウンター ---
 static SERVICE_COUNT: AtomicIsize = AtomicIsize::new(0);
 static UNKNOWN_STRUCT_COUNT: AtomicIsize = AtomicIsize::new(0);
+static SERVICE2_COUNT: AtomicIsize = AtomicIsize::new(0);
 
-fn report_leak(name: &str, count: isize) {
-    if count > 0 {
-        // println! は JNI 経由だと標準出力で見えない場合があるため、
-        // 実際の実装では log crate 等を推奨します。
-        // println!("[Xross Analyzer] {} dropped. Remaining: {}", name, count);
-    }
-}
+// --- UnknownStruct ---
 
-// --- 構造体定義 ---
-
-#[derive(XrossClass, Clone)]
-#[repr(C)]
-pub struct MyService {
-    _boxes: Vec<i32>,
-    #[xross_field]
-    pub unknown_struct: Box<UnknownStruct>,
-}
-
-// 手動ドロップ実装でカウントを減らす
-impl Drop for MyService {
-    fn drop(&mut self) {
-        let count = SERVICE_COUNT.fetch_sub(1, Ordering::SeqCst) - 1;
-        report_leak("MyService", count);
-    }
-}
-
-#[derive(Clone, XrossClass)]
+#[derive(XrossClass)]
 #[repr(C)]
 pub struct UnknownStruct {
     #[xross_field]
@@ -43,134 +22,21 @@ pub struct UnknownStruct {
     pub s: String,
 }
 
+// Clone時にもカウントを増やす
+impl Clone for UnknownStruct {
+    fn clone(&self) -> Self {
+        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst);
+        Self {
+            i: self.i,
+            f: self.f,
+            s: self.s.clone(),
+        }
+    }
+}
+
 impl Drop for UnknownStruct {
     fn drop(&mut self) {
-        let count = UNKNOWN_STRUCT_COUNT.fetch_sub(1, Ordering::SeqCst) - 1;
-        report_leak("UnknownStruct", count);
-    }
-}
-
-#[xross_class]
-impl UnknownStruct {
-    #[xross_new]
-    pub fn new(i: i32, s: String, f: f32) -> Self {
-        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst);
-        Self { i, s, f }
-    }
-
-    /// 現在のネイティブ側での生存数を文字列として返す分析関数
-    #[xross_method]
-    pub fn display_analysis() -> String {
-        let s_count = SERVICE_COUNT.load(Ordering::SeqCst);
-        let u_count = UNKNOWN_STRUCT_COUNT.load(Ordering::SeqCst);
-        format!(
-            "--- Xross Native Analysis ---\n\
-             Active MyService: {}\n\
-             Active UnknownStruct: {}\n\
-             Total Native Memory Pressure: ~{} MB\n\
-             -----------------------------",
-            s_count,
-            u_count,
-            s_count * 4 // MyServiceは約4MBのVecを持つため
-        )
-    }
-}
-
-// --- Enum 定義 ---
-
-#[derive(Clone, Copy, XrossClass, Debug, PartialEq)]
-#[repr(C)]
-pub enum XrossSimpleEnum {
-    V, W, X, Y, Z,
-}
-
-#[xross_class]
-impl XrossSimpleEnum {
-    #[xross_method]
-    pub fn say_hello(self) {
-        println!("Hello from Simple::{:?}!", self);
-    }
-}
-
-#[derive(Clone, XrossClass)]
-#[repr(C)]
-pub enum XrossTestEnum {
-    A,
-    B { #[xross_field] i: i32 },
-    C { #[xross_field] j: Box<UnknownStruct> },
-}
-
-// --- MyService 実装 ---
-
-#[xross_class]
-impl MyService {
-    #[xross_new]
-    pub fn new() -> Self {
-        SERVICE_COUNT.fetch_add(1, Ordering::SeqCst);
-        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst); // Box内部の分
-        let boxes = vec![0; 1_000_000]; // 約4MB
-        MyService {
-            _boxes: boxes,
-            unknown_struct: Box::new(UnknownStruct::default()),
-        }
-    }
-
-    #[xross_method]
-    pub fn default() -> Self {
-        Self::new()
-    }
-
-    #[xross_method(safety = Unsafe)]
-    pub fn execute(&self, data: i32) -> i32 {
-        data * 2
-    }
-
-    #[xross_method]
-    pub fn str_test() -> String {
-        "Hello from Rust!".to_string()
-    }
-
-    #[xross_method]
-    pub fn consume_self(self) -> i32 {
-        self._boxes.len() as i32
-        // ここで self がドロップされ、カウンターが減る
-    }
-
-    #[xross_method]
-    pub fn get_mut_ref(&mut self) -> &mut Self {
-        self
-    }
-
-    #[xross_method]
-    pub fn ret_enum(&self) -> XrossTestEnum {
-        match rand::random_range(0..3) {
-            0 => XrossTestEnum::A,
-            1 => XrossTestEnum::B { i: rand::random() },
-            2 => {
-                XrossTestEnum::C {
-                    j: Box::new(UnknownStruct::default()),
-                }
-            },
-            _ => XrossTestEnum::A,
-        }
-    }
-
-    #[xross_method]
-    pub fn get_option_struct(&self, flag: bool) -> Option<UnknownStruct> {
-        if flag {
-            Some(UnknownStruct::default())
-        } else {
-            None
-        }
-    }
-
-    #[xross_method]
-    pub fn get_result_struct(&self, flag: bool) -> Result<UnknownStruct, String> {
-        if flag {
-            Ok(UnknownStruct::default())
-        } else {
-            Err("Error from Rust!".to_string())
-        }
+        UNKNOWN_STRUCT_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -185,18 +51,149 @@ impl Default for UnknownStruct {
     }
 }
 
+#[xross_class]
+impl UnknownStruct {
+    #[xross_new]
+    pub fn new(i: i32, s: String, f: f32) -> Self {
+        UNKNOWN_STRUCT_COUNT.fetch_add(1, Ordering::SeqCst);
+        Self { i, s, f }
+    }
+
+    #[xross_method]
+    pub fn display_analysis() -> String {
+        let s1 = SERVICE_COUNT.load(Ordering::SeqCst);
+        let s2 = SERVICE2_COUNT.load(Ordering::SeqCst);
+        let u = UNKNOWN_STRUCT_COUNT.load(Ordering::SeqCst);
+        format!(
+            "--- Xross Native Analysis ---\n\
+             Active MyService: {}\n\
+             Active MyService2: {}\n\
+             Active UnknownStruct: {}\n\
+             Total Native Objects: {}\n\
+             -----------------------------",
+            s1, s2, u, s1 + s2 + u
+        )
+    }
+}
+
+// --- Enum 定義 ---
+
+#[derive(Clone, XrossClass)]
+pub enum XrossTestEnum {
+    A,
+    B { #[xross_field] i: i32 },
+    C { #[xross_field] j: Box<UnknownStruct> },
+}
+
+// --- MyService ---
+
+#[derive(XrossClass)]
+pub struct MyService {
+    _boxes: Vec<i32>,
+    #[xross_field]
+    pub unknown_struct: Box<UnknownStruct>,
+}
+
+impl Clone for MyService {
+    fn clone(&self) -> Self {
+        SERVICE_COUNT.fetch_add(1, Ordering::SeqCst);
+        // 内包する UnknownStruct はその Clone 実装でカウントされる
+        Self {
+            _boxes: self._boxes.clone(),
+            unknown_struct: self.unknown_struct.clone(),
+        }
+    }
+}
+
+impl Drop for MyService {
+    fn drop(&mut self) {
+        SERVICE_COUNT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Clone, Copy, XrossClass)]
+pub enum XrossSimpleEnum { V, W, X, Y, Z }
+
+#[xross_class]
+impl XrossSimpleEnum {
+    #[xross_method]
+    pub fn say_hello(&mut self) { println!("Hello, world!"); }
+}
+
+#[xross_class]
+impl MyService {
+    #[xross_new]
+    pub fn new() -> Self {
+        SERVICE_COUNT.fetch_add(1, Ordering::SeqCst);
+        // UnknownStruct::default() 内でカウント +1 済み
+        MyService {
+            _boxes: vec![0; 1_000_000],
+            unknown_struct: Box::new(UnknownStruct::default()),
+        }
+    }
+
+    #[xross_method]
+    pub fn consume_self(self) -> i32 {
+        self._boxes.len() as i32
+    }
+
+    #[xross_method]
+    pub fn ret_enum(&self) -> XrossTestEnum {
+        match rand::random_range(0..3) {
+            1 => XrossTestEnum::B { i: rand::random() },
+            2 => XrossTestEnum::C {
+                // ここで生成される際、UnknownStruct::default()によりカウンターが増える
+                j: Box::new(UnknownStruct::default()),
+            },
+            _ => XrossTestEnum::A,
+        }
+    }
+
+    #[xross_method]
+    pub fn execute(&mut self, i: usize) -> i32 {
+        let a = self._boxes.len();
+        let x = min(a, i);
+        let y = max(a, i);
+        rand::random_range(x..y + 1) as i32
+    }
+
+    #[xross_method]
+    pub fn get_option_enum(&self, should_some: bool) -> Option<XrossSimpleEnum> {
+        if should_some {
+            Some(XrossSimpleEnum::V)
+        } else {
+            None
+        }
+    }
+
+    #[xross_method]
+    pub fn get_result_struct(&self, should_ok: bool) -> Result<test::MyService2, String> {
+        if should_ok {
+            Ok(test::MyService2::new(1))
+        } else {
+            Err("Error".to_string())
+        }
+    }
+}
+
 // --- サブモジュール ---
 
 pub mod test {
     use super::*;
-    static SERVICE2_COUNT: AtomicIsize = AtomicIsize::new(0);
 
-    #[derive(XrossClass, Clone)]
+    #[derive(XrossClass)]
     #[xross_package("test.test2")]
     #[repr(C)]
     pub struct MyService2 {
         #[xross_field(safety = Atomic)]
         pub val: i32,
+    }
+
+    impl Clone for MyService2 {
+        fn clone(&self) -> Self {
+            SERVICE2_COUNT.fetch_add(1, Ordering::SeqCst);
+            Self { val: self.val }
+        }
     }
 
     impl Drop for MyService2 {
@@ -213,24 +210,23 @@ pub mod test {
             MyService2 { val }
         }
 
-        #[xross_method(safety = Atomic)]
-        pub fn execute(&self) -> i64 {
-            self.val as i64 * 2i64
-        }
-
-        #[xross_method]
-        pub fn get_self_ref(&self) -> &Self {
-            self
-        }
-
         #[xross_method]
         pub fn create_clone(&self) -> Self {
-            SERVICE2_COUNT.fetch_add(1, Ordering::SeqCst);
             self.clone()
+        }
+
+        #[xross_method]
+        pub fn get_self_ref(&self) -> &Self { self }
+
+        #[xross_method]
+        pub fn execute(&self) -> f64 {
+            if self.val == 0 { return 0.0; }
+            let low = min(-self.val, self.val);
+            let high = max(-self.val, self.val);
+            rand::random_range(low..high + 1) as f64
         }
     }
 }
 
-// Opaque設定
 pub enum UnClonable { S, Y, Z }
 xross_core::opaque_class!(UnClonable, false);
