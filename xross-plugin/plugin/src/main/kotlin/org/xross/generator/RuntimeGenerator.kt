@@ -26,12 +26,16 @@ object RuntimeGenerator {
                 .addParameter(ParameterSpec.builder("parent", ClassName(pkg, "AliveFlag").copy(nullable = true)).defaultValue("null").build())
                 .build())
             .addProperty(PropertySpec.builder("parent", ClassName(pkg, "AliveFlag").copy(nullable = true), KModifier.PRIVATE).initializer("parent").build())
-            .addProperty(PropertySpec.builder("_isValid", Boolean::class, KModifier.PRIVATE).mutable(true).initializer("initial").build())
+            .addProperty(PropertySpec.builder("_isValid", ClassName("java.util.concurrent.atomic", "AtomicBoolean"), KModifier.PRIVATE)
+                .initializer("java.util.concurrent.atomic.AtomicBoolean(initial)").build())
             .addProperty(PropertySpec.builder("isValid", Boolean::class)
-                .mutable(true)
-                .getter(FunSpec.getterBuilder().addStatement("return _isValid && (parent?.isValid ?: true)").build())
-                .setter(FunSpec.setterBuilder().addParameter("value", Boolean::class).addStatement("_isValid = value").build())
+                .getter(FunSpec.getterBuilder().addStatement("return _isValid.get() && (parent?.isValid ?: true)").build())
                 .build())
+            .addFunction(FunSpec.builder("invalidate")
+                .addStatement("_isValid.set(false)").build())
+            .addFunction(FunSpec.builder("tryInvalidate")
+                .returns(Boolean::class)
+                .addStatement("return _isValid.compareAndSet(true, false)").build())
             .build()
 
         // --- XrossAsync ---
@@ -56,6 +60,7 @@ object RuntimeGenerator {
             .build()
 
         val file = FileSpec.builder(pkg, "XrossRuntime")
+            .addImport("java.util.concurrent.atomic", "AtomicBoolean")
             .addType(xrossException)
             .addType(aliveFlag)
             .addType(xrossAsync)

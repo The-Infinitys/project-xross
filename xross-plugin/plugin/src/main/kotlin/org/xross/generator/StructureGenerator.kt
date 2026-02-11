@@ -102,38 +102,46 @@ object StructureGenerator {
     fun addFinalBlocks(classBuilder: TypeSpec.Builder, meta: XrossDefinition) {
         if (GeneratorUtils.isPureEnum(meta)) return
 
+        val relinquishInternalBody = CodeBlock.builder()
+            .addStatement("segment = %T.NULL", MEMORY_SEGMENT)
+            .addStatement("aliveFlag.invalidate()")
+            .build()
+        classBuilder.addFunction(FunSpec.builder("relinquishInternal")
+            .addModifiers(KModifier.INTERNAL)
+            .addCode(relinquishInternalBody)
+            .build())
+
         val closeBody = CodeBlock.builder()
+            .addStatement("val s = segment")
+            .beginControlFlow("if (s != %T.NULL)", MEMORY_SEGMENT)
+            .addStatement("val stamp = sl.writeLock()")
+            .beginControlFlow("try")
             .beginControlFlow("if (segment != %T.NULL)", MEMORY_SEGMENT)
-            .addStatement("aliveFlag.isValid = false")
-            .apply {
-                val hasLock = meta.methods.any { it.methodType != XrossMethodType.Static } || (meta is XrossDefinition.Struct && meta.fields.isNotEmpty())
-                if (hasLock) {
-                    addStatement("val stamp = sl.writeLock()")
-                    beginControlFlow("try")
-                    addStatement("segment = %T.NULL", MEMORY_SEGMENT)
-                    beginControlFlow("if (confinedArena != null)")
-                    beginControlFlow("try")
-                    addStatement("confinedArena.close()")
-                    nextControlFlow("catch (e: %T)", UnsupportedOperationException::class.asTypeName())
-                    addStatement("// Ignore for non-closeable arenas")
-                    endControlFlow()
-                    endControlFlow()
-                    nextControlFlow("finally")
-                    addStatement("sl.unlockWrite(stamp)")
-                    endControlFlow()
-                } else {
-                    addStatement("segment = %T.NULL", MEMORY_SEGMENT)
-                    beginControlFlow("if (confinedArena != null)")
-                    beginControlFlow("try")
-                    addStatement("confinedArena.close()")
-                    nextControlFlow("catch (e: %T)", UnsupportedOperationException::class.asTypeName())
-                    addStatement("// Ignore for non-closeable arenas")
-                    endControlFlow()
-                    endControlFlow()
-                }
-            }
+            .addStatement("val currentS = segment")
+            .beginControlFlow("if (aliveFlag.tryInvalidate())")
+            .addStatement("relinquishInternal()")
+            .beginControlFlow("if (confinedArena != null)")
+            .addStatement("Companion.dropHandle.invokeExact(currentS)")
+            .endControlFlow()
+            .endControlFlow()
+            .endControlFlow()
+            .nextControlFlow("finally")
+            .addStatement("sl.unlockWrite(stamp)")
+            .endControlFlow()
             .endControlFlow()
 
         classBuilder.addFunction(FunSpec.builder("close").addModifiers(KModifier.OVERRIDE).addCode(closeBody.build()).build())
+
+        val relinquishBody = CodeBlock.builder()
+            .beginControlFlow("if (segment != %T.NULL)", MEMORY_SEGMENT)
+            .addStatement("val stamp = sl.writeLock()")
+            .beginControlFlow("try")
+            .addStatement("relinquishInternal()")
+            .nextControlFlow("finally")
+            .addStatement("sl.unlockWrite(stamp)")
+            .endControlFlow()
+            .endControlFlow()
+
+        classBuilder.addFunction(FunSpec.builder("relinquish").addModifiers(KModifier.INTERNAL).addCode(relinquishBody.build()).build())
     }
 }

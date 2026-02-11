@@ -10,7 +10,7 @@ fn report_leak(name: &str, count: isize) {
     if count > 0 {
         // println! は JNI 経由だと標準出力で見えない場合があるため、
         // 実際の実装では log crate 等を推奨します。
-        println!("[Xross Analyzer] {} dropped. Remaining: {}", name, count);
+        // println!("[Xross Analyzer] {} dropped. Remaining: {}", name, count);
     }
 }
 

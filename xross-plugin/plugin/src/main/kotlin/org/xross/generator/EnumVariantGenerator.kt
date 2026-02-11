@@ -96,11 +96,11 @@ object EnumVariantGenerator {
                         .returns(tripleType)
                         .addCode(CodeBlock.builder()
                             .addStatement("val newAutoArena = Arena.ofAuto()")
-                            .addStatement("val newConfinedArena = Arena.ofConfined()")
+                            .addStatement("val newOwnerArena = Arena.ofAuto()")
                             .addStatement("val flag = %T(true)", aliveFlagType)
                             .addStatement("val resRaw = Companion.new${variant.name}Handle.invokeExact() as %T", MEMORY_SEGMENT)
-                            .addStatement("val res = resRaw.reinterpret(Companion.STRUCT_SIZE, newAutoArena) { s -> if (flag.isValid) { flag.isValid = false; Companion.dropHandle.invokeExact(s); try { newConfinedArena.close() } catch (e: Throwable) {} } }")
-                            .addStatement("return %T(res, %T(newAutoArena, newConfinedArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
+                            .addStatement("val res = resRaw.reinterpret(Companion.STRUCT_SIZE, newAutoArena) { s -> if (flag.tryInvalidate()) { Companion.dropHandle.invokeExact(s) } }")
+                            .addStatement("return %T(res, %T(newAutoArena, newOwnerArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
                             .build())
                         .build())
 
@@ -162,7 +162,7 @@ object EnumVariantGenerator {
                         .returns(tripleType)
                         .addCode(CodeBlock.builder()
                             .addStatement("val newAutoArena = Arena.ofAuto()")
-                            .addStatement("val newConfinedArena = Arena.ofConfined()")
+                            .addStatement("val newOwnerArena = Arena.ofAuto()")
                             .addStatement("val flag = %T(true)", aliveFlagType)
                             .addStatement("val resRaw = Companion.new${variant.name}Handle.invokeExact(${variant.fields.joinToString(", ") { field ->
                                 val argName = "argOf" + field.name.toCamelCase()
@@ -174,12 +174,12 @@ object EnumVariantGenerator {
                                 variant.fields.forEach { field ->
                                     if (field.ty is XrossType.Object && field.ty.isOwned) {
                                         val argName = "argOf" + field.name.toCamelCase()
-                                        addStatement("$argName.close()")
+                                        addStatement("$argName.relinquish()")
                                     }
                                 }
                             }
-                            .addStatement("val res = resRaw.reinterpret(Companion.STRUCT_SIZE, newAutoArena) { s -> if (flag.isValid) { flag.isValid = false; Companion.dropHandle.invokeExact(s); try { newConfinedArena.close() } catch (e: Throwable) {} } }")
-                            .addStatement("return %T(res, %T(newAutoArena, newConfinedArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
+                            .addStatement("val res = resRaw.reinterpret(Companion.STRUCT_SIZE, newAutoArena) { s -> if (flag.tryInvalidate()) { Companion.dropHandle.invokeExact(s) } }")
+                            .addStatement("return %T(res, %T(newAutoArena, newOwnerArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
                             .build())
                         .build())
 
@@ -283,27 +283,21 @@ object EnumVariantGenerator {
                             val fromPointerExpr = if (isSelf) CodeBlock.of("Companion.fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
                             addStatement("res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
                         } else {
-                            val sizeExpr = if (isSelf) "Companion.STRUCT_SIZE" else "%T.Companion.STRUCT_SIZE"
-                            val fromPointerExpr = if (isSelf) "Companion.fromPointer" else "%T.Companion.fromPointer"
+                            val sizeExpr = if (isSelf) CodeBlock.of("Companion.STRUCT_SIZE") else CodeBlock.of("%T.Companion.STRUCT_SIZE", kType)
+                            val fromPointerExpr = if (isSelf) CodeBlock.of("Companion.fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
                             
-                            val resolveArgs = mutableListOf<Any?>()
-                            if (!isSelf) resolveArgs.add(kType)
-                            resolveArgs.add(false) // isOwned = false
-
                             addStatement(
-                                "val resSeg = resolveFieldSegment(this.segment, Companion.$vhName, Companion.$offsetName, $sizeExpr, %L)",
-                                *resolveArgs.toTypedArray()
+                                "val resSeg = resolveFieldSegment(this.segment, Companion.$vhName, Companion.$offsetName, %L, %L)",
+                                sizeExpr, false // isOwned = false
                             )
 
                             if (field.ty.ownership == XrossType.Ownership.Boxed) {
                                 val fromPointerExprOwned = if (isSelf) CodeBlock.of("Companion.fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
                                 addStatement("res = %L(resSeg, this.autoArena, confinedArena = null, sharedFlag = %T(true, this.aliveFlag))", fromPointerExprOwned, flagType)
                             } else {
-                                                            val fromPointerArgs = mutableListOf<Any?>()
-                                                            if (!isSelf) fromPointerArgs.add(kType)
-                                                            fromPointerArgs.add(flagType)
-                                                            addStatement("res = $fromPointerExpr(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", *fromPointerArgs.toTypedArray())
-                                                        }                        }
+                                addStatement("res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
+                            }
+                        }
                         
                         if (backingFieldName != null) {
                             addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())

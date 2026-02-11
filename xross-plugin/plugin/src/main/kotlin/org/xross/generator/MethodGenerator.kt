@@ -134,16 +134,9 @@ object MethodGenerator {
                     }
                     body.addStatement("}")
                 } else if (meta is XrossDefinition.Enum && !isCopy) {
-                    body.addStatement("this.close()")
+                    body.addStatement("this.relinquishInternal()")
                 } else if (!isPureEnum) {
-                    body.addStatement("this.aliveFlag.isValid = false")
-                    body.addStatement("this.segment = %T.NULL", MEMORY_SEGMENT)
-                    body.beginControlFlow("if (this.confinedArena != null)")
-                    body.beginControlFlow("try")
-                    body.addStatement("this.confinedArena.close()")
-                    body.nextControlFlow("catch (e: %T)", Throwable::class.asTypeName())
-                    body.endControlFlow()
-                    body.endControlFlow()
+                    body.addStatement("this.relinquishInternal()")
                 }
             }
             
@@ -154,7 +147,7 @@ object MethodGenerator {
             method.args.forEach { arg ->
                 if (arg.ty is XrossType.Object && arg.ty.isOwned) {
                     val name = arg.name.toCamelCase().escapeKotlinKeyword()
-                    body.addStatement("%L.close()", name)
+                    body.addStatement("%L.relinquish()", name)
                 }
             }
             
@@ -172,15 +165,15 @@ object MethodGenerator {
                     }
                     body.addStatement("}")
                 } else if (meta is XrossDefinition.Enum && !isCopy) {
-                    body.addStatement("this.close()")
+                    body.addStatement("this.relinquishInternal()")
                 } else if (!isPureEnum) {
-                    body.addStatement("this.close()")
+                    body.addStatement("this.relinquishInternal()")
                 }
             }
             method.args.forEach { arg ->
                 if (arg.ty is XrossType.Object && arg.ty.isOwned) {
                     val name = arg.name.toCamelCase().escapeKotlinKeyword()
-                    body.addStatement("%L.close()", name)
+                    body.addStatement("%L.relinquish()", name)
                 }
             }
             
@@ -219,10 +212,10 @@ object MethodGenerator {
                         
                         if (inner.isOwned) {
                             body.addStatement("val retAutoArena = Arena.ofAuto()")
-                            body.addStatement("val retConfinedArena = Arena.ofConfined()")
+                            body.addStatement("val retOwnerArena = Arena.ofAuto()")
                             body.addStatement("val flag = %T(true)", flagType)
-                            body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.isValid) { flag.isValid = false; %L.invokeExact(s); try { retConfinedArena.close() } catch (e: Throwable) {} } }", sizeExpr, dropExpr)
-                            body.addStatement("%L(res, retAutoArena, confinedArena = retConfinedArena, sharedFlag = flag)", fromPointerExpr)
+                            body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", sizeExpr, dropExpr)
+                            body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
                         } else {
                             body.addStatement("%L(resRaw, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
                         }
@@ -249,10 +242,10 @@ object MethodGenerator {
                 
                 if (retTy.isOwned) {
                     body.addStatement("val retAutoArena = Arena.ofAuto()")
-                    body.addStatement("val retConfinedArena = Arena.ofConfined()")
+                    body.addStatement("val retOwnerArena = Arena.ofAuto()")
                     body.addStatement("val flag = %T(true)", flagType)
-                    body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.isValid) { flag.isValid = false; %L.invokeExact(s); try { retConfinedArena.close() } catch (e: Throwable) {} } }", sizeExpr, dropExpr)
-                    body.addStatement("%L(res, retAutoArena, confinedArena = retConfinedArena, sharedFlag = flag)", fromPointerExpr)
+                    body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", sizeExpr, dropExpr)
+                    body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
                 }
                 else body.addStatement("%L(resRaw, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
                 body.endControlFlow()
@@ -275,10 +268,10 @@ object MethodGenerator {
                 when (val okTy = retTy.ok) {
                     is XrossType.Object -> {
                         body.addStatement("val retAutoArena = Arena.ofAuto()")
-                        body.addStatement("val retConfinedArena = Arena.ofConfined()")
+                        body.addStatement("val retOwnerArena = Arena.ofAuto()")
                         body.addStatement("val flag = %T(true)", okFlagType)
-                        body.addStatement("val res = okPtr.reinterpret(%L, retAutoArena) { s -> if (flag.isValid) { flag.isValid = false; %L.invokeExact(s); try { retConfinedArena.close() } catch (e: Throwable) {} } }", okSizeExpr, okDropExpr)
-                        body.addStatement("%L(res, retAutoArena, confinedArena = retConfinedArena, sharedFlag = flag)", okFromPointerExpr)
+                        body.addStatement("val res = okPtr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", okSizeExpr, okDropExpr)
+                        body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", okFromPointerExpr)
                     }
                     is XrossType.RustString -> body.addStatement("""
                         val str = okPtr.reinterpret(Long.MAX_VALUE).getString(0)
@@ -303,10 +296,10 @@ object MethodGenerator {
                 when (val errTy = retTy.err) {
                     is XrossType.Object -> {
                         body.addStatement("val retAutoArena = Arena.ofAuto()")
-                        body.addStatement("val retConfinedArena = Arena.ofConfined()")
+                        body.addStatement("val retOwnerArena = Arena.ofAuto()")
                         body.addStatement("val flag = %T(true)", errFlagType)
-                        body.addStatement("val res = errPtr.reinterpret(%L, retAutoArena) { s -> if (flag.isValid) { flag.isValid = false; %L.invokeExact(s); try { retConfinedArena.close() } catch (e: Throwable) {} } }", errSizeExpr, errDropExpr)
-                        body.addStatement("%L(res, retAutoArena, confinedArena = retConfinedArena, sharedFlag = flag)", errFromPointerExpr)
+                        body.addStatement("val res = errPtr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", errSizeExpr, errDropExpr)
+                        body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", errFromPointerExpr)
                     }
                     is XrossType.RustString -> body.addStatement("""
                         val str = errPtr.reinterpret(Long.MAX_VALUE).getString(0)
@@ -337,7 +330,7 @@ object MethodGenerator {
 
         val body = CodeBlock.builder()
         body.addStatement("val newAutoArena = Arena.ofAuto()")
-        body.addStatement("val newConfinedArena = Arena.ofConfined()")
+        body.addStatement("val newOwnerArena = Arena.ofAuto()")
         body.addStatement("val flag = %T(true)", aliveFlagType)
         
         val callArgs = mutableListOf<CodeBlock>()
@@ -356,8 +349,8 @@ object MethodGenerator {
         
         body.addStatement("val raw = newHandle.invokeExact(%L) as %T", callArgs.joinToCode(", "), MEMORY_SEGMENT)
         body.addStatement("if (raw == %T.NULL) throw %T(%S)", MEMORY_SEGMENT, RuntimeException::class.asTypeName(), "Fail")
-        body.addStatement("val res = raw.reinterpret(STRUCT_SIZE, newAutoArena) { s -> if (flag.isValid) { flag.isValid = false; dropHandle.invokeExact(s); try { newConfinedArena.close() } catch (e: Throwable) {} } }")
-        body.addStatement("return %T(res, %T(newAutoArena, newConfinedArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
+        body.addStatement("val res = raw.reinterpret(STRUCT_SIZE, newAutoArena) { s -> if (flag.tryInvalidate()) { dropHandle.invokeExact(s) } }")
+        body.addStatement("return %T(res, %T(newAutoArena, newOwnerArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
         
         factoryBuilder.addCode(body.build())
         companionBuilder.addFunction(factoryBuilder.build())

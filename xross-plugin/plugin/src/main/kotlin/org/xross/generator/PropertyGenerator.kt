@@ -66,27 +66,18 @@ object PropertyGenerator {
                 readCodeBuilder.addStatement("res = cached")
                 readCodeBuilder.nextControlFlow("else")
 
-                val sizeExpr = if (isSelf) "STRUCT_SIZE" else "%T.STRUCT_SIZE"
-                val fromPointerExpr = if (isSelf) "fromPointer" else "%T.fromPointer"
+                val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
+                val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
                 val isOwned = field.ty.ownership == XrossType.Ownership.Owned
 
-                val resolveArgs = mutableListOf<Any?>()
-                resolveArgs.add(isOwned)
-                if (!isSelf) resolveArgs.add(kType)
-                resolveArgs.add(isOwned)
-
                 readCodeBuilder.addStatement(
-                    "val resSeg = resolveFieldSegment(this.segment, if (%L) null else $vhName, $offsetName, $sizeExpr, %L)",
-                    *resolveArgs.toTypedArray()
+                    "val resSeg = resolveFieldSegment(this.segment, if (%L) null else $vhName, OFFSET_$baseName, %L, %L)",
+                    isOwned, sizeExpr, isOwned
                 )
                 
-                val fromPointerArgs = mutableListOf<Any?>()
-                if (!isSelf) fromPointerArgs.add(kType)
-                fromPointerArgs.add(aliveFlagType)
-                
                 readCodeBuilder.addStatement(
-                    "res = $fromPointerExpr(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))",
-                    *fromPointerArgs.toTypedArray()
+                    "res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))",
+                    fromPointerExpr, aliveFlagType
                 )
                 readCodeBuilder.addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
                 readCodeBuilder.endControlFlow()
