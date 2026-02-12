@@ -17,14 +17,16 @@ object CompanionGenerator {
     private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
     private val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
     private val JAVA_INT = MemberName(VAL_LAYOUT, "JAVA_INT")
+    private val JAVA_BYTE = MemberName(VAL_LAYOUT, "JAVA_BYTE")
 
     private val XROSS_RESULT_LAYOUT = CodeBlock.of(
-        "%T.structLayout(%M.withName(%S), %M.withName(%S))",
+        "%T.structLayout(%M.withName(%S), %T.paddingLayout(7), %M.withName(%S))",
+        MEMORY_LAYOUT,
+        JAVA_BYTE,
+        "isOk",
         MEMORY_LAYOUT,
         ADDRESS,
-        "okPtr",
-        ADDRESS,
-        "errPtr",
+        "ptr",
     )
 
     fun generateCompanions(companionBuilder: TypeSpec.Builder, meta: XrossDefinition) {
@@ -165,7 +167,26 @@ object CompanionGenerator {
                 }
             }
 
-            is XrossDefinition.Opaque -> {}
+            is XrossDefinition.Opaque -> {
+                meta.fields.forEach {
+                    val baseCamel = it.name.toCamelCase()
+
+                    if (it.ty is XrossType.RustString) {
+                        handles.add("${baseCamel}StrGetHandle")
+                        handles.add("${baseCamel}StrSetHandle")
+                    } else if (it.ty is XrossType.Optional) {
+                        handles.add("${baseCamel}OptGetHandle")
+                        handles.add("${baseCamel}OptSetHandle")
+                    } else if (it.ty is XrossType.Result) {
+                        handles.add("${baseCamel}ResGetHandle")
+                    } else {
+                        // For other types in Opaque, we might need FFI if layout is unknown,
+                        // but external_field! generates {field}_get and {field}_set.
+                        handles.add("${baseCamel}GetHandle")
+                        handles.add("${baseCamel}SetHandle")
+                    }
+                }
+            }
         }
 
         meta.methods.filter { !it.isConstructor }.forEach { handles.add("${it.name.toCamelCase()}Handle") }
@@ -349,6 +370,29 @@ object CompanionGenerator {
                     desc,
 
                 )
+            }
+        } else if (meta is XrossDefinition.Opaque) {
+            meta.fields.forEach { field ->
+                val baseCamel = field.name.toCamelCase()
+                if (field.ty is XrossType.RustString) {
+                    val getSymbol = "${meta.symbolPrefix}_property_${field.name}_str_get"
+                    val setSymbol = "${meta.symbolPrefix}_property_${field.name}_str_set"
+                    init.addStatement("this.${baseCamel}StrGetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%M, %M))", getSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS, ADDRESS)
+                    init.addStatement("this.${baseCamel}StrSetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %M))", setSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS, ADDRESS)
+                } else if (field.ty is XrossType.Optional) {
+                    val getSymbol = "${meta.symbolPrefix}_property_${field.name}_opt_get"
+                    val setSymbol = "${meta.symbolPrefix}_property_${field.name}_opt_set"
+                    init.addStatement("this.${baseCamel}OptGetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%M, %M))", getSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS, ADDRESS)
+                    init.addStatement("this.${baseCamel}OptSetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %M))", setSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS, ADDRESS)
+                } else if (field.ty is XrossType.Result) {
+                    val getSymbol = "${meta.symbolPrefix}_property_${field.name}_res_get"
+                    init.addStatement("this.${baseCamel}ResGetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(XROSS_RESULT_LAYOUT, %M))", getSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS)
+                } else {
+                    val getSymbol = "${meta.symbolPrefix}_property_${field.name}_get"
+                    val setSymbol = "${meta.symbolPrefix}_property_${field.name}_set"
+                    init.addStatement("this.${baseCamel}GetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%M, %M))", getSymbol, FunctionDescriptor::class.asTypeName(), field.ty.layoutMember, ADDRESS)
+                    init.addStatement("this.${baseCamel}SetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %M))", setSymbol, FunctionDescriptor::class.asTypeName(), ADDRESS, field.ty.layoutMember)
+                }
             }
         }
 

@@ -60,6 +60,7 @@ pub struct XrossOpaque {
     pub symbol_prefix: String,
     pub package_name: String,
     pub name: String,
+    pub fields: Vec<XrossField>,
     pub methods: Vec<XrossMethod>,
     pub docs: Vec<String>,
     pub is_clonable: bool,

@@ -1,11 +1,14 @@
 use std::ffi::c_void;
 
-pub use xross_macros::{XrossClass, opaque_class, xross_class};
+pub use xross_macros::{
+    external_class, external_field, external_method, external_new, opaque_class, xross_class,
+    XrossClass,
+};
 
 #[repr(C)]
 pub struct XrossResult {
-    pub ok_ptr: *mut c_void,
-    pub err_ptr: *mut c_void,
+    pub is_ok: bool,
+    pub ptr: *mut c_void,
 }
 
 // マクロで生成される共通FFIのためのマーカートレイト

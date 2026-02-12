@@ -5,6 +5,7 @@ pub fn generate_common_ffi(
     base: &str,
     layout_logic: proc_macro2::TokenStream,
     toks: &mut Vec<proc_macro2::TokenStream>,
+    is_clonable: bool,
 ) {
     let drop_id = format_ident!("{}_drop", base);
     let clone_id = format_ident!("{}_clone", base);
@@ -28,16 +29,22 @@ pub fn generate_common_ffi(
                 drop(unsafe { Box::from_raw(ptr) });
             }
         }
+    });
 
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
-            if ptr.is_null() { return std::ptr::null_mut(); }
-            let val_on_stack: #name = std::ptr::read_unaligned(ptr);
-            let cloned_val = val_on_stack.clone();
-            std::mem::forget(val_on_stack);
-            Box::into_raw(Box::new(cloned_val))
-        }
+    if is_clonable {
+        toks.push(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
+                if ptr.is_null() { return std::ptr::null_mut(); }
+                let val_on_stack: #name = std::ptr::read_unaligned(ptr);
+                let cloned_val = val_on_stack.clone();
+                std::mem::forget(val_on_stack);
+                Box::into_raw(Box::new(cloned_val))
+            }
+        });
+    }
 
+    toks.push(quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #layout_id() -> *mut std::ffi::c_char {
             let s = <#name as #trait_name>::xross_layout();

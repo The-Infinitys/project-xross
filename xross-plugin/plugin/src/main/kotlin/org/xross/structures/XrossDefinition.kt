@@ -50,6 +50,7 @@ sealed class XrossDefinition {
         override val symbolPrefix: String,
         override val packageName: String,
         override val name: String,
+        val fields: List<XrossField> = emptyList(),
         // 中身は公開されないため、メソッドやドキュメントは最小限（あるいは無し）
         override val methods: List<XrossMethod> = emptyList(),
         override val docs: List<String> = emptyList(),

@@ -134,10 +134,10 @@ object PropertyGenerator {
                     "val resRaw = Companion.${baseName}ResGetHandle.invokeExact(this.segment) as %T",
                     MemorySegment::class,
                 )
-                readCodeBuilder.addStatement("val okPtr = resRaw.get(%M, 0L)", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"))
-                readCodeBuilder.addStatement("val errPtr = resRaw.get(%M, %T.ADDRESS.byteSize())", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"), ClassName("java.lang.foreign", "ValueLayout"))
+                readCodeBuilder.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", MemberName("java.lang.foreign.ValueLayout", "JAVA_BYTE"))
+                readCodeBuilder.addStatement("val ptr = resRaw.get(%M, 8L)", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"))
 
-                readCodeBuilder.beginControlFlow("if (okPtr != %T.NULL)", MemorySegment::class)
+                readCodeBuilder.beginControlFlow("if (isOk)")
                 readCodeBuilder.beginControlFlow("val okVal = run")
                 val okTy = field.ty.ok
                 val okKType = if (okTy is XrossType.Object) GeneratorUtils.getClassName(okTy.signature, basePackage) else okTy.kotlinType
@@ -153,20 +153,20 @@ object PropertyGenerator {
                         readCodeBuilder.addStatement("val retOwnerArena = Arena.ofAuto()")
                         readCodeBuilder.addStatement("val flag = %T(true)", aliveFlagType)
                         readCodeBuilder.addStatement(
-                            "val reinterpreted = okPtr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
+                            "val reinterpreted = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
                             okSizeExpr,
                             okDropExpr,
                         )
                         readCodeBuilder.addStatement("%L(reinterpreted, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", okFromPointerExpr)
                     }
                     is XrossType.RustString -> {
-                        readCodeBuilder.addStatement("val s = okPtr.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
-                        readCodeBuilder.addStatement("Companion.xrossFreeStringHandle.invokeExact(okPtr)")
+                        readCodeBuilder.addStatement("val s = ptr.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
+                        readCodeBuilder.addStatement("Companion.xrossFreeStringHandle.invokeExact(ptr)")
                         readCodeBuilder.addStatement("s")
                     }
                     else -> {
-                        readCodeBuilder.addStatement("val v = okPtr.get(%M, 0)", okTy.layoutMember)
-                        readCodeBuilder.addStatement("Companion.dropHandle.invokeExact(okPtr)")
+                        readCodeBuilder.addStatement("val v = ptr.get(%M, 0)", okTy.layoutMember)
+                        readCodeBuilder.addStatement("Companion.dropHandle.invokeExact(ptr)")
                         readCodeBuilder.addStatement("v")
                     }
                 }
@@ -190,20 +190,20 @@ object PropertyGenerator {
                         readCodeBuilder.addStatement("val retOwnerArena = Arena.ofAuto()")
                         readCodeBuilder.addStatement("val flag = %T(true)", aliveFlagType)
                         readCodeBuilder.addStatement(
-                            "val reinterpreted = errPtr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
+                            "val reinterpreted = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
                             errSizeExpr,
                             errDropExpr,
                         )
                         readCodeBuilder.addStatement("%L(reinterpreted, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", errFromPointerExpr)
                     }
                     is XrossType.RustString -> {
-                        readCodeBuilder.addStatement("val s = errPtr.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
-                        readCodeBuilder.addStatement("Companion.xrossFreeStringHandle.invokeExact(errPtr)")
+                        readCodeBuilder.addStatement("val s = ptr.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
+                        readCodeBuilder.addStatement("Companion.xrossFreeStringHandle.invokeExact(ptr)")
                         readCodeBuilder.addStatement("s")
                     }
                     else -> {
-                        readCodeBuilder.addStatement("val v = errPtr.get(%M, 0)", errTy.layoutMember)
-                        readCodeBuilder.addStatement("Companion.dropHandle.invokeExact(errPtr)")
+                        readCodeBuilder.addStatement("val v = ptr.get(%M, 0)", errTy.layoutMember)
+                        readCodeBuilder.addStatement("Companion.dropHandle.invokeExact(ptr)")
                         readCodeBuilder.addStatement("v")
                     }
                 }
@@ -297,6 +297,35 @@ object PropertyGenerator {
                         writeCodeBuilder.endControlFlow()
                     }
                 }
+                writeCodeBuilder.endControlFlow()
+            }
+
+            is XrossType.Result -> {
+                val okTy = field.ty.ok
+                writeCodeBuilder.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
+                writeCodeBuilder.addStatement("val xrossRes = arena.allocate(java.lang.foreign.MemoryLayout.structLayout(java.lang.foreign.ValueLayout.JAVA_BYTE.withName(\"isOk\"), java.lang.foreign.MemoryLayout.paddingLayout(7), java.lang.foreign.ValueLayout.ADDRESS.withName(\"ptr\")))")
+                writeCodeBuilder.beginControlFlow("if (v.isSuccess)")
+                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L, 1.toByte())")
+                val okVal = "v.getOrThrow()"
+                if (okTy is XrossType.Object) {
+                    writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, $okVal.segment)")
+                } else if (okTy is XrossType.RustString) {
+                    writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, arena.allocateFrom($okVal))")
+                } else {
+                    writeCodeBuilder.addStatement("val allocated = arena.allocate(%M, $okVal)", okTy.layoutMember)
+                    writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, allocated)")
+                }
+                writeCodeBuilder.nextControlFlow("else")
+                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L, 0.toByte())")
+                writeCodeBuilder.addStatement("val err = v.exceptionOrNull()!!")
+                writeCodeBuilder.beginControlFlow("if (err is %T)", ClassName("$basePackage.xross.runtime", "XrossException"))
+                writeCodeBuilder.addStatement("// TODO: Pass error value back if needed")
+                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, java.lang.foreign.MemorySegment.NULL)")
+                writeCodeBuilder.nextControlFlow("else")
+                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, java.lang.foreign.MemorySegment.NULL)")
+                writeCodeBuilder.endControlFlow()
+                writeCodeBuilder.endControlFlow()
+                writeCodeBuilder.addStatement("Companion.${baseName}ResSetHandle.invokeExact(this.segment, xrossRes) as Unit")
                 writeCodeBuilder.endControlFlow()
             }
 

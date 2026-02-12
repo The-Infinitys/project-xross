@@ -1,5 +1,5 @@
 use heck::ToSnakeCase;
-use syn::{Attribute, Expr, ExprLit, Lit, Meta};
+use syn::{Attribute, Expr, ExprLit, Lit, Meta, Token};
 use xross_metadata::ThreadSafety;
 
 pub fn extract_is_copy(attrs: &[Attribute]) -> bool {
@@ -15,6 +15,49 @@ pub fn extract_is_copy(attrs: &[Attribute]) -> bool {
             false
         }
     })
+}
+
+pub fn extract_is_clonable(attrs: &[Attribute]) -> bool {
+    // 1. Check #[derive(Clone)]
+    let is_derived = attrs.iter().any(|attr| {
+        if attr.path().is_ident("derive") {
+            if let Meta::List(list) = &attr.meta {
+                let folder = list.tokens.to_string();
+                folder.contains("Clone")
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    });
+
+    if is_derived {
+        return true;
+    }
+
+    // 2. Check #[xross(clonable)] or #[xross(clonable = true)]
+    for attr in attrs {
+        if attr.path().is_ident("xross") {
+            let mut is_clonable = false;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("clonable") {
+                    if meta.input.peek(Token![=]) {
+                        let value: syn::LitBool = meta.value()?.parse()?;
+                        is_clonable = value.value;
+                    } else {
+                        is_clonable = true;
+                    }
+                }
+                Ok(())
+            });
+            if is_clonable {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 pub fn extract_package(attrs: &[Attribute]) -> String {
@@ -82,6 +125,20 @@ pub fn extract_inner_type(ty: &syn::Type) -> &syn::Type {
         if let Some(last_segment) = tp.path.segments.last() {
             if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
                 if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                    return inner;
+                }
+            }
+        }
+    }
+    ty
+}
+
+pub fn extract_inner_type_from_res(ty: &syn::Type, is_ok: bool) -> &syn::Type {
+    if let syn::Type::Path(tp) = ty {
+        if let Some(last_segment) = tp.path.segments.last() {
+            if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+                let idx = if is_ok { 0 } else { 1 };
+                if let Some(syn::GenericArgument::Type(inner)) = args.args.get(idx) {
                     return inner;
                 }
             }

@@ -24,25 +24,30 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
             let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
 
             let layout_logic = generate_struct_layout(&s);
+            let is_clonable = extract_is_clonable(&s.attrs);
 
             let mut fields = Vec::new();
-            let methods = vec![XrossMethod {
-                name: "clone".to_string(),
-                symbol: format!("{}_clone", symbol_base),
-                method_type: XrossMethodType::ConstInstance,
-                is_constructor: false,
-                args: vec![],
-                ret: XrossType::Object {
-                    signature: if package.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{}.{}", package, name)
+            let mut methods = Vec::new();
+
+            if is_clonable {
+                methods.push(XrossMethod {
+                    name: "clone".to_string(),
+                    symbol: format!("{}_clone", symbol_base),
+                    method_type: XrossMethodType::ConstInstance,
+                    is_constructor: false,
+                    args: vec![],
+                    ret: XrossType::Object {
+                        signature: if package.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{}.{}", package, name)
+                        },
+                        ownership: Ownership::Owned,
                     },
-                    ownership: Ownership::Owned,
-                },
-                safety: ThreadSafety::Lock,
-                docs: vec!["Creates a clone of the native object.".to_string()],
-            }];
+                    safety: ThreadSafety::Lock,
+                    docs: vec!["Creates a clone of the native object.".to_string()],
+                });
+            }
 
             if let syn::Fields::Named(f) = &s.fields {
                 for field in &f.named {
@@ -99,12 +104,10 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                                 );
                                 let inner_rust_ty = extract_inner_type(&field.ty);
 
-                                let ok_val_logic = if matches!(**inner_xross, XrossType::String) {
+                                let get_val_logic = if matches!(**inner_xross, XrossType::String) {
                                     quote! { std::ffi::CString::new(v.as_str()).unwrap().into_raw() as *mut std::ffi::c_void }
-                                } else if inner_xross.is_owned() {
-                                    quote! { Box::into_raw(Box::new(v.clone())) as *mut std::ffi::c_void }
                                 } else {
-                                    quote! { Box::into_raw(Box::new(*v)) as *mut std::ffi::c_void }
+                                    quote! { Box::into_raw(Box::new(v.clone())) as *mut std::ffi::c_void }
                                 };
 
                                 extra_functions.push(quote! {
@@ -113,7 +116,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                                                                 if ptr.is_null() { return std::ptr::null_mut(); }
                                                                 let obj = &*ptr;
                                                                 match &obj.#field_ident {
-                                                                    Some(v) => #ok_val_logic,
+                                                                    Some(v) => #get_val_logic,
                                                                     None => std::ptr::null_mut(),
                                                                 }
                                                             }
@@ -124,7 +127,8 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                                                                 obj.#field_ident = if val.is_null() {
                                                                     None
                                                                 } else {
-                                                                    Some(*Box::from_raw(val as *mut #inner_rust_ty))
+                                                                    let v = &*(val as *const #inner_rust_ty);
+                                                                    Some(v.clone())
                                                                 };
                                                             }
                                                         });
@@ -135,6 +139,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                                     symbol_base,
                                     field_name
                                 );
+                                let set_fn = format_ident!(
+                                    "{}_property_{}_res_set",
+                                    symbol_base,
+                                    field_name
+                                );
+                                let inner_ok_ty = extract_inner_type_from_res(&field.ty, true);
+                                let inner_err_ty = extract_inner_type_from_res(&field.ty, false);
 
                                 let gen_ptr = |ty: &XrossType, val_expr: TokenStream| match ty {
                                     XrossType::String => quote! {
@@ -150,18 +161,30 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                                 extra_functions.push(quote! {
                                                             #[unsafe(no_mangle)]
                                                             pub unsafe extern "C" fn #get_fn(ptr: *const #name) -> xross_core::XrossResult {
-                                                                if ptr.is_null() { return xross_core::XrossResult { ok_ptr: std::ptr::null_mut(), err_ptr: std::ptr::null_mut() }; }
+                                                                if ptr.is_null() { return xross_core::XrossResult { is_ok: false, ptr: std::ptr::null_mut() }; }
                                                                 let obj = &*ptr;
                                                                 match &obj.#field_ident {
                                                                     Ok(v) => xross_core::XrossResult {
-                                                                        ok_ptr: #ok_ptr_logic,
-                                                                        err_ptr: std::ptr::null_mut(),
+                                                                        is_ok: true,
+                                                                        ptr: #ok_ptr_logic,
                                                                     },
                                                                     Err(e) => xross_core::XrossResult {
-                                                                        ok_ptr: std::ptr::null_mut(),
-                                                                        err_ptr: #err_ptr_logic,
+                                                                        is_ok: false,
+                                                                        ptr: #err_ptr_logic,
                                                                     },
                                                                 }
+                                                            }
+                                                            #[unsafe(no_mangle)]
+                                                            pub unsafe extern "C" fn #set_fn(ptr: *mut #name, val: xross_core::XrossResult) {
+                                                                if ptr.is_null() { return; }
+                                                                let obj = &mut *ptr;
+                                                                obj.#field_ident = if val.is_ok {
+                                                                    let v = &*(val.ptr as *const #inner_ok_ty);
+                                                                    Ok(v.clone())
+                                                                } else {
+                                                                    let e = &*(val.ptr as *const #inner_err_ty);
+                                                                    Err(e.clone())
+                                                                };
                                                             }
                                                         });
                             }
@@ -185,7 +208,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 is_copy: extract_is_copy(&s.attrs),
             }));
 
-            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions);
+            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions, is_clonable);
         }
 
         Item::Enum(e) => {
@@ -194,25 +217,30 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
             let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
 
             let layout_logic = generate_enum_layout(&e);
+            let is_clonable = extract_is_clonable(&e.attrs);
 
             let mut variants = Vec::new();
-            let methods = vec![XrossMethod {
-                name: "clone".to_string(),
-                symbol: format!("{}_clone", symbol_base),
-                method_type: XrossMethodType::ConstInstance,
-                is_constructor: false,
-                args: vec![],
-                ret: XrossType::Object {
-                    signature: if package.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{}.{}", package, name)
+            let mut methods = Vec::new();
+
+            if is_clonable {
+                methods.push(XrossMethod {
+                    name: "clone".to_string(),
+                    symbol: format!("{}_clone", symbol_base),
+                    method_type: XrossMethodType::ConstInstance,
+                    is_constructor: false,
+                    args: vec![],
+                    ret: XrossType::Object {
+                        signature: if package.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{}.{}", package, name)
+                        },
+                        ownership: Ownership::Owned,
                     },
-                    ownership: Ownership::Owned,
-                },
-                safety: ThreadSafety::Lock,
-                docs: vec!["Creates a clone of the native object.".to_string()],
-            }];
+                    safety: ThreadSafety::Lock,
+                    docs: vec!["Creates a clone of the native object.".to_string()],
+                });
+            }
 
             for v in &e.variants {
                 let v_ident = &v.ident;
@@ -303,7 +331,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 is_copy: extract_is_copy(&e.attrs),
             }));
 
-            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions);
+            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions, is_clonable);
 
             let tag_fn_id = format_ident!("{}_get_tag", symbol_base);
             let variant_name_fn_id = format_ident!("{}_get_variant_name", symbol_base);

@@ -61,6 +61,7 @@ pub fn impl_opaque_class(input: TokenStream) -> TokenStream {
         symbol_prefix: symbol_base.clone(),
         package_name: package,
         name: name_str.to_string(),
+        fields: vec![],
         methods,
         is_clonable,
         docs: vec![format!("Opaque wrapper for {}", name_str)],

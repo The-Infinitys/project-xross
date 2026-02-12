@@ -136,6 +136,20 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                                     );
                                 }
                             }
+                            XrossType::Option(_inner) => {
+                                let raw_ty = &pat_type.ty;
+                                c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
+                                
+                                let inner_rust_ty = extract_inner_type(raw_ty);
+                                conversion_logic.push(quote! {
+                                    let #arg_ident = if #arg_ident.is_null() {
+                                        None
+                                    } else {
+                                        Some(*Box::from_raw(#arg_ident as *mut #inner_rust_ty))
+                                    };
+                                });
+                                call_args.push(quote! { #arg_ident });
+                            }
                             _ => {
                                 let rust_type_token = &pat_type.ty;
                                 c_args.push(quote! { #arg_ident: #rust_type_token });
@@ -263,12 +277,12 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                         quote! {
                             match #inner_call {
                                 Ok(val) => xross_core::XrossResult {
-                                    ok_ptr: #ok_ptr_logic,
-                                    err_ptr: std::ptr::null_mut(),
+                                    is_ok: true,
+                                    ptr: #ok_ptr_logic,
                                 },
                                 Err(e) => xross_core::XrossResult {
-                                    ok_ptr: std::ptr::null_mut(),
-                                    err_ptr: #err_ptr_logic,
+                                    is_ok: false,
+                                    ptr: #err_ptr_logic,
                                 },
                             }
                         },

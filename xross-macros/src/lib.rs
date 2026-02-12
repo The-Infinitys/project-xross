@@ -1,5 +1,6 @@
 mod attribute_macro;
 mod derive_macro;
+mod external_macro;
 mod ffi;
 mod metadata;
 mod opaque_macro;
@@ -25,4 +26,24 @@ pub fn xross_class(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn opaque_class(input: TokenStream) -> TokenStream {
     opaque_macro::impl_opaque_class(input.into()).into()
+}
+
+#[proc_macro]
+pub fn external_class(input: TokenStream) -> TokenStream {
+    external_macro::impl_external_class(input)
+}
+
+#[proc_macro]
+pub fn external_method(input: TokenStream) -> TokenStream {
+    external_macro::impl_external_method(input)
+}
+
+#[proc_macro]
+pub fn external_new(input: TokenStream) -> TokenStream {
+    external_macro::impl_external_new(input)
+}
+
+#[proc_macro]
+pub fn external_field(input: TokenStream) -> TokenStream {
+    external_macro::impl_external_field(input)
 }

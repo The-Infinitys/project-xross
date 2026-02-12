@@ -76,7 +76,6 @@ private fun loadFromResources(tempDir: File) {
 }
 fun executeComplexFieldTest(){
     println("\nComplex field test:")
-
 }
 
 fun executePropertyTest() {

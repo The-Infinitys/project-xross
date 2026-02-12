@@ -12,7 +12,7 @@ static SERVICE2_COUNT: AtomicIsize = AtomicIsize::new(0);
 // --- UnknownStruct ---
 
 #[derive(XrossClass)]
-#[repr(C)]
+#[xross(clonable)]
 pub struct UnknownStruct {
     #[xross_field]
     pub i: i32,
@@ -74,6 +74,7 @@ impl UnknownStruct {
 // --- Enum 定義 ---
 
 #[derive(Clone, XrossClass)]
+#[xross(clonable)]
 pub enum XrossTestEnum {
     A,
     B {
@@ -89,6 +90,7 @@ pub enum XrossTestEnum {
 // --- MyService ---
 
 #[derive(XrossClass)]
+#[xross(clonable)]
 pub struct MyService {
     _boxes: Vec<i32>,
     #[xross_field]
@@ -110,6 +112,7 @@ impl Drop for MyService {
 }
 
 #[derive(Clone, Copy, XrossClass)]
+#[xross(clonable)]
 pub enum XrossSimpleEnum {
     V,
     W,
@@ -178,7 +181,7 @@ pub mod test {
 
     #[derive(XrossClass)]
     #[xross_package("test.test2")]
-    #[repr(C)]
+    #[xross(clonable)]
     pub struct MyService2 {
         #[xross_field(safety = Atomic)]
         pub val: i32,
@@ -233,3 +236,39 @@ pub enum UnClonable {
     Z,
 }
 xross_core::opaque_class!(UnClonable, false);
+
+#[derive(Clone)]
+pub struct ExternalStruct {
+    pub value: i32,
+    pub name: String,
+}
+
+impl ExternalStruct {
+    pub fn new(value: i32, name: String) -> Self {
+        Self { value, name }
+    }
+    pub fn get_value(&self) -> i32 {
+        self.value
+    }
+    pub fn set_value(&mut self, v: i32) {
+        self.value = v;
+    }
+    pub fn greet(&self, prefix: String) -> String {
+        format!("{} {}", prefix, self.name)
+    }
+}
+
+xross_core::external_class!("external", ExternalStruct);
+xross_core::external_new!(external.ExternalStruct, new(value: i32, name: String));
+xross_core::external_method!(
+    external.ExternalStruct,
+    get_value(&self) -> i32
+);
+xross_core::external_method!(
+    external.ExternalStruct,
+    set_value(&mut self, v: i32)
+);
+xross_core::external_method!(
+    external.ExternalStruct, greet(&self, prefix: String) -> String
+);
+xross_core::external_field!(external.ExternalStruct, value: i32);
