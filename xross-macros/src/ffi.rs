@@ -93,8 +93,11 @@ pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
                     quote! { #v_name . #index }
                 };
 
-                let f_display_name =
-                    field.ident.as_ref().map(|id| id.to_string()).unwrap_or_else(|| i.to_string());
+                let f_display_name = field
+                    .ident
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| crate::utils::ordinal_name(i));
 
                 fields_info.push(quote! {
                     {
