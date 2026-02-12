@@ -8,7 +8,7 @@ mod type_resolver;
 mod utils;
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, Item, ItemImpl};
+use syn::{Item, ItemImpl, parse_macro_input};
 
 #[proc_macro_derive(XrossClass, attributes(xross_field, xross_package, xross))]
 pub fn xross_class_derive(input: TokenStream) -> TokenStream {

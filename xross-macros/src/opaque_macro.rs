@@ -1,7 +1,7 @@
+use crate::metadata::save_definition;
+use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use crate::utils::*;
-use crate::metadata::save_definition;
 use xross_metadata::Ownership;
 
 pub fn impl_opaque_class(input: TokenStream) -> TokenStream {

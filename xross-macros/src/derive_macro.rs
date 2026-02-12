@@ -1,10 +1,10 @@
+use crate::ffi::{generate_common_ffi, generate_enum_layout, generate_struct_layout};
+use crate::metadata::save_definition;
+use crate::type_resolver::resolve_type_with_attr;
+use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Item;
-use crate::utils::*;
-use crate::metadata::save_definition;
-use crate::type_resolver::resolve_type_with_attr;
-use crate::ffi::{generate_common_ffi, generate_struct_layout, generate_enum_layout};
 use xross_metadata::{
     Ownership, ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
     XrossStruct, XrossType, XrossVariant,
@@ -49,12 +49,8 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                     if field.attrs.iter().any(|a| a.path().is_ident("xross_field")) {
                         let field_ident = field.ident.as_ref().unwrap();
                         let field_name = field_ident.to_string();
-                        let xross_ty = resolve_type_with_attr(
-                            &field.ty,
-                            &field.attrs,
-                            &package,
-                            Some(name),
-                        );
+                        let xross_ty =
+                            resolve_type_with_attr(&field.ty, &field.attrs, &package, Some(name));
                         fields.push(XrossField {
                             name: field_name.clone(),
                             ty: xross_ty.clone(),
@@ -63,8 +59,10 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                         });
 
                         if matches!(xross_ty, XrossType::String) {
-                            let get_fn = format_ident!("{}_property_{}_str_get", symbol_base, field_name);
-                            let set_fn = format_ident!("{}_property_{}_str_set", symbol_base, field_name);
+                            let get_fn =
+                                format_ident!("{}_property_{}_str_get", symbol_base, field_name);
+                            let set_fn =
+                                format_ident!("{}_property_{}_str_set", symbol_base, field_name);
                             extra_functions.push(quote! {
                                 #[unsafe(no_mangle)]
                                 pub unsafe extern "C" fn #get_fn(ptr: *const #name) -> *mut std::ffi::c_char {
@@ -85,22 +83,20 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                     }
                 }
             }
-            save_definition(
-                &XrossDefinition::Struct(XrossStruct {
-                    signature: if package.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{}.{}", package, name)
-                    },
-                    symbol_prefix: symbol_base.clone(),
-                    package_name: package,
-                    name: name.to_string(),
-                    fields,
-                    methods,
-                    docs: extract_docs(&s.attrs),
-                    is_copy: extract_is_copy(&s.attrs),
-                }),
-            );
+            save_definition(&XrossDefinition::Struct(XrossStruct {
+                signature: if package.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}.{}", package, name)
+                },
+                symbol_prefix: symbol_base.clone(),
+                package_name: package,
+                name: name.to_string(),
+                fields,
+                methods,
+                docs: extract_docs(&s.attrs),
+                is_copy: extract_is_copy(&s.attrs),
+            }));
 
             generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions);
         }
@@ -146,12 +142,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                         .as_ref()
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| i.to_string());
-                    let ty = resolve_type_with_attr(
-                        &field.ty,
-                        &field.attrs,
-                        &package,
-                        Some(name),
-                    );
+                    let ty = resolve_type_with_attr(&field.ty, &field.attrs, &package, Some(name));
 
                     v_fields.push(XrossField {
                         name: field_name,
@@ -210,22 +201,20 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 });
             }
 
-            save_definition(
-                &XrossDefinition::Enum(XrossEnum {
-                    signature: if package.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{}.{}", package, name)
-                    },
-                    symbol_prefix: symbol_base.clone(),
-                    package_name: package,
-                    name: name.to_string(),
-                    variants,
-                    methods,
-                    docs: extract_docs(&e.attrs),
-                    is_copy: extract_is_copy(&e.attrs),
-                }),
-            );
+            save_definition(&XrossDefinition::Enum(XrossEnum {
+                signature: if package.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}.{}", package, name)
+                },
+                symbol_prefix: symbol_base.clone(),
+                package_name: package,
+                name: name.to_string(),
+                variants,
+                methods,
+                docs: extract_docs(&e.attrs),
+                is_copy: extract_is_copy(&e.attrs),
+            }));
 
             generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions);
 

@@ -1,7 +1,7 @@
+use crate::metadata::discover_signature;
+use crate::type_mapping::map_type;
 use syn::{Attribute, Type};
 use xross_metadata::{Ownership, XrossType};
-use crate::type_mapping::map_type;
-use crate::metadata::discover_signature;
 
 pub fn resolve_type_with_attr(
     ty: &Type,

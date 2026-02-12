@@ -1,12 +1,11 @@
+use crate::metadata::{load_definition, save_definition};
+use crate::type_resolver::resolve_type_with_attr;
+use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
-use crate::utils::*;
-use crate::metadata::{load_definition, save_definition};
-use crate::type_resolver::resolve_type_with_attr;
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType,
-    XrossType,
+    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType, XrossType,
 };
 
 pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) -> TokenStream {
@@ -218,39 +217,35 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                         quote! { Box::into_raw(#inner_call) as *mut std::ffi::c_void },
                     ),
                 },
-                XrossType::Option(inner) => {
-                    match &**inner {
-                        XrossType::String => (
-                            quote! { *mut std::ffi::c_char },
-                            quote! {
-                                match #inner_call {
-                                    Some(s) => std::ffi::CString::new(s).unwrap_or_default().into_raw(),
-                                    None => std::ptr::null_mut(),
-                                }
-                            },
-                        ),
-                        XrossType::Object { .. } => (
-                            quote! { *mut std::ffi::c_void },
-                            quote! {
-                                match #inner_call {
-                                    Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
-                                    None => std::ptr::null_mut(),
-                                }
-                            },
-                        ),
-                        _ => {
-                            (
-                                quote! { *mut std::ffi::c_void },
-                                quote! {
-                                    match #inner_call {
-                                        Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
-                                        None => std::ptr::null_mut(),
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
+                XrossType::Option(inner) => match &**inner {
+                    XrossType::String => (
+                        quote! { *mut std::ffi::c_char },
+                        quote! {
+                            match #inner_call {
+                                Some(s) => std::ffi::CString::new(s).unwrap_or_default().into_raw(),
+                                None => std::ptr::null_mut(),
+                            }
+                        },
+                    ),
+                    XrossType::Object { .. } => (
+                        quote! { *mut std::ffi::c_void },
+                        quote! {
+                            match #inner_call {
+                                Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
+                                None => std::ptr::null_mut(),
+                            }
+                        },
+                    ),
+                    _ => (
+                        quote! { *mut std::ffi::c_void },
+                        quote! {
+                            match #inner_call {
+                                Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
+                                None => std::ptr::null_mut(),
+                            }
+                        },
+                    ),
+                },
                 XrossType::Result { ok, err } => {
                     let gen_ptr = |ty: &XrossType, val_ident: proc_macro2::TokenStream| match ty {
                         XrossType::String => quote! {

@@ -146,8 +146,10 @@ pub fn discover_signature(type_name: &str) -> Option<String> {
             {}
 ",
             type_name,
-            candidates.iter().map(|s| format!("  - {}", s)).collect::<Vec<_>>().join("
-")
+            candidates.iter().map(|s| format!("  - {}", s)).collect::<Vec<_>>().join(
+                "
+"
+            )
         );
     } else {
         None
