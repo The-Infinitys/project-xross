@@ -208,7 +208,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 is_copy: extract_is_copy(&s.attrs),
             }));
 
-            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions, is_clonable);
+            generate_common_ffi(
+                name,
+                &symbol_base,
+                layout_logic,
+                &mut extra_functions,
+                is_clonable,
+            );
         }
 
         Item::Enum(e) => {
@@ -331,7 +337,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 is_copy: extract_is_copy(&e.attrs),
             }));
 
-            generate_common_ffi(name, &symbol_base, layout_logic, &mut extra_functions, is_clonable);
+            generate_common_ffi(
+                name,
+                &symbol_base,
+                layout_logic,
+                &mut extra_functions,
+                is_clonable,
+            );
 
             let tag_fn_id = format_ident!("{}_get_tag", symbol_base);
             let variant_name_fn_id = format_ident!("{}_get_variant_name", symbol_base);

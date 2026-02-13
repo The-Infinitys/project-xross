@@ -2,17 +2,20 @@ package org.xross.structures
 
 import kotlinx.serialization.Serializable
 
+/**
+ * Represents the receiver type of a Rust method and how it maps to Kotlin.
+ */
 @Serializable
 enum class XrossMethodType {
-    /** selfを取らない (Javaでは static メソッド) */
+    /** Static function (does not take self). Maps to a static method in Kotlin. */
     Static,
 
-    /** &self (Javaでは通常のインスタンスメソッド) */
+    /** Immutable reference (&self). Maps to an instance method in Kotlin. */
     ConstInstance,
 
-    /** &mut self (Javaでは通常のインスタンスメソッド) */
+    /** Mutable reference (&mut self). Maps to an instance method in Kotlin. */
     MutInstance,
 
-    /** self (所有権を消費。Java側では呼び出し後にインスタンスを無効化すべき) */
+    /** Consumes ownership of self. The Kotlin instance should be invalidated after calling this. */
     OwnedInstance,
 }

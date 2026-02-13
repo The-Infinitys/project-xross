@@ -4,9 +4,15 @@ import com.squareup.kotlinpoet.*
 import org.xross.structures.XrossDefinition
 import java.lang.foreign.MemorySegment
 
+/**
+ * Generates the base structure for Kotlin classes/enums, including constructors and memory management.
+ */
 object StructureGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
+    /**
+     * Builds the base properties and constructors for the generated class.
+     */
     fun buildBase(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossDefinition, basePackage: String) {
         val isEnum = meta is XrossDefinition.Enum
         val isPure = GeneratorUtils.isPureEnum(meta)
@@ -76,6 +82,9 @@ object StructureGenerator {
         }
     }
 
+    /**
+     * Adds finalization logic, such as `close` and `relinquish` methods.
+     */
     fun addFinalBlocks(classBuilder: TypeSpec.Builder, meta: XrossDefinition) {
         if (GeneratorUtils.isPureEnum(meta)) return
 

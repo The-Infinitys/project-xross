@@ -2,6 +2,7 @@ package org.xross.generator
 
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import org.xross.generator.MethodGenerator.addResourceConstruction
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
@@ -12,6 +13,82 @@ import java.lang.foreign.MemorySegment
 import java.lang.ref.WeakReference
 
 object PropertyGenerator {
+    private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
+    fun ClassName(fullName: String): ClassName {
+        val lastDot = fullName.lastIndexOf('.')
+        return if (lastDot == -1) {
+            ClassName("", fullName)
+        } else {
+            val packageName = fullName.substring(0, lastDot)
+            val simpleName = fullName.substring(lastDot + 1)
+            ClassName(packageName, simpleName)
+        }
+    }
+    fun resolveReturnType(type: XrossType, basePackage: String): TypeName = when (type) {
+        is XrossType.Void -> Unit::class.asTypeName()
+        is XrossType.RustString -> String::class.asTypeName()
+        is XrossType.Object -> ClassName("$basePackage.${type.signature}")
+        is XrossType.Optional -> resolveReturnType(type.inner, basePackage).copy(nullable = true)
+        is XrossType.Result -> {
+            val okType = resolveReturnType(type.ok, basePackage)
+            ClassName("kotlin", "Result").parameterizedBy(okType)
+        }
+        // XrossTypeが持つデフォルトのkotlinTypeプロパティ（Int, Long, Boolean等）
+        else -> type.kotlinType
+    }
+    fun compareExprs(
+        targetTypeName: TypeName,
+        selfType: ClassName,
+        dropHandleName: String = "dropHandle",
+    ): Triple<CodeBlock, CodeBlock, CodeBlock> {
+        // targetTypeNameがNullableの場合を考慮して比較
+        val isSelf = targetTypeName.copy(nullable = false) == selfType
+        val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", targetTypeName)
+        val dropExpr = if (isSelf) CodeBlock.of(dropHandleName) else CodeBlock.of("%T.dropHandle", targetTypeName)
+        val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", targetTypeName)
+        return Triple(sizeExpr, dropExpr, fromPointerExpr)
+    }
+
+    /**
+     * MemorySegment (ptr) から XrossType に基づいた Kotlin の値を生成するコードを注入する。
+     * Result の Ok/Err 分岐内や、Optional の非NULL分岐内で使用。
+     */
+    fun CodeBlock.Builder.addResultVariantResolution(
+        type: XrossType,
+        ptrName: String,
+        targetTypeName: TypeName,
+        selfType: ClassName,
+        basePackage: String,
+        dropHandleName: String = "dropHandle",
+    ) {
+        val isSelf = targetTypeName.copy(nullable = false) == selfType
+        val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+
+        // Object/String/Primitive ごとの解決ロジック
+        when (type) {
+            is XrossType.Object -> {
+                val (sizeExpr, dropExpr, fromPointerExpr) = compareExprs(targetTypeName, selfType, dropHandleName)
+                this.addResourceConstruction(type, ptrName, sizeExpr, fromPointerExpr, dropExpr, flagType)
+            }
+
+            is XrossType.RustString -> {
+                // 文字列の場合は解決して値を置く
+                GeneratorUtils.addRustStringResolution(this, ptrName)
+                this.addStatement("str")
+            }
+
+            else -> {
+                // プリミティブ（Int, Long等）
+                // ポインタから値を取得し、一時的な MemorySegment をドロップする
+                this.addStatement("val v = %L.get(%M, 0)", ptrName, type.layoutMember)
+
+                // dropHandle が利用可能な文脈（Result/Optionalの戻り値等）であれば呼び出す
+                val dropExpr = if (isSelf) CodeBlock.of(dropHandleName) else CodeBlock.of("%T.dropHandle", targetTypeName)
+                this.addStatement("%L.invokeExact(%L)", dropExpr, ptrName)
+                this.addStatement("v")
+            }
+        }
+    }
     fun generateFields(classBuilder: TypeSpec.Builder, meta: XrossDefinition.Struct, basePackage: String) {
         val selfType = GeneratorUtils.getClassName(meta.signature, basePackage)
         meta.fields.forEach { field ->
@@ -45,297 +122,138 @@ object PropertyGenerator {
                     .mutable(isMutable)
                     .getter(buildGetter(field, vhName, kType, backingFieldName, selfType, basePackage))
 
-                if (isMutable) propBuilder.setter(buildSetter(field, vhName, kType, backingFieldName, selfType, basePackage))
+                if (isMutable) propBuilder.setter(buildSetter(field, vhName, kType, backingFieldName, selfType))
                 classBuilder.addProperty(propBuilder.build())
             }
         }
     }
     private fun buildGetter(field: XrossField, vhName: String, kType: TypeName, backingFieldName: String?, selfType: ClassName, basePackage: String): FunSpec {
-        val readCodeBuilder = CodeBlock.builder()
-        readCodeBuilder.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Access error")
+        val body = CodeBlock.builder()
+        body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Access error")
 
-        val isSelf = kType == selfType
         val baseName = field.name.toCamelCase()
         val offsetName = "OFFSET_$baseName"
-        val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+        val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
 
-        when (field.ty) {
+        when (val ty = field.ty) {
             is XrossType.Object -> {
-                readCodeBuilder.addStatement("val cached = this.$backingFieldName?.get()")
-                readCodeBuilder.beginControlFlow("if (cached != null && cached.aliveFlag.isValid)")
-                readCodeBuilder.addStatement("res = cached")
-                readCodeBuilder.nextControlFlow("else")
+                // キャッシュチェック
+                body.addStatement("val cached = this.$backingFieldName?.get()")
+                body.beginControlFlow("if (cached != null && cached.aliveFlag.isValid)")
+                body.addStatement("res = cached")
+                body.nextControlFlow("else")
 
-                val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
-                val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", kType)
-                val isOwned = field.ty.ownership == XrossType.Ownership.Owned
+                val isOwned = ty.ownership == XrossType.Ownership.Owned
+                val sizeExpr = if (kType == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
+                val fromPointerExpr = if (kType == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", kType)
                 val ffiHelpers = ClassName("$basePackage.xross.runtime", "FfiHelpers")
-                val vh=if (isOwned) "null" else vhName
-                readCodeBuilder.addStatement(
-                    "val resSeg = %T.resolveFieldSegment(this.segment, $vh, OFFSET_$baseName, $sizeExpr, $isOwned)",
-                    ffiHelpers,
-                )
 
-                readCodeBuilder.addStatement(
-                    "res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))",
-                    fromPointerExpr,
-                    aliveFlagType,
-                )
-                readCodeBuilder.addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
-                readCodeBuilder.endControlFlow()
+                body.addStatement("val resSeg = %T.resolveFieldSegment(this.segment, ${if (isOwned) "null" else vhName}, $offsetName, $sizeExpr, $isOwned)", ffiHelpers)
+                body.addStatement("res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
+                body.addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
+                body.endControlFlow()
             }
 
             is XrossType.Optional -> {
-                readCodeBuilder.addStatement(
-                    "val resRaw = ${baseName}OptGetHandle.invokeExact(this.segment) as %T",
-                    MemorySegment::class,
-                )
-                readCodeBuilder.beginControlFlow("if (resRaw == %T.NULL)", MemorySegment::class)
-                readCodeBuilder.addStatement("res = null")
-                readCodeBuilder.nextControlFlow("else")
-
-                val inner = field.ty.inner
-                val isSelfOk = if (inner is XrossType.Object) GeneratorUtils.getClassName(inner.signature, basePackage) == selfType else false
-
-                when (inner) {
-                    is XrossType.Object -> {
-                        val innerType = GeneratorUtils.getClassName(inner.signature, basePackage)
-                        val sizeExpr = if (isSelfOk) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", innerType)
-                        val dropExpr = if (isSelfOk) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", innerType)
-                        val fromPointerExpr = if (isSelfOk) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", innerType)
-
-                        readCodeBuilder.addStatement("val retAutoArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val retOwnerArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val flag = %T(true)", aliveFlagType)
-                        readCodeBuilder.addStatement(
-                            "val reinterpreted = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
-                            sizeExpr,
-                            dropExpr,
-                        )
-                        readCodeBuilder.addStatement("res = %L(reinterpreted, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
-                    }
-
-                    is XrossType.RustString -> {
-                        readCodeBuilder.addStatement("res = resRaw.reinterpret(%T.MAX_VALUE).getString(0)", Long::class)
-                        readCodeBuilder.addStatement("xrossFreeStringHandle.invokeExact(resRaw)")
-                    }
-
-                    else -> {
-                        readCodeBuilder.addStatement("res = resRaw.get(%M, 0)", inner.layoutMember)
-                        readCodeBuilder.addStatement("dropHandle.invokeExact(resRaw)")
-                    }
-                }
-                readCodeBuilder.endControlFlow()
+                body.addStatement("val resRaw = ${baseName}OptGetHandle.invokeExact(this.segment) as %T", MemorySegment::class)
+                body.beginControlFlow("if (resRaw == %T.NULL)", MemorySegment::class).addStatement("res = null").nextControlFlow("else")
+                // 拡張関数で解決
+                body.addResultVariantResolution(ty.inner, "resRaw", resolveReturnType(ty.inner, basePackage), selfType, basePackage)
+                body.addStatement("res = it") // addResultVariantResolutionの戻り値を受け取る
+                body.endControlFlow()
             }
 
             is XrossType.Result -> {
-                readCodeBuilder.addStatement(
-                    "val resRaw = ${baseName}ResGetHandle.invokeExact(this.segment) as %T",
-                    MemorySegment::class,
-                )
-                readCodeBuilder.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", MemberName("java.lang.foreign.ValueLayout", "JAVA_BYTE"))
-                readCodeBuilder.addStatement("val ptr = resRaw.get(%M, 8L)", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"))
+                body.addStatement("val resRaw = ${baseName}ResGetHandle.invokeExact(this.segment) as %T", MemorySegment::class)
+                body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", MemberName("java.lang.foreign.ValueLayout", "JAVA_BYTE"))
+                body.addStatement("val ptr = resRaw.get(%M, 8L)", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"))
 
-                readCodeBuilder.beginControlFlow("if (isOk)")
-                readCodeBuilder.beginControlFlow("val okVal = run")
-                val okTy = field.ty.ok
-                val okKType = if (okTy is XrossType.Object) GeneratorUtils.getClassName(okTy.signature, basePackage) else okTy.kotlinType
-                val isOkSelf = okKType == selfType
+                body.beginControlFlow("if (isOk)")
+                body.add("val okVal = ")
+                body.addResultVariantResolution(ty.ok, "ptr", resolveReturnType(ty.ok, basePackage), selfType, basePackage)
+                body.addStatement("res = Result.success(okVal) as %T", kType)
 
-                when (okTy) {
-                    is XrossType.Object -> {
-                        val okSizeExpr = if (isOkSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", okKType)
-                        val okDropExpr = if (isOkSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", okKType)
-                        val okFromPointerExpr = if (isOkSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", okKType)
-
-                        readCodeBuilder.addStatement("val retAutoArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val retOwnerArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val flag = %T(true)", aliveFlagType)
-                        readCodeBuilder.addStatement(
-                            "val reinterpreted = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
-                            okSizeExpr,
-                            okDropExpr,
-                        )
-                        readCodeBuilder.addStatement("%L(reinterpreted, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", okFromPointerExpr)
-                    }
-                    is XrossType.RustString -> {
-                        GeneratorUtils.addRustStringResolution(readCodeBuilder, "ptr", "s", isAssignment = false)
-                        readCodeBuilder.addStatement("s")
-                    }
-                    else -> {
-                        readCodeBuilder.addStatement("val v = ptr.get(%M, 0)", okTy.layoutMember)
-                        readCodeBuilder.addStatement("dropHandle.invokeExact(ptr)")
-                        readCodeBuilder.addStatement("v")
-                    }
-                }
-                readCodeBuilder.endControlFlow()
-                readCodeBuilder.addStatement("res = Result.success(okVal) as %T", kType)
-
-                readCodeBuilder.nextControlFlow("else")
-
-                readCodeBuilder.beginControlFlow("val errVal = run")
-                val errTy = field.ty.err
-                val errKType = if (errTy is XrossType.Object) GeneratorUtils.getClassName(errTy.signature, basePackage) else errTy.kotlinType
-                val isErrSelf = errKType == selfType
-
-                when (errTy) {
-                    is XrossType.Object -> {
-                        val errSizeExpr = if (isErrSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", errKType)
-                        val errDropExpr = if (isErrSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", errKType)
-                        val errFromPointerExpr = if (isErrSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", errKType)
-
-                        readCodeBuilder.addStatement("val retAutoArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val retOwnerArena = Arena.ofAuto()")
-                        readCodeBuilder.addStatement("val flag = %T(true)", aliveFlagType)
-                        readCodeBuilder.addStatement(
-                            "val reinterpreted = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
-                            errSizeExpr,
-                            errDropExpr,
-                        )
-                        readCodeBuilder.addStatement("%L(reinterpreted, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", errFromPointerExpr)
-                    }
-                    is XrossType.RustString -> {
-                        GeneratorUtils.addRustStringResolution(readCodeBuilder, "ptr", "s", isAssignment = false)
-                        readCodeBuilder.addStatement("s")
-                    }
-                    else -> {
-                        readCodeBuilder.addStatement("val v = ptr.get(%M, 0)", errTy.layoutMember)
-                        readCodeBuilder.addStatement("dropHandle.invokeExact(ptr)")
-                        readCodeBuilder.addStatement("v")
-                    }
-                }
-                readCodeBuilder.endControlFlow()
-                readCodeBuilder.addStatement("res = Result.failure<%T>(%T(errVal)) as %T", okKType, ClassName("$basePackage.xross.runtime", "XrossException"), kType)
-                readCodeBuilder.endControlFlow()
+                body.nextControlFlow("else")
+                body.add("val errVal = ")
+                body.addResultVariantResolution(ty.err, "ptr", resolveReturnType(ty.err, basePackage), selfType, basePackage)
+                body.addStatement("res = Result.failure<%T>(%T(errVal)) as %T", resolveReturnType(ty.ok, basePackage), ClassName("$basePackage.xross.runtime", "XrossException"), kType)
+                body.endControlFlow()
             }
 
-            is XrossType.Bool -> readCodeBuilder.addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
             is XrossType.RustString -> {
                 val callExpr = "${baseName}StrGetHandle.invokeExact(this.segment)"
-                GeneratorUtils.addRustStringResolution(readCodeBuilder, callExpr, "res", isAssignment = true)
+                GeneratorUtils.addRustStringResolution(body, callExpr, "res", isAssignment = true)
             }
 
-            else -> readCodeBuilder.addStatement("res = $vhName.get(this.segment, $offsetName) as %T", kType)
+            is XrossType.Bool -> body.addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
+            else -> body.addStatement("res = $vhName.get(this.segment, $offsetName) as %T", kType)
         }
 
-        return GeneratorUtils.buildOptimisticReadGetter(kType, readCodeBuilder.build())
+        return GeneratorUtils.buildOptimisticReadGetter(kType, body.build())
     }
-    private fun buildSetter(field: XrossField, vhName: String, kType: TypeName, backingFieldName: String?, selfType: ClassName, basePackage: String): FunSpec {
-        val writeCodeBuilder = CodeBlock.builder()
-        writeCodeBuilder.addStatement(
-            "if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)",
-            MemorySegment::class,
-            NullPointerException::class,
-            "Attempted to set field '${field.name}' on a NULL or invalid native object",
-        )
+    private fun buildSetter(field: XrossField, vhName: String, kType: TypeName, backingFieldName: String?, selfType: ClassName): FunSpec {
+        val body = CodeBlock.builder()
+        body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Invalid Access")
 
-        val isSelf = kType == selfType
         val baseName = field.name.toCamelCase()
         val offsetName = "OFFSET_$baseName"
 
-        when (field.ty) {
-            is XrossType.RustString -> {
-                writeCodeBuilder.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                writeCodeBuilder.addStatement("val allocated = arena.allocateFrom(v)")
-                writeCodeBuilder.addStatement("${baseName}StrSetHandle.invokeExact(this.segment, allocated) as Unit")
-                writeCodeBuilder.endControlFlow()
-            }
-
-            is XrossType.Optional -> {
-                writeCodeBuilder.beginControlFlow("if (v == null)")
-                writeCodeBuilder.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, %T.NULL) as Unit", MemorySegment::class)
-                writeCodeBuilder.nextControlFlow("else")
-                when (val inner = field.ty.inner) {
-                    is XrossType.RustString -> {
-                        writeCodeBuilder.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                        writeCodeBuilder.addStatement("val allocated = arena.allocateFrom(v)")
-                        writeCodeBuilder.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, allocated) as Unit")
-                        writeCodeBuilder.endControlFlow()
-                    }
-
-                    is XrossType.Object -> {
-                        writeCodeBuilder.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, v.segment) as Unit")
-                    }
-
-                    else -> {
-                        writeCodeBuilder.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                        writeCodeBuilder.addStatement("val allocated = arena.allocate(%M, v)", inner.layoutMember)
-                        writeCodeBuilder.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, allocated) as Unit")
-                        writeCodeBuilder.endControlFlow()
-                    }
-                }
-                writeCodeBuilder.endControlFlow()
-            }
-
-            is XrossType.Result -> {
-                val okTy = field.ty.ok
-                writeCodeBuilder.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                writeCodeBuilder.addStatement("val xrossRes = arena.allocate(java.lang.foreign.MemoryLayout.structLayout(java.lang.foreign.ValueLayout.JAVA_BYTE.withName(\"isOk\"), java.lang.foreign.MemoryLayout.paddingLayout(7), java.lang.foreign.ValueLayout.ADDRESS.withName(\"ptr\")))")
-                writeCodeBuilder.beginControlFlow("if (v.isSuccess)")
-                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L, 1.toByte())")
-                val okVal = "v.getOrThrow()"
-                when (okTy) {
-                    is XrossType.Object -> {
-                        writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, $okVal.segment)")
-                    }
-
-                    is XrossType.RustString -> {
-                        writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, arena.allocateFrom($okVal))")
-                    }
-
-                    else -> {
-                        writeCodeBuilder.addStatement("val allocated = arena.allocate(%M, $okVal)", okTy.layoutMember)
-                        writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, allocated)")
-                    }
-                }
-                writeCodeBuilder.nextControlFlow("else")
-                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L, 0.toByte())")
-                writeCodeBuilder.addStatement("val err = v.exceptionOrNull()!!")
-                writeCodeBuilder.beginControlFlow("if (err is %T)", ClassName("$basePackage.xross.runtime", "XrossException"))
-                writeCodeBuilder.addStatement("// TODO: Pass error value back if needed")
-                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, java.lang.foreign.MemorySegment.NULL)")
-                writeCodeBuilder.nextControlFlow("else")
-                writeCodeBuilder.addStatement("xrossRes.set(java.lang.foreign.ValueLayout.ADDRESS, 8L, java.lang.foreign.MemorySegment.NULL)")
-                writeCodeBuilder.endControlFlow()
-                writeCodeBuilder.endControlFlow()
-                writeCodeBuilder.addStatement("${baseName}ResSetHandle.invokeExact(this.segment, xrossRes) as Unit")
-                writeCodeBuilder.endControlFlow()
-            }
-
-            is XrossType.Bool -> writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, if (v) 1.toByte() else 0.toByte())")
+        when (val ty = field.ty) {
             is XrossType.Object -> {
-                writeCodeBuilder.addStatement(
-                    "if (v.segment == %T.NULL || !v.aliveFlag.isValid) throw %T(%S)",
-                    MemorySegment::class,
-                    NullPointerException::class,
-                    "Cannot set field '${field.name}' with a NULL or invalid native reference",
-                )
-
-                if (field.ty.ownership == XrossType.Ownership.Owned) {
-                    val sizeExpr = if (isSelf) "STRUCT_SIZE" else "%T.STRUCT_SIZE"
-                    writeCodeBuilder.addStatement(
-                        "this.segment.asSlice($offsetName, $sizeExpr).copyFrom(v.segment)",
-                        *(if (isSelf) emptyArray() else arrayOf(kType)),
-                    )
+                body.addStatement("if (v.segment == %T.NULL || !v.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Invalid Arg")
+                if (ty.ownership == XrossType.Ownership.Owned) {
+                    val sizeExpr = if (kType == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
+                    body.addStatement("this.segment.asSlice($offsetName, %L).copyFrom(v.segment)", sizeExpr)
                 } else {
-                    writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, v.segment)")
+                    body.addStatement("$vhName.set(this.segment, $offsetName, v.segment)")
                 }
-
-                if (backingFieldName != null) {
-                    writeCodeBuilder.addStatement("this.$backingFieldName = null")
-                }
+                if (backingFieldName != null) body.addStatement("this.$backingFieldName = null")
             }
 
-            else -> writeCodeBuilder.addStatement("$vhName.set(this.segment, $offsetName, v)")
+            // String, Optional, Result はすべて Temporary Arena を必要とするグループ
+            is XrossType.RustString, is XrossType.Optional, is XrossType.Result -> {
+                body.beginControlFlow("%T.ofConfined().use { arena ->", java.lang.foreign.Arena::class)
+                when (ty) {
+                    is XrossType.RustString -> {
+                        body.addStatement("${baseName}StrSetHandle.invokeExact(this.segment, arena.allocateFrom(v)) as Unit")
+                    }
+                    is XrossType.Optional -> {
+                        body.addStatement("val allocated = if (v == null) %T.NULL else %L", MemorySegment::class, generateAllocMsg(ty.inner, "v"))
+                        body.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, allocated) as Unit")
+                    }
+                    is XrossType.Result -> {
+                        // Resultの構造体構築を共通化
+                        body.addStatement("val xrossRes = arena.allocate(GeneratorUtils.RESULT_LAYOUT)")
+                        body.beginControlFlow("if (v.isSuccess)")
+                        body.addStatement("xrossRes.set(%T.JAVA_BYTE, 0L, 1.toByte())", VAL_LAYOUT)
+                        body.addStatement("val okAllocated = %L", generateAllocMsg(ty.ok, "v.getOrThrow()"))
+                        body.addStatement("xrossRes.set(%T.ADDRESS, 8L, okAllocated)", VAL_LAYOUT)
+                        body.nextControlFlow("else")
+                        body.addStatement("xrossRes.set(%T.JAVA_BYTE, 0L, 0.toByte())", VAL_LAYOUT)
+                        body.addStatement("xrossRes.set(%T.ADDRESS, 8L, %T.NULL)", VAL_LAYOUT, MemorySegment::class)
+                        body.endControlFlow()
+                        body.addStatement("${baseName}ResSetHandle.invokeExact(this.segment, xrossRes) as Unit")
+                    }
+                }
+                body.endControlFlow()
+            }
+
+            is XrossType.Bool -> body.addStatement("$vhName.set(this.segment, $offsetName, if (v) 1.toByte() else 0.toByte())")
+            else -> body.addStatement("$vhName.set(this.segment, $offsetName, v)")
         }
 
+        // 共通のLockラッパーでラップして返す
         return FunSpec.setterBuilder().addParameter("v", kType).addCode(
-            """
-        val stamp = this.sl.writeLock()
-        try { %L } finally { this.sl.unlockWrite(stamp) }
-            """.trimIndent(),
-            writeCodeBuilder.build(),
+            "val stamp = this.sl.writeLock()\ntry { %L } finally { this.sl.unlockWrite(stamp) }",
+            body.build(),
         ).build()
+    }
+
+    // ヘルパー: 型に応じた allocate 式を返す
+    private fun generateAllocMsg(ty: XrossType, valueName: String): CodeBlock = when (ty) {
+        is XrossType.Object -> CodeBlock.of("$valueName.segment")
+        is XrossType.RustString -> CodeBlock.of("arena.allocateFrom($valueName)")
+        else -> CodeBlock.of("arena.allocate(%M, $valueName)", ty.layoutMember)
     }
     private fun generateAtomicProperty(
         classBuilder: TypeSpec.Builder,

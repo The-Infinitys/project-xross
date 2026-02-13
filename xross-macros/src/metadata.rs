@@ -2,6 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use xross_metadata::XrossDefinition;
 
+/// Returns the directory where xross metadata files are stored.
+/// It tries to find the target directory of the cargo project.
 pub fn get_xross_dir() -> PathBuf {
     if let Ok(val) = std::env::var("XROSS_METADATA_DIR") {
         return PathBuf::from(val);
@@ -40,10 +42,13 @@ pub fn get_xross_dir() -> PathBuf {
     root.join("target").join("xross")
 }
 
+/// Returns the file path for a given signature.
 pub fn get_path_by_signature(signature: &str) -> PathBuf {
     get_xross_dir().join(format!("{}.json", signature))
 }
 
+/// Saves the type definition to a JSON file in the metadata directory.
+/// Performs compatibility checks if a definition already exists.
 pub fn save_definition(def: &XrossDefinition) {
     let xross_dir = get_xross_dir();
     fs::create_dir_all(&xross_dir).ok();
@@ -72,6 +77,7 @@ pub fn save_definition(def: &XrossDefinition) {
     }
 }
 
+/// Checks if two definitions are structurally compatible.
 fn is_structurally_compatible(a: &XrossDefinition, b: &XrossDefinition) -> bool {
     match (a, b) {
         (XrossDefinition::Struct(sa), XrossDefinition::Struct(sb)) => {
@@ -91,6 +97,7 @@ fn is_structurally_compatible(a: &XrossDefinition, b: &XrossDefinition) -> bool 
     }
 }
 
+/// Loads a definition from the metadata directory by its identifier name.
 pub fn load_definition(ident: &syn::Ident) -> Option<XrossDefinition> {
     let xross_dir = get_xross_dir();
     if !xross_dir.exists() {
@@ -111,6 +118,8 @@ pub fn load_definition(ident: &syn::Ident) -> Option<XrossDefinition> {
     None
 }
 
+/// Discovers the signature of a type by its name.
+/// Panics if multiple types with the same name are found in different packages.
 pub fn discover_signature(type_name: &str) -> Option<String> {
     let xross_dir = get_xross_dir();
     if !xross_dir.exists() {

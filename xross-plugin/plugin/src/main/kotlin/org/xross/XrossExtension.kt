@@ -1,14 +1,25 @@
 package org.xross
 
+/**
+ * Extension for configuring the Xross plugin.
+ */
 abstract class XrossExtension {
-    // デフォルト値を空文字などで初期化
+    /**
+     * Path to the Rust project directory.
+     */
     var rustProjectDir: String = ""
+
+    /**
+     * Default package name for generated Kotlin files.
+     */
     var packageName: String = ""
 
-    // ユーザーが明示的に設定した値を保持する変数
     private var customMetadataDir: String? = null
 
-    // Getterで動的にパスを生成する
+    /**
+     * Directory where Rust Xross metadata JSON files are located.
+     * Defaults to "${rustProjectDir}/target/xross".
+     */
     var metadataDir: String
         get() = customMetadataDir ?: "$rustProjectDir/target/xross"
         set(value) {

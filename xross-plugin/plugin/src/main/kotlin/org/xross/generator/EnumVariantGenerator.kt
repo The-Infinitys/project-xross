@@ -15,6 +15,22 @@ import java.lang.ref.WeakReference
 object EnumVariantGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
+    private fun TypeSpec.Builder.buildRawInitializer(aliveFlagType: ClassName) {
+        this.primaryConstructor(
+            FunSpec.constructorBuilder()
+                .addModifiers(KModifier.INTERNAL)
+                .addParameter("raw", MEMORY_SEGMENT)
+                .addParameter("autoArena", Arena::class.asTypeName())
+                .addParameter(ParameterSpec.builder("confinedArena", Arena::class.asTypeName().copy(nullable = true)).defaultValue("null").build())
+                .addParameter(ParameterSpec.builder("sharedFlag", aliveFlagType.copy(nullable = true)).defaultValue("null").build())
+                .build(),
+        )
+        this.addSuperclassConstructorParameter("raw")
+        this.addSuperclassConstructorParameter("autoArena")
+        this.addSuperclassConstructorParameter("confinedArena")
+        this.addSuperclassConstructorParameter("sharedFlag")
+    }
+
     fun generateVariants(
         classBuilder: TypeSpec.Builder,
         companionBuilder: TypeSpec.Builder,
@@ -84,20 +100,7 @@ object EnumVariantGenerator {
                     val variantTypeBuilder = TypeSpec.classBuilder(variant.name)
                         .superclass(baseClassName)
 
-                    variantTypeBuilder.primaryConstructor(
-                        FunSpec.constructorBuilder()
-                            .addModifiers(KModifier.INTERNAL)
-                            .addParameter("raw", MEMORY_SEGMENT)
-                            .addParameter("autoArena", Arena::class.asTypeName())
-                            .addParameter(ParameterSpec.builder("confinedArena", Arena::class.asTypeName().copy(nullable = true)).defaultValue("null").build())
-                            .addParameter(ParameterSpec.builder("sharedFlag", aliveFlagType.copy(nullable = true)).defaultValue("null").build())
-                            .build(),
-                    )
-                    variantTypeBuilder.addSuperclassConstructorParameter("raw")
-                    variantTypeBuilder.addSuperclassConstructorParameter("autoArena")
-                    variantTypeBuilder.addSuperclassConstructorParameter("confinedArena")
-                    variantTypeBuilder.addSuperclassConstructorParameter("sharedFlag")
-
+                    variantTypeBuilder.buildRawInitializer(aliveFlagType)
                     val factoryMethodName = "xrossNew${variant.name}Internal"
                     companionBuilder.addFunction(
                         FunSpec.builder(factoryMethodName)
@@ -158,20 +161,7 @@ object EnumVariantGenerator {
                     val variantTypeBuilder = TypeSpec.classBuilder(variant.name)
                     variantTypeBuilder.superclass(baseClassName)
 
-                    variantTypeBuilder.primaryConstructor(
-                        FunSpec.constructorBuilder()
-                            .addModifiers(KModifier.INTERNAL)
-                            .addParameter("raw", MEMORY_SEGMENT)
-                            .addParameter("autoArena", Arena::class.asTypeName())
-                            .addParameter(ParameterSpec.builder("confinedArena", Arena::class.asTypeName().copy(nullable = true)).defaultValue("null").build())
-                            .addParameter(ParameterSpec.builder("sharedFlag", aliveFlagType.copy(nullable = true)).defaultValue("null").build())
-                            .build(),
-                    )
-                    variantTypeBuilder.addSuperclassConstructorParameter("raw")
-                    variantTypeBuilder.addSuperclassConstructorParameter("autoArena")
-                    variantTypeBuilder.addSuperclassConstructorParameter("confinedArena")
-                    variantTypeBuilder.addSuperclassConstructorParameter("sharedFlag")
-
+                    variantTypeBuilder.buildRawInitializer(aliveFlagType)
                     val factoryMethodName = "xrossNew${variant.name}Internal"
                     companionBuilder.addFunction(
                         FunSpec.builder(factoryMethodName)
@@ -397,5 +387,4 @@ object EnumVariantGenerator {
             writeCode,
         ).build()
     }
-
 }

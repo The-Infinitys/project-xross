@@ -74,7 +74,7 @@ private fun loadFromResources(tempDir: File) {
     System.load(libFile.absolutePath)
     println("Native library loaded from: ${libFile.absolutePath}")
 }
-fun executeComplexFieldTest(){
+fun executeComplexFieldTest() {
     println("\nComplex field test:")
 }
 

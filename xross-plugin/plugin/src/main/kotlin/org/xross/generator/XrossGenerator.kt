@@ -7,7 +7,18 @@ import org.xross.structures.XrossMethod
 import org.xross.structures.XrossType
 import java.io.File
 
+/**
+ * Main entry point for generating Kotlin bindings from Xross metadata.
+ */
 object XrossGenerator {
+    /**
+     * Generates Kotlin source code for a given type definition.
+     *
+     * @param meta The type definition metadata.
+     * @param outputDir The directory where the generated code will be written.
+     * @param targetPackage The base package name for the generated code.
+     * @param resolver The resolver for looking up other type definitions.
+     */
     fun generate(
         meta: XrossDefinition,
         outputDir: File,
@@ -69,13 +80,11 @@ object XrossGenerator {
         is XrossDefinition.Opaque -> meta
     }
 
-    private fun resolveMethods(methods: List<XrossMethod>, resolver: TypeResolver, context: String): List<XrossMethod> {
-        return methods.map { m ->
-            m.copy(
-                args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "$context.${m.name}")) },
-                ret = resolveType(m.ret, resolver, "$context.${m.name}"),
-            )
-        }
+    private fun resolveMethods(methods: List<XrossMethod>, resolver: TypeResolver, context: String): List<XrossMethod> = methods.map { m ->
+        m.copy(
+            args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "$context.${m.name}")) },
+            ret = resolveType(m.ret, resolver, "$context.${m.name}"),
+        )
     }
 
     private fun resolveType(

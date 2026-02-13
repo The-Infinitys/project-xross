@@ -4,6 +4,9 @@ import com.squareup.kotlinpoet.*
 import kotlinx.serialization.Serializable
 import org.xross.XrossTypeSerializer
 
+/**
+ * Represents the data types supported by Xross in Kotlin.
+ */
 @Serializable(with = XrossTypeSerializer::class)
 sealed class XrossType {
     object Void : XrossType()
@@ -20,13 +23,34 @@ sealed class XrossType {
     object Pointer : XrossType()
     object RustString : XrossType()
 
+    /**
+     * Ownership model for bridged types.
+     */
     enum class Ownership { Owned, Boxed, Ref, MutRef }
 
+    /**
+     * A user-defined object type.
+     */
     data class Object(val signature: String, val ownership: Ownership = Ownership.Owned) : XrossType()
+
+    /**
+     * An optional type.
+     */
     data class Optional(val inner: XrossType) : XrossType()
+
+    /**
+     * A result type.
+     */
     data class Result(val ok: XrossType, val err: XrossType) : XrossType()
+
+    /**
+     * An asynchronous type.
+     */
     data class Async(val inner: XrossType) : XrossType()
 
+    /**
+     * Returns the KotlinPoet [TypeName] for this type.
+     */
     val kotlinType: TypeName
         get() = when (this) {
             I32 -> INT
@@ -46,6 +70,9 @@ sealed class XrossType {
             Pointer, is Object -> ClassName("java.lang.foreign", "MemorySegment")
         }
 
+    /**
+     * Returns the [MemberName] for the Java FFM ValueLayout of this type.
+     */
     val layoutMember: MemberName
         get() = when (this) {
             I32 -> ValueLayouts.JAVA_INT
@@ -73,10 +100,25 @@ sealed class XrossType {
         val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
     }
 
+    /**
+     * Returns true if this type represents an owned value.
+     */
     val isOwned: Boolean
         get() = when (this) {
             is Object -> ownership == Ownership.Owned || ownership == Ownership.Boxed
             is Result, is Async -> true
             else -> false
+        }
+
+    /**
+     * Returns the size in bytes for the primitive type.
+     */
+    val kotlinSize
+        get() = when (this) {
+            is I32, is F32 -> 4L
+            is I64, is F64, is Pointer, is RustString -> 8L
+            is Bool, is I8 -> 1L
+            is I16, is U16 -> 2L
+            else -> 8L
         }
 }

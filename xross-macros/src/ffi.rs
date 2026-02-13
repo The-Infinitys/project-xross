@@ -1,5 +1,6 @@
 use quote::{format_ident, quote};
 
+/// Generates common FFI functions for a type, such as drop, clone, and metadata layout retrieval.
 pub fn generate_common_ffi(
     name: &syn::Ident,
     base: &str,
@@ -13,7 +14,9 @@ pub fn generate_common_ffi(
     let trait_name = format_ident!("Xross{}Class", name);
 
     toks.push(quote! {
+        /// Internal trait for Xross metadata.
         pub trait #trait_name {
+            /// Returns the JSON metadata for the type.
             fn xross_layout() -> String;
         }
 
@@ -23,6 +26,7 @@ pub fn generate_common_ffi(
             }
         }
 
+        /// Frees the memory of a boxed object passed from JVM.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #drop_id(ptr: *mut #name) {
             if !ptr.is_null() {
@@ -33,6 +37,7 @@ pub fn generate_common_ffi(
 
     if is_clonable {
         toks.push(quote! {
+            /// Clones an object and returns a raw pointer to the new instance.
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #clone_id(ptr: *const #name) -> *mut #name {
                 if ptr.is_null() { return std::ptr::null_mut(); }
@@ -45,6 +50,7 @@ pub fn generate_common_ffi(
     }
 
     toks.push(quote! {
+        /// Returns a pointer to the JSON metadata string for this type.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #layout_id() -> *mut std::ffi::c_char {
             let s = <#name as #trait_name>::xross_layout();
@@ -53,6 +59,7 @@ pub fn generate_common_ffi(
     });
 }
 
+/// Generates the layout metadata logic for a struct.
 pub fn generate_struct_layout(s: &syn::ItemStruct) -> proc_macro2::TokenStream {
     let name = &s.ident;
     let mut field_parts = Vec::new();
@@ -78,6 +85,7 @@ pub fn generate_struct_layout(s: &syn::ItemStruct) -> proc_macro2::TokenStream {
     }
 }
 
+/// Generates the layout metadata logic for an enum.
 pub fn generate_enum_layout(e: &syn::ItemEnum) -> proc_macro2::TokenStream {
     let name = &e.ident;
     let mut variant_specs = Vec::new();

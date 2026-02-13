@@ -3,9 +3,8 @@ package org.xross.structures
 import kotlinx.serialization.Serializable
 
 /**
- * Rust側の所有権モデルに対応するメソッドの実行タイプ
+ * Metadata for a method to be bridged from Rust to Kotlin.
  */
-
 @Serializable
 data class XrossMethod(
     val name: String,

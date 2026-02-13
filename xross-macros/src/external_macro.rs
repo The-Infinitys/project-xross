@@ -4,10 +4,10 @@ use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, FnArg, Pat, ReturnType, Signature, Token, Type};
+use syn::{FnArg, Pat, ReturnType, Signature, Token, Type, parse_macro_input};
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType, XrossOpaque,
-    XrossType,
+    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType,
+    XrossOpaque, XrossType,
 };
 
 struct ExternalClassInput {
@@ -21,7 +21,7 @@ impl Parse for ExternalClassInput {
         let package = input.parse::<syn::LitStr>()?.value();
         input.parse::<Token![,]>()?;
         let class_name = input.parse::<syn::Ident>()?;
-        let is_clonable = if input.peek(Token![,] ) {
+        let is_clonable = if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             input.parse::<syn::LitBool>()?.value
         } else {
@@ -349,28 +349,26 @@ pub fn impl_external_method(input: proc_macro::TokenStream) -> proc_macro::Token
                 quote! { Box::into_raw(Box::new(#inner_call)) as *mut std::ffi::c_void },
             ),
         },
-        XrossType::Option(inner) => {
-            match &**inner {
-                XrossType::String => (
-                    quote! { *mut std::ffi::c_char },
-                    quote! {
-                        match #inner_call {
-                            Some(s) => std::ffi::CString::new(s).unwrap_or_default().into_raw(),
-                            None => std::ptr::null_mut(),
-                        }
-                    },
-                ),
-                _ => (
-                    quote! { *mut std::ffi::c_void },
-                    quote! {
-                        match #inner_call {
-                            Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
-                            None => std::ptr::null_mut(),
-                        }
-                    },
-                ),
-            }
-        }
+        XrossType::Option(inner) => match &**inner {
+            XrossType::String => (
+                quote! { *mut std::ffi::c_char },
+                quote! {
+                    match #inner_call {
+                        Some(s) => std::ffi::CString::new(s).unwrap_or_default().into_raw(),
+                        None => std::ptr::null_mut(),
+                    }
+                },
+            ),
+            _ => (
+                quote! { *mut std::ffi::c_void },
+                quote! {
+                    match #inner_call {
+                        Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
+                        None => std::ptr::null_mut(),
+                    }
+                },
+            ),
+        },
         XrossType::Result { ok, err } => {
             let gen_ptr = |ty: &XrossType, val_ident: TokenStream| match ty {
                 XrossType::String => quote! {

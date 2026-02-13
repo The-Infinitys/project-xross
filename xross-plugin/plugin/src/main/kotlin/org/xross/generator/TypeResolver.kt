@@ -19,6 +19,7 @@ class TypeResolver(
                     val fqn = def.signature
                     shortNameToFqn.getOrPut(name) { mutableSetOf() }.add(fqn)
                 } catch (e: Exception) {
+                    println("Failed to parse $file: ${e.message}")
                     // Ignore malformed JSON during scanning
                 }
             }

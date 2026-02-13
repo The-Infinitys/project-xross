@@ -4,14 +4,21 @@ import com.squareup.kotlinpoet.*
 import java.io.File
 import java.lang.foreign.MemorySegment
 
+/**
+ * Generates the common runtime components for Xross in Kotlin.
+ */
 object RuntimeGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
+    /**
+     * Generates the XrossRuntime.kt file containing core exceptions and helpers.
+     */
     fun generate(outputDir: File, basePackage: String) {
         val pkg = "$basePackage.xross.runtime"
 
         // --- XrossException ---
         val xrossException = TypeSpec.classBuilder("XrossException")
+            .addKdoc("Exception thrown by Xross during bridged operations.")
             .superclass(Throwable::class)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
@@ -23,6 +30,7 @@ object RuntimeGenerator {
 
         // --- AliveFlag ---
         val aliveFlag = TypeSpec.classBuilder("AliveFlag")
+            .addKdoc("A flag used to track the validity of a bridged object and prevent use-after-free.")
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("initial", Boolean::class)
@@ -36,15 +44,18 @@ object RuntimeGenerator {
             )
             .addProperty(
                 PropertySpec.builder("isValid", Boolean::class)
+                    .addKdoc("Returns true if the object is still valid and has not been dropped.")
                     .getter(FunSpec.getterBuilder().addStatement("return _isValid.get() && (parent?.isValid ?: true)").build())
                     .build(),
             )
             .addFunction(
                 FunSpec.builder("invalidate")
+                    .addKdoc("Invalidates the flag.")
                     .addStatement("_isValid.set(false)").build(),
             )
             .addFunction(
                 FunSpec.builder("tryInvalidate")
+                    .addKdoc("Tries to invalidate the flag. Returns true if it was valid before this call.")
                     .returns(Boolean::class)
                     .addStatement("return _isValid.compareAndSet(true, false)").build(),
             )
@@ -52,6 +63,7 @@ object RuntimeGenerator {
 
         // --- FfiHelpers ---
         val ffiHelpers = TypeSpec.objectBuilder("FfiHelpers")
+            .addKdoc("Internal helpers for FFI operations.")
             .addFunction(
                 FunSpec.builder("resolveFieldSegment")
                     .addParameter("parent", MEMORY_SEGMENT)
@@ -84,6 +96,7 @@ object RuntimeGenerator {
 
         // --- XrossAsync ---
         val xrossAsync = TypeSpec.objectBuilder("XrossAsync")
+            .addKdoc("Helpers for asynchronous operations bridging Rust Futures to Kotlin Suspend functions.")
             .addFunction(
                 FunSpec.builder("awaitFuture")
                     .addModifiers(KModifier.SUSPEND)

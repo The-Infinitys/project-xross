@@ -139,7 +139,7 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                             XrossType::Option(_inner) => {
                                 let raw_ty = &pat_type.ty;
                                 c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-                                
+
                                 let inner_rust_ty = extract_inner_type(raw_ty);
                                 conversion_logic.push(quote! {
                                     let #arg_ident = if #arg_ident.is_null() {

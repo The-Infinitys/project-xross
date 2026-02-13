@@ -6,6 +6,9 @@ import org.gradle.api.tasks.SourceSetContainer
 import java.io.File
 import javax.inject.Inject
 
+/**
+ * Gradle plugin for generating Kotlin bindings from Rust Xross metadata.
+ */
 @Suppress("unused")
 class XrossPlugin
 @Inject

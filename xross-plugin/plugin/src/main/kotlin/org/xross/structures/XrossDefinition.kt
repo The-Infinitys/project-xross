@@ -5,6 +5,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 
+/**
+ * Represents a type definition received from Rust.
+ */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 @JsonClassDiscriminator("kind")
@@ -17,6 +20,9 @@ sealed class XrossDefinition {
     abstract val docs: List<String>
     abstract val isCopy: Boolean
 
+    /**
+     * A standard Rust struct.
+     */
     @Serializable
     @SerialName("struct")
     data class Struct(
@@ -30,6 +36,9 @@ sealed class XrossDefinition {
         override val isCopy: Boolean = false,
     ) : XrossDefinition()
 
+    /**
+     * A Rust enum.
+     */
     @Serializable
     @SerialName("enum")
     data class Enum(
@@ -43,6 +52,9 @@ sealed class XrossDefinition {
         override val isCopy: Boolean = false,
     ) : XrossDefinition()
 
+    /**
+     * An opaque type that is only accessible via pointers.
+     */
     @Serializable
     @SerialName("opaque")
     data class Opaque(
@@ -51,7 +63,6 @@ sealed class XrossDefinition {
         override val packageName: String,
         override val name: String,
         val fields: List<XrossField> = emptyList(),
-        // 中身は公開されないため、メソッドやドキュメントは最小限（あるいは無し）
         override val methods: List<XrossMethod> = emptyList(),
         override val docs: List<String> = emptyList(),
         val isClonable: Boolean = true,

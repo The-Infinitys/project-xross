@@ -9,6 +9,9 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.*
 import org.xross.structures.XrossType
 
+/**
+ * Custom serializer for [XrossType] to handle its polymorphic nature and recursive structure in JSON.
+ */
 object XrossTypeSerializer : KSerializer<XrossType> {
     override val descriptor: SerialDescriptor =
         PrimitiveSerialDescriptor("XrossType", PrimitiveKind.STRING)

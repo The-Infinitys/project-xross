@@ -5,12 +5,21 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import org.xross.structures.XrossDefinition
 import java.io.File
 
+/**
+ * Utility functions for code generation.
+ */
 object GeneratorUtils {
     private val MEMORY_SEGMENT = ClassName("java.lang.foreign", "MemorySegment")
     private val ARENA = ClassName("java.lang.foreign", "Arena")
-    fun isPureEnum(meta: XrossDefinition): Boolean =
-        meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
 
+    /**
+     * Returns true if the definition is a "pure" enum (one without fields in its variants).
+     */
+    fun isPureEnum(meta: XrossDefinition): Boolean = meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
+
+    /**
+     * Resolves the [ClassName] for a given signature.
+     */
     fun getClassName(
         signature: String,
         basePackage: String,
@@ -30,7 +39,7 @@ object GeneratorUtils {
     }
 
     /**
-     * Kotlin においてデフォルト（省略可能）な public 修飾子を正規表現で一括削除する。
+     * Removes redundant 'public' modifiers from Kotlin code string.
      */
     fun cleanupPublic(content: String): String {
         val keywords =
@@ -58,6 +67,9 @@ object GeneratorUtils {
         return content.replace(regex, "")
     }
 
+    /**
+     * Writes a [FileSpec] to disk, applying public modifier cleanup.
+     */
     fun writeToDisk(
         fileSpec: FileSpec,
         outputDir: File,
@@ -68,6 +80,9 @@ object GeneratorUtils {
         fileDir.resolve("${fileSpec.name}.kt").writeText(content)
     }
 
+    /**
+     * Helper to write a [TypeSpec] to disk.
+     */
     fun writeToDisk(
         typeSpec: TypeSpec,
         pkg: String,
@@ -83,27 +98,31 @@ object GeneratorUtils {
         writeToDisk(fileSpec, outputDir)
     }
 
-    fun buildOptimisticReadGetter(kType: TypeName, readCode: CodeBlock): FunSpec {
-        return FunSpec.getterBuilder().addCode(
-            CodeBlock.builder()
-                .addStatement("var stamp = this.sl.tryOptimisticRead()")
-                .addStatement("var res: %T", kType)
-                .add("\n// Optimistic read\n")
-                .add(readCode)
-                .beginControlFlow("if (!this.sl.validate(stamp))")
-                .addStatement("stamp = this.sl.readLock()")
-                .beginControlFlow("try")
-                .add("\n// Pessimistic read\n")
-                .add(readCode)
-                .nextControlFlow("finally")
-                .addStatement("this.sl.unlockRead(stamp)")
-                .endControlFlow()
-                .endControlFlow()
-                .addStatement("return res")
-                .build(),
-        ).build()
-    }
+    /**
+     * Builds a getter with optimistic read locking using [StampedLock].
+     */
+    fun buildOptimisticReadGetter(kType: TypeName, readCode: CodeBlock): FunSpec = FunSpec.getterBuilder().addCode(
+        CodeBlock.builder()
+            .addStatement("var stamp = this.sl.tryOptimisticRead()")
+            .addStatement("var res: %T", kType)
+            .add("\n// Optimistic read\n")
+            .add(readCode)
+            .beginControlFlow("if (!this.sl.validate(stamp))")
+            .addStatement("stamp = this.sl.readLock()")
+            .beginControlFlow("try")
+            .add("\n// Pessimistic read\n")
+            .add(readCode)
+            .nextControlFlow("finally")
+            .addStatement("this.sl.unlockRead(stamp)")
+            .endControlFlow()
+            .endControlFlow()
+            .addStatement("return res")
+            .build(),
+    ).build()
 
+    /**
+     * Adds logic to resolve a Rust string from a [MemorySegment].
+     */
     fun addRustStringResolution(body: CodeBlock.Builder, call: Any, resultVar: String = "str", isAssignment: Boolean = false, shouldFree: Boolean = true) {
         val resRawName = if (call is String && call.endsWith("Raw")) call else "${resultVar}RawInternal"
         if (call is String && call == resRawName) {
@@ -122,12 +141,18 @@ object GeneratorUtils {
         }
     }
 
+    /**
+     * Returns the type for the factory method return value.
+     */
     fun getFactoryTripleType(basePackage: String): TypeName {
         val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
         val arenaPair = Pair::class.asClassName().parameterizedBy(ARENA, ARENA.copy(nullable = true))
         return Triple::class.asClassName().parameterizedBy(MEMORY_SEGMENT, arenaPair, aliveFlagType)
     }
 
+    /**
+     * Adds the body for a factory method.
+     */
     fun addFactoryBody(
         body: CodeBlock.Builder,
         basePackage: String,
@@ -145,7 +170,7 @@ object GeneratorUtils {
             "if (resRaw == %T.NULL) throw %T(%S)",
             MEMORY_SEGMENT,
             RuntimeException::class.asTypeName(),
-            "Fail"
+            "Fail",
         )
         body.addStatement(
             "val res = resRaw.reinterpret(%L, newAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
@@ -154,6 +179,9 @@ object GeneratorUtils {
         )
     }
 
+    /**
+     * Builds the base for a 'fromPointer' method.
+     */
     fun buildFromPointerBase(
         name: String,
         returnType: TypeName,

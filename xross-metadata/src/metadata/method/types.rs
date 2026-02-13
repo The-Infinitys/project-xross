@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// Represents the type of a method based on its receiver.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum XrossMethodType {
-    /// staticな関数 (selfを取らない)
+    /// A static function that does not take a receiver (self).
     Static,
-    /// &self (不変参照)
+    /// An instance method that takes an immutable reference to self (&self).
     ConstInstance,
-    /// &mut self (可変参照)
+    /// An instance method that takes a mutable reference to self (&mut self).
     MutInstance,
-    /// self (所有権を消費する。呼んだ後はJava側のハンドルを無効化する必要がある)
+    /// An instance method that consumes ownership of self.
+    /// The handle on the JVM side must be invalidated after this call.
     OwnedInstance,
 }

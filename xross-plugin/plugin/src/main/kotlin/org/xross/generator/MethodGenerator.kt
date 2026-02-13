@@ -8,11 +8,89 @@ import org.xross.structures.*
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
 
+/**
+ * Generates Kotlin methods that wrap native Rust functions using Java FFM.
+ */
 object MethodGenerator {
     private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
     private val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
+    /**
+     * Encapsulates common logic for resource construction and AliveFlag management.
+     */
+    fun CodeBlock.Builder.addResourceConstruction(
+        inner: XrossType,
+        resRaw: String,
+        sizeExpr: CodeBlock,
+        fromPointerExpr: CodeBlock,
+        dropExpr: CodeBlock,
+        flagType: ClassName,
+    ) {
+        if (inner.isOwned) {
+            addStatement("val retAutoArena = Arena.ofAuto()")
+            addStatement("val retOwnerArena = Arena.ofAuto()")
+            addStatement("val flag = %T(true)", flagType)
+            // reinterpretとドロップロジックの統合
+            addStatement(
+                "val res = %L.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
+                resRaw,
+                sizeExpr,
+                dropExpr,
+            )
+            addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
+        } else {
+            // 非所有(Ownedでない)場合は既存のArenaを流用
+            addStatement(
+                "%L(%L, this.autoArena, sharedFlag = %T(true, this.aliveFlag))",
+                fromPointerExpr,
+                resRaw,
+                flagType,
+            )
+        }
+    }
+
+    /**
+     * Resolves Ok/Err variants for Result types.
+     */
+    private fun CodeBlock.Builder.addResultVariantResolution(
+        type: XrossType,
+        ptrName: String,
+        targetTypeName: TypeName,
+        selfType: ClassName,
+        basePackage: String,
+        dropHandleName: String = "dropHandle",
+    ) {
+        val (sizeExpr, dropExpr, fromPointerExpr) = PropertyGenerator.compareExprs(
+            targetTypeName,
+            selfType,
+            dropHandleName,
+        )
+        val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+
+        beginControlFlow("run")
+        when (type) {
+            is XrossType.Object -> {
+                addResourceConstruction(type, ptrName, sizeExpr, fromPointerExpr, dropExpr, flagType)
+            }
+
+            is XrossType.RustString -> {
+                GeneratorUtils.addRustStringResolution(this, ptrName)
+                addStatement("str")
+            }
+
+            else -> {
+                addStatement("val v = %L.get(%M, 0)", ptrName, type.layoutMember)
+                addStatement("%L.invokeExact(%L)", dropExpr, ptrName)
+                addStatement("v")
+            }
+        }
+        endControlFlow()
+    }
+
+    /**
+     * Generates Kotlin methods for all methods defined in the metadata.
+     */
     fun generateMethods(
         classBuilder: TypeSpec.Builder,
         companionBuilder: TypeSpec.Builder,
@@ -60,7 +138,10 @@ object MethodGenerator {
             }
 
             method.args.forEach { arg ->
-                funBuilder.addParameter(arg.name.toCamelCase().escapeKotlinKeyword(), resolveReturnType(arg.ty, basePackage))
+                funBuilder.addParameter(
+                    arg.name.toCamelCase().escapeKotlinKeyword(),
+                    resolveReturnType(arg.ty, basePackage),
+                )
             }
 
             val body = CodeBlock.builder()
@@ -85,12 +166,17 @@ object MethodGenerator {
                         argPrep.addStatement("val ${name}Memory = this.autoArena.allocateFrom($name)")
                         callArgs.add(CodeBlock.of("${name}Memory"))
                     }
+
                     is XrossType.Object -> {
-                        argPrep.beginControlFlow("if ($name.segment == %T.NULL || !$name.aliveFlag.isValid)", MEMORY_SEGMENT)
+                        argPrep.beginControlFlow(
+                            "if ($name.segment == %T.NULL || !$name.aliveFlag.isValid)",
+                            MEMORY_SEGMENT,
+                        )
                         argPrep.addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Arg invalid")
                         argPrep.endControlFlow()
                         callArgs.add(CodeBlock.of("$name.segment"))
                     }
+
                     is XrossType.Bool -> callArgs.add(CodeBlock.of("if ($name) 1.toByte() else 0.toByte()"))
                     else -> callArgs.add(CodeBlock.of("%L", name))
                 }
@@ -106,7 +192,11 @@ object MethodGenerator {
 
             val handleName = "${method.name.toCamelCase()}Handle"
             val call = if (method.ret is XrossType.Result) {
-                CodeBlock.of("$handleName.invokeExact(this.autoArena as %T, %L)", ClassName("java.lang.foreign", "SegmentAllocator"), callArgs.joinToCode(", "))
+                CodeBlock.of(
+                    "$handleName.invokeExact(this.autoArena as %T, %L)",
+                    ClassName("java.lang.foreign", "SegmentAllocator"),
+                    callArgs.joinToCode(", "),
+                )
             } else {
                 CodeBlock.of("$handleName.invokeExact(%L)", callArgs.joinToCode(", "))
             }
@@ -134,7 +224,14 @@ object MethodGenerator {
         else -> type.kotlinType
     }
 
-    private fun applyMethodCall(method: XrossMethod, call: CodeBlock, returnType: TypeName, selfType: ClassName, basePackage: String, meta: XrossDefinition): CodeBlock {
+    private fun applyMethodCall(
+        method: XrossMethod,
+        call: CodeBlock,
+        returnType: TypeName,
+        selfType: ClassName,
+        basePackage: String,
+        meta: XrossDefinition,
+    ): CodeBlock {
         val isVoid = method.ret is XrossType.Void
         val useLock = method.safety == XrossThreadSafety.Lock && method.methodType != XrossMethodType.Static
         val body = CodeBlock.builder()
@@ -183,140 +280,101 @@ object MethodGenerator {
         return body.build()
     }
 
-    private fun generateInvokeLogic(method: XrossMethod, call: CodeBlock, returnType: TypeName, selfType: ClassName, basePackage: String): CodeBlock {
+    private fun generateInvokeLogic(
+        method: XrossMethod,
+        call: CodeBlock,
+        returnType: TypeName,
+        selfType: ClassName,
+        basePackage: String,
+    ): CodeBlock {
         val body = CodeBlock.builder()
+        val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
         val runtimePkg = "$basePackage.xross.runtime"
+
+        // ヘルパー：型が自分自身(Self)かどうかでアクセスするプロパティ/関数を切り替える
+        fun getExprs(type: TypeName) = Triple(
+            if (type == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", type),
+            if (type == selfType) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", type),
+            if (type == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", type),
+        )
+
         when (val retTy = method.ret) {
             is XrossType.Void -> {
                 body.addStatement("%L as Unit", call)
             }
+
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
                 GeneratorUtils.addRustStringResolution(body, call)
                 body.addStatement("str")
                 body.endControlFlow()
             }
-            is XrossType.Optional -> {
-                body.beginControlFlow("run")
-                body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
-                body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT).addStatement("null").nextControlFlow("else")
-                val isSelf = returnType.copy(nullable = false) == selfType
-                val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", returnType.copy(nullable = false))
-                val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-                when (val inner = retTy.inner) {
-                    is XrossType.Object -> {
-                        val innerType = returnType.copy(nullable = false)
-                        val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", innerType)
-                        val dropExpr = if (isSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", innerType)
 
-                        if (inner.isOwned) {
-                            body.addStatement("val retAutoArena = Arena.ofAuto()")
-                            body.addStatement("val retOwnerArena = Arena.ofAuto()")
-                            body.addStatement("val flag = %T(true)", flagType)
-                            body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", sizeExpr, dropExpr)
-                            body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
-                        } else {
-                            body.addStatement("%L(resRaw, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
-                        }
-                    }
-                    is XrossType.RustString -> {
-                        GeneratorUtils.addRustStringResolution(body, "resRaw")
-                        body.addStatement("str")
-                    }
-                    else -> body.addStatement("val valRes = resRaw.get(%M, 0)\ndropHandle.invokeExact(resRaw)\nvalRes", inner.layoutMember)
-                }
-                body.endControlFlow().endControlFlow()
-            }
             is XrossType.Object -> {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
-                body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT).addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "NULL").endControlFlow()
-                val isSelf = returnType == selfType
-
-                val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", returnType)
-                val dropExpr = if (isSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", returnType)
-                val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", returnType)
-                val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-
-                if (retTy.isOwned) {
-                    body.addStatement("val retAutoArena = Arena.ofAuto()")
-                    body.addStatement("val retOwnerArena = Arena.ofAuto()")
-                    body.addStatement("val flag = %T(true)", flagType)
-                    body.addStatement("val res = resRaw.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", sizeExpr, dropExpr)
-                    body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", fromPointerExpr)
-                } else {
-                    body.addStatement("%L(resRaw, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
-                }
-                body.endControlFlow()
+                body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
+                    .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
+                body.nextControlFlow("else")
+                val (size, drop, from) = getExprs(returnType)
+                body.addResourceConstruction(retTy, "resRaw", size, from, drop, flagType)
+                body.endControlFlow().endControlFlow()
             }
+
+            is XrossType.Optional -> {
+                body.beginControlFlow("run")
+                body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+                body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
+                    .addStatement("null")
+                body.nextControlFlow("else")
+                // Optionalの中身(inner)を解決
+                val innerType = resolveReturnType(retTy.inner, basePackage)
+                body.addResultVariantResolution(retTy.inner, "resRaw", innerType, selfType, basePackage)
+                body.endControlFlow().endControlFlow()
+            }
+
             is XrossType.Result -> {
                 body.beginControlFlow("run")
                 body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
-                body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()",
-                    MemberName(ClassName("java.lang.foreign", "ValueLayout"), "JAVA_BYTE")
-                )
+                // Resultのレイアウト: [1 byte: isOk, 7 bytes: padding, 8 bytes: pointer]
+                body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", MemberName(VAL_LAYOUT, "JAVA_BYTE"))
                 body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)
+
                 body.beginControlFlow("if (isOk)")
-
-                val okType = resolveReturnType(retTy.ok, basePackage)
-                val isOkSelf = okType == selfType
-                val okSizeExpr = if (isOkSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", okType)
-                val okDropExpr = if (isOkSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", okType)
-                val okFromPointerExpr = if (isOkSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", okType)
-                val okFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-
-                body.beginControlFlow("val okVal = run")
-                when (val okTy = retTy.ok) {
-                    is XrossType.Object -> {
-                        body.addStatement("val retAutoArena = Arena.ofAuto()")
-                        body.addStatement("val retOwnerArena = Arena.ofAuto()")
-                        body.addStatement("val flag = %T(true)", okFlagType)
-                        body.addStatement("val res = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", okSizeExpr, okDropExpr)
-                        body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", okFromPointerExpr)
-                    }
-                    is XrossType.RustString -> {
-                        GeneratorUtils.addRustStringResolution(body, "ptr")
-                        body.addStatement("str")
-                    }
-                    else -> body.addStatement("val v = ptr.get(%M, 0)\ndropHandle.invokeExact(ptr)\nv", okTy.layoutMember)
-                }
-                body.endControlFlow()
+                body.add("val okVal = ")
+                body.addResultVariantResolution(
+                    retTy.ok,
+                    "ptr",
+                    resolveReturnType(retTy.ok, basePackage),
+                    selfType,
+                    basePackage,
+                )
                 body.addStatement("Result.success(okVal)")
 
                 body.nextControlFlow("else")
-
-                val errType = resolveReturnType(retTy.err, basePackage)
-                val isErrSelf = errType == selfType
-                val errSizeExpr = if (isErrSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", errType)
-                val errDropExpr = if (isErrSelf) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", errType)
-                val errFromPointerExpr = if (isErrSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", errType)
-                val errFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-
-                body.beginControlFlow("val errVal = run")
-                when (val errTy = retTy.err) {
-                    is XrossType.Object -> {
-                        body.addStatement("val retAutoArena = Arena.ofAuto()")
-                        body.addStatement("val retOwnerArena = Arena.ofAuto()")
-                        body.addStatement("val flag = %T(true)", errFlagType)
-                        body.addStatement("val res = ptr.reinterpret(%L, retAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }", errSizeExpr, errDropExpr)
-                        body.addStatement("%L(res, retAutoArena, confinedArena = retOwnerArena, sharedFlag = flag)", errFromPointerExpr)
-                    }
-                    is XrossType.RustString -> {
-                        GeneratorUtils.addRustStringResolution(body, "ptr")
-                        body.addStatement("str")
-                    }
-                    else -> body.addStatement("val v = ptr.get(%M, 0)\ndropHandle.invokeExact(ptr)\nv", errTy.layoutMember)
-                }
-                body.endControlFlow()
+                body.add("val errVal = ")
+                body.addResultVariantResolution(
+                    retTy.err,
+                    "ptr",
+                    resolveReturnType(retTy.err, basePackage),
+                    selfType,
+                    basePackage,
+                )
                 body.addStatement("Result.failure(%T(errVal))", ClassName(runtimePkg, "XrossException"))
                 body.endControlFlow()
                 body.endControlFlow()
             }
-            else -> body.addStatement("%L as %T", call, returnType)
+            // 数値型やBooleanなどのプリミティブ型
+            else -> {
+                body.addStatement("%L as %T", call, returnType)
+            }
         }
         return body.build()
     }
 
+    /**
+     * Generates a public constructor for a struct.
+     */
     private fun generatePublicConstructor(
         classBuilder: TypeSpec.Builder,
         companionBuilder: TypeSpec.Builder,
@@ -326,7 +384,14 @@ object MethodGenerator {
         val tripleType = GeneratorUtils.getFactoryTripleType(basePackage)
 
         val factoryBuilder = FunSpec.builder("xrossNewInternal").addModifiers(KModifier.PRIVATE)
-            .addParameters(method.args.map { ParameterSpec.builder("argOf" + it.name.toCamelCase(), resolveReturnType(it.ty, basePackage)).build() })
+            .addParameters(
+                method.args.map {
+                    ParameterSpec.builder(
+                        "argOf" + it.name.toCamelCase(),
+                        resolveReturnType(it.ty, basePackage),
+                    ).build()
+                },
+            )
             .returns(tripleType)
 
         val body = CodeBlock.builder()
@@ -338,6 +403,7 @@ object MethodGenerator {
                     body.addStatement("val ${name}Memory = %T.ofAuto().allocateFrom($name)", Arena::class)
                     callArgs.add(CodeBlock.of("${name}Memory"))
                 }
+
                 is XrossType.Bool -> callArgs.add(CodeBlock.of("if ($name) 1.toByte() else 0.toByte()"))
                 is XrossType.Object -> callArgs.add(CodeBlock.of("$name.segment"))
                 else -> callArgs.add(CodeBlock.of("%L", name))
@@ -351,15 +417,35 @@ object MethodGenerator {
             CodeBlock.of("STRUCT_SIZE"),
             CodeBlock.of("dropHandle"),
         )
-        body.addStatement("return %T(res, %T(newAutoArena, newOwnerArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
+        body.addStatement(
+            "return %T(res, %T(newAutoArena, newOwnerArena), flag)",
+            Triple::class.asTypeName(),
+            Pair::class.asTypeName(),
+        )
 
         factoryBuilder.addCode(body.build())
         companionBuilder.addFunction(factoryBuilder.build())
 
-        classBuilder.addFunction(FunSpec.constructorBuilder().addModifiers(KModifier.PRIVATE).addParameter("p", tripleType).callThisConstructor(CodeBlock.of("p.first"), CodeBlock.of("p.second.first"), CodeBlock.of("p.second.second"), CodeBlock.of("p.third")).build())
         classBuilder.addFunction(
-            FunSpec.constructorBuilder().addParameters(method.args.map { ParameterSpec.builder("argOf" + it.name.toCamelCase(), resolveReturnType(it.ty, basePackage)).build() })
-                .callThisConstructor(CodeBlock.of("xrossNewInternal(${method.args.joinToString(", ") { "argOf" + it.name.toCamelCase() }})")).build(),
+            FunSpec.constructorBuilder().addModifiers(KModifier.PRIVATE).addParameter("p", tripleType)
+                .callThisConstructor(
+                    CodeBlock.of("p.first"),
+                    CodeBlock.of("p.second.first"),
+                    CodeBlock.of("p.second.second"),
+                    CodeBlock.of("p.third"),
+                ).build(),
+        )
+        classBuilder.addFunction(
+            FunSpec.constructorBuilder().addParameters(
+                method.args.map {
+                    ParameterSpec.builder(
+                        "argOf" + it.name.toCamelCase(),
+                        resolveReturnType(it.ty, basePackage),
+                    ).build()
+                },
+            )
+                .callThisConstructor(CodeBlock.of("xrossNewInternal(${method.args.joinToString(", ") { "argOf" + it.name.toCamelCase() }})"))
+                .build(),
         )
     }
 }
