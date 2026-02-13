@@ -1,13 +1,10 @@
-use crate::codegen::ffi::{gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping, resolve_return_type};
+use crate::codegen::ffi::{gen_ret_wrapping, process_method_args, resolve_return_type};
 use crate::metadata::{load_definition, save_definition};
-use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, ImplItem, ItemImpl, Pat, Type};
-use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType,
-};
+use syn::{ImplItem, ItemImpl, Type};
+use xross_metadata::{Ownership, ThreadSafety, XrossDefinition, XrossMethod, XrossMethodType};
 
 pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) -> TokenStream {
     let type_name_ident = if let Type::Path(tp) = &*input_impl.self_ty {
@@ -58,43 +55,16 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
             let mut call_args = Vec::new();
             let mut conversion_logic = Vec::new();
 
-            for input in &method.sig.inputs {
-                match input {
-                    FnArg::Receiver(receiver) => {
-                        let (m_ty, c_arg, call_arg) = gen_receiver_logic(receiver, type_name_ident);
-                        method_type = m_ty;
-                        c_args.push(c_arg);
-                        call_args.push(call_arg);
-                    }
-                    FnArg::Typed(pat_type) => {
-                        let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
-                            id.ident.to_string()
-                        } else {
-                            "arg".into()
-                        };
-                        let arg_ident = format_ident!("{}", arg_name);
-                        let xross_ty = resolve_type_with_attr(
-                            &pat_type.ty,
-                            &pat_type.attrs,
-                            &package_name,
-                            Some(type_name_ident),
-                        );
-
-                        args_meta.push(XrossField {
-                            name: arg_name.clone(),
-                            ty: xross_ty.clone(),
-                            safety: extract_safety_attr(&pat_type.attrs, ThreadSafety::Lock),
-                            docs: vec![],
-                        });
-
-                        let (c_arg, conv, call_arg) =
-                            gen_arg_conversion(&pat_type.ty, &arg_ident, &xross_ty);
-                        c_args.push(c_arg);
-                        conversion_logic.push(conv);
-                        call_args.push(call_arg);
-                    }
-                }
-            }
+            process_method_args(
+                &method.sig.inputs,
+                &package_name,
+                type_name_ident,
+                &mut c_args,
+                &mut conversion_logic,
+                &mut call_args,
+                &mut args_meta,
+                &mut method_type,
+            );
 
             let ret_ty = if is_new {
                 let sig = if package_name.is_empty() {

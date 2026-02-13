@@ -1,6 +1,6 @@
 use crate::codegen::ffi::{
-    add_clone_method, gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping,
-    generate_enum_aux_ffi, generate_property_accessors, resolve_return_type,
+    add_clone_method, gen_ret_wrapping, generate_common_ffi, generate_enum_aux_ffi,
+    generate_property_accessors, process_method_args, resolve_return_type,
 };
 use crate::metadata::save_definition;
 use crate::types::resolver::resolve_type_with_attr;
@@ -8,7 +8,7 @@ use crate::utils::*;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    braced, parenthesized, parse_macro_input, FnArg, Pat, ReturnType, Signature, Token, Type,
+    braced, parenthesized, parse_macro_input, FnArg, ReturnType, Signature, Token, Type,
 };
 use xross_metadata::{
     ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
@@ -258,39 +258,16 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         let mut call_args = Vec::new();
         let mut conversion_logic = Vec::new();
 
-        for input_arg in &sig.inputs {
-            match input_arg {
-                FnArg::Receiver(receiver) => {
-                    let (m_ty, c_arg, call_arg) = gen_receiver_logic(receiver, &type_ident);
-                    method_type = m_ty;
-                    c_args.push(c_arg);
-                    call_args.push(call_arg);
-                }
-                FnArg::Typed(pat_type) => {
-                    let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
-                        id.ident.to_string()
-                    } else {
-                        "arg".into()
-                    };
-                    let arg_ident = format_ident!("{}", arg_name);
-                    let xross_ty =
-                        resolve_type_with_attr(&pat_type.ty, &[], &package, Some(&type_ident));
-
-                    args_meta.push(XrossField {
-                        name: arg_name.clone(),
-                        ty: xross_ty.clone(),
-                        safety: ThreadSafety::Lock,
-                        docs: vec![],
-                    });
-
-                    let (c_arg, conv, call_arg) =
-                        gen_arg_conversion(&pat_type.ty, &arg_ident, &xross_ty);
-                    c_args.push(c_arg);
-                    conversion_logic.push(conv);
-                    call_args.push(call_arg);
-                }
-            }
-        }
+        process_method_args(
+            &sig.inputs,
+            &package,
+            &type_ident,
+            &mut c_args,
+            &mut conversion_logic,
+            &mut call_args,
+            &mut args_meta,
+            &mut method_type,
+        );
 
         let ret_ty = resolve_return_type(&sig.output, &[], &package, &type_ident);
 
@@ -376,7 +353,8 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                         let f_name_ident = format_ident!("{}", f_name);
                         let f_name_str = f_name.clone();
 
-                        let (c_arg, conv, c_call_arg) = gen_arg_conversion(f_ty, &arg_id, &ty);
+                        let (c_arg, conv, c_call_arg) =
+                            crate::codegen::ffi::gen_arg_conversion(f_ty, &arg_id, &ty);
                         c_param_defs.push(c_arg);
                         internal_conversions.push(conv);
                         call_args.push(quote! { #f_name_ident: #c_call_arg });
@@ -414,7 +392,8 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                         let arg_id = format_ident!("arg_{}", i);
                         let f_name_str = ordinal_name(i);
 
-                        let (c_arg, conv, c_call_arg) = gen_arg_conversion(f_ty, &arg_id, &ty);
+                        let (c_arg, conv, c_call_arg) =
+                            crate::codegen::ffi::gen_arg_conversion(f_ty, &arg_id, &ty);
                         c_param_defs.push(c_arg);
                         internal_conversions.push(conv);
                         call_args.push(c_call_arg);
@@ -529,42 +508,13 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         };
     }
 
-    // Generate Common FFI (drop, clone, layout)
-    let drop_fn = format_ident!("{}_drop", symbol_base);
-    let clone_fn = format_ident!("{}_clone", symbol_base);
-    let layout_fn = format_ident!("{}_layout", symbol_base);
+    generate_common_ffi(
+        &type_ident,
+        &symbol_base,
+        layout_logic,
+        &mut extra_functions,
+        is_clonable,
+    );
 
-    let clone_ffi = if is_clonable {
-        quote! {
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #clone_fn(ptr: *const #type_ident) -> *mut #type_ident {
-                if ptr.is_null() { return std::ptr::null_mut(); }
-                let val_on_stack: #type_ident = std::ptr::read_unaligned(ptr);
-                let cloned_val = val_on_stack.clone();
-                std::mem::forget(val_on_stack);
-                Box::into_raw(Box::new(cloned_val))
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let gen_code = quote! {
-        #(#extra_functions)*
-
-        #clone_ffi
-
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #drop_fn(ptr: *mut #type_ident) {
-            if !ptr.is_null() { drop(unsafe { Box::from_raw(ptr) }); }
-        }
-
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #layout_fn() -> *mut std::ffi::c_char {
-            let s = { #layout_logic };
-            std::ffi::CString::new(s).unwrap().into_raw()
-        }
-    };
-
-    gen_code.into()
+    quote! { #(#extra_functions)* }.into()
 }

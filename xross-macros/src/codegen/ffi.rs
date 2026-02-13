@@ -1,9 +1,12 @@
 use crate::types::resolver::resolve_type_with_attr;
-use crate::utils::extract_inner_type;
+use crate::utils::{extract_inner_type, extract_safety_attr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, Receiver, ReturnType, Type};
-use xross_metadata::{Ownership, ThreadSafety, XrossMethod, XrossMethodType, XrossType};
+use syn::punctuated::Punctuated;
+use syn::{Attribute, FnArg, Pat, Receiver, ReturnType, Type};
+use xross_metadata::{
+    Ownership, ThreadSafety, XrossField, XrossMethod, XrossMethodType, XrossType,
+};
 
 /// Generates common FFI functions for a type, such as drop, clone, and metadata layout retrieval.
 pub fn generate_common_ffi(
@@ -145,6 +148,56 @@ pub fn gen_receiver_logic(
     };
 
     (method_type, c_arg, call_arg)
+}
+
+/// Processes a list of function arguments and generates metadata and FFI tokens.
+pub fn process_method_args(
+    inputs: &Punctuated<FnArg, syn::token::Comma>,
+    package_name: &str,
+    type_name_ident: &syn::Ident,
+    c_args: &mut Vec<TokenStream>,
+    conversion_logic: &mut Vec<TokenStream>,
+    call_args: &mut Vec<TokenStream>,
+    args_meta: &mut Vec<XrossField>,
+    method_type: &mut XrossMethodType,
+) {
+    for input in inputs {
+        match input {
+            FnArg::Receiver(receiver) => {
+                let (m_ty, c_arg, call_arg) = gen_receiver_logic(receiver, type_name_ident);
+                *method_type = m_ty;
+                c_args.push(c_arg);
+                call_args.push(call_arg);
+            }
+            FnArg::Typed(pat_type) => {
+                let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
+                    id.ident.to_string()
+                } else {
+                    "arg".into()
+                };
+                let arg_ident = format_ident!("{}", arg_name);
+                let xross_ty = resolve_type_with_attr(
+                    &pat_type.ty,
+                    &pat_type.attrs,
+                    package_name,
+                    Some(type_name_ident),
+                );
+
+                args_meta.push(XrossField {
+                    name: arg_name.clone(),
+                    ty: xross_ty.clone(),
+                    safety: extract_safety_attr(&pat_type.attrs, ThreadSafety::Lock),
+                    docs: vec![],
+                });
+
+                let (c_arg, conv, call_arg) =
+                    gen_arg_conversion(&pat_type.ty, &arg_ident, &xross_ty);
+                c_args.push(c_arg);
+                conversion_logic.push(conv);
+                call_args.push(call_arg);
+            }
+        }
+    }
 }
 
 /// Adds a standard clone method to the methods list if clonable.
