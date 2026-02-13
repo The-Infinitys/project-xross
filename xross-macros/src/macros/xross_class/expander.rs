@@ -74,6 +74,7 @@ pub fn impl_xross_class(input: XrossClassInput) -> proc_macro::TokenStream {
             name: rust_fn_name.to_string(),
             symbol: ffi_data.symbol_name.clone(),
             method_type: ffi_data.method_type,
+            handle_mode: xross_metadata::HandleMode::Normal,
             safety: ThreadSafety::Lock,
             is_constructor,
             args: ffi_data.args_meta.clone(),
@@ -89,7 +90,14 @@ pub fn impl_xross_class(input: XrossClassInput) -> proc_macro::TokenStream {
         };
         let call_args = &ffi_data.call_args;
         let inner_call = quote! { #type_prefix #rust_fn_name(#(#call_args),*) };
-        write_ffi_function(&ffi_data, &ret_ty, &sig.output, inner_call, &mut extra_functions);
+        write_ffi_function(
+            &ffi_data,
+            &ret_ty,
+            &sig.output,
+            inner_call,
+            xross_metadata::HandleMode::Normal,
+            &mut extra_functions,
+        );
     }
 
     let layout_logic;

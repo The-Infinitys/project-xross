@@ -1,11 +1,13 @@
-use crate::codegen::ffi::{gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping};
+use crate::codegen::ffi::{
+    gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping,
+};
 use crate::utils::extract_safety_attr;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::{FnArg, Pat, ReturnType};
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossField, XrossMethod, XrossMethodType, XrossType,
+    HandleMode, Ownership, ThreadSafety, XrossField, XrossMethod, XrossMethodType, XrossType,
 };
 
 /// Data container for FFI method generation.
@@ -46,6 +48,7 @@ pub fn write_ffi_function(
     ret_ty: &XrossType,
     sig_output: &ReturnType,
     inner_call: TokenStream,
+    handle_mode: HandleMode,
     toks: &mut Vec<TokenStream>,
 ) {
     let (c_ret_type, wrapper_body) = gen_ret_wrapping(ret_ty, sig_output, inner_call);
@@ -53,13 +56,71 @@ pub fn write_ffi_function(
     let c_args = &ffi_data.c_args;
     let conv_logic = &ffi_data.conversion_logic;
 
-    toks.push(quote! {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> #c_ret_type {
-            #(#conv_logic)*
-            #wrapper_body
-        }
-    });
+    if handle_mode == HandleMode::Panicable {
+        let is_already_result = matches!(ret_ty, XrossType::Result { .. });
+
+        let success_return = if is_already_result {
+            quote! { val }
+        } else {
+            // val is already the FFI-wrapped type (e.g., *mut c_char, i32, etc.)
+            // We need to cast it to *mut c_void for XrossResult.ptr
+            let ptr_val = match ret_ty {
+                XrossType::Void => quote! { std::ptr::null_mut() },
+                XrossType::F32 => quote! { val as usize as *mut std::ffi::c_void },
+                XrossType::F64 => quote! { val as usize as *mut std::ffi::c_void },
+                XrossType::I8 | XrossType::I16 | XrossType::I32 | XrossType::I64 |
+                XrossType::U16 | XrossType::ISize | XrossType::USize | XrossType::Bool => {
+                    quote! { val as usize as *mut std::ffi::c_void }
+                }
+                _ => quote! { val as *mut std::ffi::c_void },
+            };
+            quote! {
+                xross_core::XrossResult { is_ok: true, ptr: #ptr_val }
+            }
+        };
+
+        let panic_handling = quote! {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                #wrapper_body
+            }));
+
+            match result {
+                Ok(val) => {
+                    #success_return
+                }
+                Err(panic_err) => {
+                    let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic".to_string()
+                    };
+                    
+                    xross_core::XrossResult {
+                        is_ok: false,
+                        ptr: std::ffi::CString::new(msg).unwrap_or_default().into_raw() as *mut std::ffi::c_void,
+                    }
+                }
+            }
+        };
+
+        toks.push(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> xross_core::XrossResult {
+                #(#conv_logic)*
+                #panic_handling
+            }
+        });
+    } else {
+        toks.push(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> #c_ret_type {
+                #(#conv_logic)*
+                #wrapper_body
+            }
+        });
+    }
 }
 
 /// Processes a list of function arguments.
@@ -119,6 +180,7 @@ pub fn add_clone_method(
         name: "clone".to_string(),
         symbol: format!("{}_clone", symbol_base),
         method_type: XrossMethodType::ConstInstance,
+        handle_mode: HandleMode::Normal,
         is_constructor: false,
         args: vec![],
         ret: XrossType::Object {

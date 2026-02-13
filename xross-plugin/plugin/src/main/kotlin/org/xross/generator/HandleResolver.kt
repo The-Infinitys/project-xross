@@ -2,6 +2,7 @@ package org.xross.generator
 
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.asTypeName
 import com.squareup.kotlinpoet.joinToCode
 import org.xross.generator.FFMConstants.ADDRESS
 import org.xross.generator.FFMConstants.FUNCTION_DESCRIPTOR
@@ -192,17 +193,25 @@ object HandleResolver {
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, args.joinToCode(", "))
             } else {
                 val argsPart = if (args.isEmpty()) CodeBlock.of("") else CodeBlock.of(", %L", args.joinToCode(", "))
-                val retLayout = when (method.ret) {
-                    is XrossType.Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
+                val retLayout = when {
+                    method.handleMode == org.xross.structures.HandleMode.Panicable -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
+                    method.ret is XrossType.Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
                     else -> CodeBlock.of("%M", method.ret.layoutMember)
                 }
                 CodeBlock.of("%T.of(%L%L)", FUNCTION_DESCRIPTOR, retLayout, argsPart)
             }
 
+            val options = if (method.handleMode == org.xross.structures.HandleMode.Critical) {
+                CodeBlock.of(", %T.critical(false)", java.lang.foreign.Linker.Option::class.asTypeName())
+            } else {
+                CodeBlock.of("")
+            }
+
             init.addStatement(
-                "this.${method.name.toCamelCase()}Handle = linker.downcallHandle(lookup.find(%S).get(), %L)",
+                "this.${method.name.toCamelCase()}Handle = linker.downcallHandle(lookup.find(%S).get(), %L%L)",
                 method.symbol,
                 desc,
+                options,
             )
         }
     }

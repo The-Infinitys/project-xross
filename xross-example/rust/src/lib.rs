@@ -183,6 +183,19 @@ impl MyService {
         }
     }
 
+    #[xross_method(critical)]
+    pub fn add_trivial(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
+
+    #[xross_method(panicable)]
+    pub fn cause_panic(&self, should_panic: bool) -> String {
+        if should_panic {
+            panic!("Intentional panic from Rust!");
+        }
+        "No panic today".to_string()
+    }
+
     #[xross_method]
     pub fn execute(&mut self, i: usize) -> i32 {
         let a = self._boxes.len();

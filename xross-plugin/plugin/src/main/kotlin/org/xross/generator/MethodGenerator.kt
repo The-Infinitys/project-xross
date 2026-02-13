@@ -127,7 +127,8 @@ object MethodGenerator {
             body.add(argPrep.build())
 
             val handleName = "${method.name.toCamelCase()}Handle"
-            val call = if (method.ret is XrossType.Result) {
+            val isPanicable = method.handleMode == org.xross.structures.HandleMode.Panicable
+            val call = if (method.ret is XrossType.Result || isPanicable) {
                 CodeBlock.of(
                     "$handleName.invokeExact(this.autoArena as %T, %L)",
                     SegmentAllocator::class,
@@ -140,6 +141,8 @@ object MethodGenerator {
 
             if (needsArena) body.endControlFlow()
             body.nextControlFlow("catch (e: Throwable)")
+            val xrossException = ClassName("$basePackage.xross.runtime", "XrossException")
+            body.addStatement("if (e is %T) throw e", xrossException)
             body.addStatement("throw %T(e)", RuntimeException::class.asTypeName())
             body.endControlFlow()
 
@@ -218,6 +221,7 @@ object MethodGenerator {
         val body = CodeBlock.builder()
         val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
         val runtimePkg = "$basePackage.xross.runtime"
+        val isPanicable = method.handleMode == org.xross.structures.HandleMode.Panicable
 
         // ヘルパー：型が自分自身(Self)かどうかでアクセスするプロパティ/関数を切り替える
         fun getExprs(type: TypeName) = Triple(
@@ -225,6 +229,43 @@ object MethodGenerator {
             if (type == selfType) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", type),
             if (type == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", type),
         )
+
+        if (isPanicable) {
+            body.beginControlFlow("run")
+            body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+            body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
+            body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)
+            body.beginControlFlow("if (!isOk)")
+            body.add("val errVal = ")
+            body.addResultVariantResolution(
+                XrossType.RustString,
+                "ptr",
+                String::class.asTypeName(),
+                selfType,
+                basePackage,
+                "dropHandle",
+            )
+            body.addStatement("throw %T(errVal)", ClassName(runtimePkg, "XrossException"))
+            body.endControlFlow()
+
+            // Success case: resolve the actual return type
+            if (method.ret is XrossType.Void) {
+                body.addStatement("Unit")
+            } else {
+                body.add("val okVal = ")
+                body.addResultVariantResolution(
+                    method.ret,
+                    "ptr",
+                    returnType,
+                    selfType,
+                    basePackage,
+                    "dropHandle",
+                )
+                body.addStatement("okVal")
+            }
+            body.endControlFlow()
+            return body.build()
+        }
 
         when (val retTy = method.ret) {
             is XrossType.Void -> {

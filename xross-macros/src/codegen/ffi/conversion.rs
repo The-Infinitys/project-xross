@@ -169,6 +169,22 @@ pub fn gen_arg_conversion(
     }
 }
 
+/// Helper to generate the pointer representation of a single value for XrossResult.
+pub fn gen_single_value_to_ptr(ty: &XrossType, val_ident: TokenStream) -> TokenStream {
+    match ty {
+        XrossType::String => {
+            quote! { std::ffi::CString::new(#val_ident).unwrap_or_default().into_raw() as *mut std::ffi::c_void }
+        }
+        XrossType::Object { .. } => {
+            quote! { Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void }
+        }
+        XrossType::F32 => quote! { #val_ident.to_bits() as usize as *mut std::ffi::c_void },
+        XrossType::F64 => quote! { #val_ident.to_bits() as usize as *mut std::ffi::c_void },
+        XrossType::Void => quote! { std::ptr::null_mut() },
+        _ => quote! { #val_ident as usize as *mut std::ffi::c_void },
+    }
+}
+
 /// Helper to generate return value wrapping logic.
 pub fn gen_ret_wrapping(
     ret_ty: &XrossType,
@@ -243,19 +259,8 @@ pub fn gen_ret_wrapping(
             ),
         },
         XrossType::Result { ok, err } => {
-            let gen_ptr = |ty: &XrossType, val_ident: TokenStream| match ty {
-                XrossType::String => {
-                    quote! { std::ffi::CString::new(#val_ident).unwrap_or_default().into_raw() as *mut std::ffi::c_void }
-                }
-                XrossType::Object { .. } => {
-                    quote! { Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void }
-                }
-                XrossType::F32 => quote! { #val_ident.to_bits() as usize as *mut std::ffi::c_void },
-                XrossType::F64 => quote! { #val_ident.to_bits() as usize as *mut std::ffi::c_void },
-                _ => quote! { #val_ident as usize as *mut std::ffi::c_void },
-            };
-            let ok_ptr_logic = gen_ptr(ok, quote! { val });
-            let err_ptr_logic = gen_ptr(err, quote! { e });
+            let ok_ptr_logic = gen_single_value_to_ptr(ok, quote! { val });
+            let err_ptr_logic = gen_single_value_to_ptr(err, quote! { e });
             (
                 quote! { xross_core::XrossResult },
                 quote! {

@@ -1,6 +1,36 @@
 use heck::ToSnakeCase;
 use syn::{Attribute, Expr, ExprLit, Lit, Meta, Token};
-use xross_metadata::ThreadSafety;
+use xross_metadata::{HandleMode, ThreadSafety};
+
+pub fn extract_handle_mode(attrs: &[Attribute]) -> HandleMode {
+    let mut is_critical = false;
+    let mut is_panicable = false;
+
+    for attr in attrs {
+        if attr.path().is_ident("xross_method") {
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("critical") {
+                    is_critical = true;
+                } else if meta.path.is_ident("panicable") {
+                    is_panicable = true;
+                }
+                Ok(())
+            });
+        }
+    }
+
+    if is_critical && is_panicable {
+        panic!("'critical' and 'panicable' cannot be used together on the same method.");
+    }
+
+    if is_critical {
+        HandleMode::Critical
+    } else if is_panicable {
+        HandleMode::Panicable
+    } else {
+        HandleMode::Normal
+    }
+}
 
 pub fn extract_is_copy(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {

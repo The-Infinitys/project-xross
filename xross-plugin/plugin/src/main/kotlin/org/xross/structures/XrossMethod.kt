@@ -10,6 +10,7 @@ data class XrossMethod(
     val name: String,
     val symbol: String,
     val methodType: XrossMethodType = XrossMethodType.Static,
+    val handleMode: HandleMode = HandleMode.Normal,
     val isConstructor: Boolean,
     val args: List<XrossField>,
     val ret: XrossType,

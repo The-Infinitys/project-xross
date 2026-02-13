@@ -43,6 +43,7 @@ fun main() {
             executePropertyTest()
             executeComplexFieldTest()
             executeComplexStructPropertyTest()
+            executePanicAndTrivialTest()
 
             if (i % 10 == 0) {
                 println(">>> Completed cycle $i / $repeatCount")
@@ -66,6 +67,34 @@ fun main() {
         println("\n--- Final Analysis after GC ---")
         println(UnknownStruct.displayAnalysis())
     }
+}
+
+fun executePanicAndTrivialTest() {
+    println("\n--- [8] Panicable & Trivial Method Test ---")
+    val service = MyService()
+
+    // 1. Trivial Test
+    val sum = service.addTrivial(10, 20)
+    println("Trivial add(10, 20) = $sum")
+    if (sum != 30) throw RuntimeException("Trivial calculation failed!")
+
+    // 2. Panicable Test (No Panic)
+    val noPanic = service.causePanic(false)
+    println("Panicable causePanic(false) = $noPanic")
+
+    // 3. Panicable Test (With Panic)
+    try {
+        println("Calling causePanic(true) - Expecting panic to be caught...")
+        service.causePanic(true)
+        println("❌ Failure: Panic was NOT caught!")
+    } catch (e: org.example.xross.runtime.XrossException) {
+        println("✅ Success: Caught expected XrossException (Panic): ${e.error}")
+    } catch (e: Exception) {
+        println("❌ Failure: Caught wrong exception type: ${e.javaClass.name}")
+        e.printStackTrace()
+    }
+
+    service.close()
 }
 
 fun executeComplexStructPropertyTest() {

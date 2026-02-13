@@ -32,6 +32,9 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
         if let ImplItem::Fn(method) = item {
             let mut is_new = false;
             let mut is_method = false;
+
+            let handle_mode = extract_handle_mode(&method.attrs);
+
             method.attrs.retain(|attr| {
                 if attr.path().is_ident("xross_new") {
                     is_new = true;
@@ -67,10 +70,17 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 )
             };
 
+            let handle_mode = if is_new {
+                xross_metadata::HandleMode::Normal
+            } else {
+                handle_mode
+            };
+
             methods_meta.push(XrossMethod {
                 name: rust_fn_name.to_string(),
                 symbol: ffi_data.symbol_name.clone(),
                 method_type: ffi_data.method_type,
+                handle_mode,
                 safety: extract_safety_attr(&method.attrs, ThreadSafety::Lock),
                 is_constructor: is_new,
                 args: ffi_data.args_meta.clone(),
@@ -85,6 +95,7 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 &ret_ty,
                 &method.sig.output,
                 inner_call,
+                handle_mode,
                 &mut extra_functions,
             );
         }

@@ -15,6 +15,8 @@ pub struct XrossMethod {
     pub symbol: String,
     /// Type of the method (Static, Instance, etc.).
     pub method_type: XrossMethodType,
+    /// How the method handle should be invoked.
+    pub handle_mode: HandleMode,
     /// Whether this method is a constructor.
     pub is_constructor: bool,
     /// Arguments of the method.
