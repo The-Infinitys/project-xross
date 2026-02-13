@@ -180,7 +180,7 @@ object HandleResolver {
         meta.methods.filter { !it.isConstructor }.forEach { method ->
             val args = mutableListOf<CodeBlock>()
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
-            method.args.forEach { 
+            method.args.forEach {
                 if (it.ty is XrossType.Result) {
                     args.add(FFMConstants.XROSS_RESULT_LAYOUT_CODE)
                 } else {

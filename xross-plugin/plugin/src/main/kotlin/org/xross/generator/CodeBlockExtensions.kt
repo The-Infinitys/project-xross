@@ -135,11 +135,17 @@ fun CodeBlock.Builder.addResultVariantResolution(
             // For other primitives, they are passed as address (value-in-pointer)
             val kType = type.kotlinType
             val code = if (type.kotlinSize <= 4) {
-                if (kType == INT) CodeBlock.of("%L.address().toInt()", ptrName)
-                else CodeBlock.of("%L.address().toInt() as %T", ptrName, kType)
+                if (kType == INT) {
+                    CodeBlock.of("%L.address().toInt()", ptrName)
+                } else {
+                    CodeBlock.of("%L.address().toInt() as %T", ptrName, kType)
+                }
             } else {
-                if (kType == LONG) CodeBlock.of("%L.address()", ptrName)
-                else CodeBlock.of("%L.address() as %T", ptrName, kType)
+                if (kType == LONG) {
+                    CodeBlock.of("%L.address()", ptrName)
+                } else {
+                    CodeBlock.of("%L.address() as %T", ptrName, kType)
+                }
             }
             if (needsRun) addStatement("%L", code) else add("%L", code)
         }

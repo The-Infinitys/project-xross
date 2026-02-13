@@ -88,7 +88,7 @@ object MethodGenerator {
 
             val argPrep = CodeBlock.builder()
             val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
-            
+
             if (needsArena) {
                 argPrep.beginControlFlow("%T.ofConfined().use { arena ->", Arena::class.asTypeName())
             }
@@ -327,7 +327,7 @@ object MethodGenerator {
         val body = CodeBlock.builder()
         val callArgs = mutableListOf<CodeBlock>()
         val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
-        
+
         if (needsArena) {
             body.beginControlFlow("%T.ofConfined().use { arena ->", Arena::class)
         }
