@@ -26,9 +26,9 @@ object LayoutGenerator {
             .addStatement("continue")
             .endControlFlow()
 
-        meta.fields.forEachIndexed { idx, field ->
-            val branch = if (idx == 0) "if" else "else if"
-            init.beginControlFlow("$branch (fName == %S)", field.name)
+        init.beginControlFlow("when (fName)")
+        meta.fields.forEach { field ->
+            init.beginControlFlow("%S ->", field.name)
             val kotlinSize = field.ty.kotlinSize
             val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
 
@@ -50,11 +50,12 @@ object LayoutGenerator {
             init.endControlFlow()
         }
 
-        init.beginControlFlow("else")
+        init.beginControlFlow("else ->")
             .addStatement("layouts.add(%T.paddingLayout(fSize))", MEMORY_LAYOUT)
             .addStatement("currentOffsetPos = fOffset + fSize")
             .endControlFlow()
         init.endControlFlow()
+        init.endControlFlow() // Close for loop
 
         init.beginControlFlow("if (currentOffsetPos < STRUCT_SIZE)")
             .addStatement("layouts.add(%T.paddingLayout(STRUCT_SIZE - currentOffsetPos))", MEMORY_LAYOUT)
@@ -83,10 +84,12 @@ object LayoutGenerator {
                 .addStatement("val f = fInfo.split(':')")
                 .addStatement("val fName = f[0]; val fOffsetL = f[1].toLong(); val fSizeL = f[2].toLong()")
 
+            init.beginControlFlow("when (vName)")
             meta.variants.filter { it.fields.isNotEmpty() }.forEach { variant ->
-                init.beginControlFlow("if (vName == %S)", variant.name)
+                init.beginControlFlow("%S ->", variant.name)
+                init.beginControlFlow("when (fName)")
                 variant.fields.forEach { field ->
-                    init.beginControlFlow("if (fName == %S)", field.name)
+                    init.beginControlFlow("%S ->", field.name)
                         .addStatement("val vLayouts = mutableListOf<%T>()", MEMORY_LAYOUT)
                         .addStatement("if (fOffsetL > 0) vLayouts.add(%T.paddingLayout(fOffsetL))", MEMORY_LAYOUT)
 
@@ -112,7 +115,9 @@ object LayoutGenerator {
                     init.endControlFlow()
                 }
                 init.endControlFlow()
+                init.endControlFlow()
             }
+            init.endControlFlow()
             init.endControlFlow().endControlFlow()
         }
         init.endControlFlow()

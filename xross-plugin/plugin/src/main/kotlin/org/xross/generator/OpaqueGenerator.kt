@@ -76,7 +76,7 @@ object OpaqueGenerator {
         when (field.ty) {
             is XrossType.Result -> {
                 // Handle Result similarly to PropertyGenerator but using FFI handle
-                body.addStatement("val resRaw = Companion.$getHandle.invokeExact(this.segment) as %T", MemorySegment::class)
+                body.addStatement("val resRaw = $getHandle.invokeExact(this.segment) as %T", MemorySegment::class)
                 body.addStatement(
                     "val isOk = resRaw.get(%M, 0L) != (0).toByte()",
                     MemberName("java.lang.foreign.ValueLayout", "JAVA_BYTE"),
@@ -92,12 +92,12 @@ object OpaqueGenerator {
             }
 
             is XrossType.RustString -> {
-                body.addRustStringResolution("Companion.$getHandle.invokeExact(this.segment)", "s")
+                body.addRustStringResolution("$getHandle.invokeExact(this.segment)", "s")
                 body.addStatement("return s")
             }
 
             else -> {
-                body.addStatement("return Companion.$getHandle.invokeExact(this.segment) as %T", kType)
+                body.addStatement("return $getHandle.invokeExact(this.segment) as %T", kType)
             }
         }
 
@@ -124,10 +124,10 @@ object OpaqueGenerator {
         if (field.ty is XrossType.RustString) {
             body.beginControlFlow("%T.ofConfined().use { arena ->", FFMConstants.ARENA)
             body.addStatement("val allocated = arena.allocateFrom(v)")
-            body.addStatement("Companion.$setHandle.invokeExact(this.segment, allocated) as Unit")
+            body.addStatement("$setHandle.invokeExact(this.segment, allocated) as Unit")
             body.endControlFlow()
         } else {
-            body.addStatement("Companion.$setHandle.invokeExact(this.segment, v) as Unit")
+            body.addStatement("$setHandle.invokeExact(this.segment, v) as Unit")
         }
 
         return FunSpec.setterBuilder().addParameter("v", kType).addCode(body.build()).build()

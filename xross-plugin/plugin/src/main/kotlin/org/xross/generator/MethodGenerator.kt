@@ -133,7 +133,7 @@ object MethodGenerator {
 
             body.add(argPrep.build())
 
-            val handleName = "Companion.${method.name.toCamelCase()}Handle"
+            val handleName = "${method.name.toCamelCase()}Handle"
             val call = if (method.ret is XrossType.Result) {
                 CodeBlock.of(
                     "$handleName.invokeExact(this.autoArena as %T, %L)",
@@ -193,7 +193,7 @@ object MethodGenerator {
                 body.addStatement("// Re-initialize consumed segment for fieldless enum")
                 body.addStatement("this.segment = when(this) {")
                 (meta as XrossDefinition.Enum).variants.forEach { v ->
-                    body.addStatement("    %N -> Companion.new${v.name}Handle.invokeExact() as %T", v.name, MEMORY_SEGMENT)
+                    body.addStatement("    %N -> new${v.name}Handle.invokeExact() as %T", v.name, MEMORY_SEGMENT)
                 }
                 body.addStatement("}")
             } else if (!isCopy || !isPureEnum) {
@@ -228,8 +228,8 @@ object MethodGenerator {
 
         // ヘルパー：型が自分自身(Self)かどうかでアクセスするプロパティ/関数を切り替える
         fun getExprs(type: TypeName) = Triple(
-            if (type == selfType) CodeBlock.of("Companion.STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", type),
-            if (type == selfType) CodeBlock.of("Companion.dropHandle") else CodeBlock.of("%T.dropHandle", type),
+            if (type == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", type),
+            if (type == selfType) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", type),
             if (type == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", type),
         )
 
@@ -264,7 +264,7 @@ object MethodGenerator {
                 body.nextControlFlow("else")
                 // Optionalの中身(inner)を解決
                 val innerType = GeneratorUtils.resolveReturnType(retTy.inner, basePackage)
-                body.addResultVariantResolution(retTy.inner, "resRaw", innerType, selfType, basePackage, "Companion.dropHandle")
+                body.addResultVariantResolution(retTy.inner, "resRaw", innerType, selfType, basePackage, "dropHandle")
                 body.endControlFlow().endControlFlow()
             }
 
@@ -283,7 +283,7 @@ object MethodGenerator {
                     GeneratorUtils.resolveReturnType(retTy.ok, basePackage),
                     selfType,
                     basePackage,
-                    "Companion.dropHandle",
+                    "dropHandle",
                 )
                 body.addStatement("Result.success(okVal)")
 
@@ -295,7 +295,7 @@ object MethodGenerator {
                     GeneratorUtils.resolveReturnType(retTy.err, basePackage),
                     selfType,
                     basePackage,
-                    "Companion.dropHandle",
+                    "dropHandle",
                 )
                 body.addStatement("Result.failure(%T(errVal))", ClassName(runtimePkg, "XrossException"))
                 body.endControlFlow()
@@ -371,9 +371,9 @@ object MethodGenerator {
         GeneratorUtils.addFactoryBody(
             body,
             basePackage,
-            CodeBlock.of("Companion.newHandle.invokeExact(%L)", callArgs.joinToCode(", ")),
-            CodeBlock.of("Companion.STRUCT_SIZE"),
-            CodeBlock.of("Companion.dropHandle"),
+            CodeBlock.of("newHandle.invokeExact(%L)", callArgs.joinToCode(", ")),
+            CodeBlock.of("STRUCT_SIZE"),
+            CodeBlock.of("dropHandle"),
         )
         body.addStatement(
             "return %T(res, %T(newAutoArena, newOwnerArena), flag)",

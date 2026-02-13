@@ -48,7 +48,7 @@ fun CodeBlock.Builder.addRustStringResolution(call: Any, resultVar: String = "st
         Long::class.asTypeName(),
     )
     if (shouldFree) {
-        addStatement("if ($resRawName != %T.NULL) Companion.xrossFreeStringHandle.invokeExact($resRawName)", MEMORY_SEGMENT)
+        addStatement("if ($resRawName != %T.NULL) xrossFreeStringHandle.invokeExact($resRawName)", MEMORY_SEGMENT)
     }
     return this
 }
@@ -63,7 +63,9 @@ fun CodeBlock.Builder.addResultVariantResolution(
 ) {
     val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
 
-    beginControlFlow("run")
+    val needsRun = type is XrossType.Object || type is XrossType.RustString
+    if (needsRun) beginControlFlow("run")
+
     when (type) {
         is XrossType.Object -> {
             val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(targetTypeName, selfType, dropHandleName)
@@ -74,22 +76,30 @@ fun CodeBlock.Builder.addResultVariantResolution(
             addStatement("str")
         }
         is XrossType.F32 -> {
-            addStatement("%T.fromBits(%L.address().toInt())", Float::class, ptrName)
+            val code = CodeBlock.of("%T.fromBits(%L.address().toInt())", Float::class, ptrName)
+            if (needsRun) addStatement("%L", code) else add("%L", code)
         }
         is XrossType.F64 -> {
-            addStatement("%T.fromBits(%L.address())", Double::class, ptrName)
+            val code = CodeBlock.of("%T.fromBits(%L.address())", Double::class, ptrName)
+            if (needsRun) addStatement("%L", code) else add("%L", code)
         }
         is XrossType.Bool -> {
-            addStatement("%L.address() != 0L", ptrName)
+            val code = CodeBlock.of("%L.address() != 0L", ptrName)
+            if (needsRun) addStatement("%L", code) else add("%L", code)
         }
         else -> {
             // For other primitives, they are passed as address (value-in-pointer)
-            if (type.kotlinSize <= 4) {
-                addStatement("%L.address().toInt() as %T", ptrName, type.kotlinType)
+            val kType = type.kotlinType
+            val code = if (type.kotlinSize <= 4) {
+                if (kType == INT) CodeBlock.of("%L.address().toInt()", ptrName)
+                else CodeBlock.of("%L.address().toInt() as %T", ptrName, kType)
             } else {
-                addStatement("%L.address() as %T", ptrName, type.kotlinType)
+                if (kType == LONG) CodeBlock.of("%L.address()", ptrName)
+                else CodeBlock.of("%L.address() as %T", ptrName, kType)
             }
+            if (needsRun) addStatement("%L", code) else add("%L", code)
         }
     }
-    endControlFlow()
+    if (needsRun) endControlFlow()
+    this.add("\n")
 }
