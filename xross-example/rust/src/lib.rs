@@ -129,6 +129,12 @@ impl XrossSimpleEnum {
     }
 }
 
+impl Default for MyService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[xross_class]
 impl MyService {
     #[xross_new]
