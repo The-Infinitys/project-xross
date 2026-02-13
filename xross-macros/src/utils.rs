@@ -130,18 +130,6 @@ pub fn extract_inner_type(ty: &syn::Type) -> &syn::Type {
     ty
 }
 
-pub fn extract_inner_type_from_res(ty: &syn::Type, is_ok: bool) -> &syn::Type {
-    if let syn::Type::Path(tp) = ty
-        && let Some(last_segment) = tp.path.segments.last()
-        && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
-    {
-        let idx = if is_ok { 0 } else { 1 };
-        if let Some(syn::GenericArgument::Type(inner)) = args.args.get(idx) {
-            return inner;
-        }
-    }
-    ty
-}
 /// Returns the English ordinal name as a word (no digits).
 /// For example: 0 → "zeroth", 1 → "first", 21 → "twenty-first", 100 → "one hundredth"
 pub fn ordinal_name(i: usize) -> String {

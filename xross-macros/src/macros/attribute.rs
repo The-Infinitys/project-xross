@@ -1,3 +1,4 @@
+use crate::codegen::ffi::{gen_arg_conversion, gen_ret_wrapping};
 use crate::metadata::{load_definition, save_definition};
 use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::*;
@@ -5,25 +6,23 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType, XrossType,
+    Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType,
 };
 
 pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) -> TokenStream {
     let type_name_ident = if let Type::Path(tp) = &*input_impl.self_ty {
         &tp.path.segments.last().unwrap().ident
     } else {
-        panic!("xross_class must be used on a direct type implementation");
+        panic!("xross_methods must be used on a direct type implementation");
     };
 
     let mut definition = load_definition(type_name_ident)
-        .expect("XrossClass definition not found. Apply #[derive(XrossClass)] first.");
+        .expect("XrossClass definition not found. Apply #[derive(XrossClass)] or xross_class! first.");
 
-    let (package_name, symbol_base, _is_struct) = match &definition {
-        XrossDefinition::Struct(s) => (s.package_name.clone(), s.symbol_prefix.clone(), true),
-        XrossDefinition::Enum(e) => (e.package_name.clone(), e.symbol_prefix.clone(), false),
-        XrossDefinition::Opaque(_) => {
-            panic!("Unsupported. Why is there Opaque??????")
-        }
+    let (package_name, symbol_base) = match &definition {
+        XrossDefinition::Struct(s) => (s.package_name.clone(), s.symbol_prefix.clone()),
+        XrossDefinition::Enum(e) => (e.package_name.clone(), e.symbol_prefix.clone()),
+        XrossDefinition::Opaque(o) => (o.package_name.clone(), o.symbol_prefix.clone()),
     };
 
     let mut extra_functions = Vec::new();
@@ -63,24 +62,23 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 match input {
                     FnArg::Receiver(receiver) => {
                         let arg_ident = format_ident!("_self");
+                        method_type = if receiver.reference.is_none() {
+                            XrossMethodType::OwnedInstance
+                        } else if receiver.mutability.is_some() {
+                            XrossMethodType::MutInstance
+                        } else {
+                            XrossMethodType::ConstInstance
+                        };
+
+                        c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
                         if receiver.reference.is_none() {
-                            method_type = XrossMethodType::OwnedInstance;
-                            c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
                             call_args.push(
                                 quote! { *Box::from_raw(#arg_ident as *mut #type_name_ident) },
                             );
+                        } else if receiver.mutability.is_some() {
+                            call_args.push(quote!(&mut *(#arg_ident as *mut #type_name_ident)));
                         } else {
-                            method_type = if receiver.mutability.is_some() {
-                                XrossMethodType::MutInstance
-                            } else {
-                                XrossMethodType::ConstInstance
-                            };
-                            c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-                            call_args.push(if receiver.mutability.is_some() {
-                                quote!(&mut *(#arg_ident as *mut #type_name_ident))
-                            } else {
-                                quote!(&*(#arg_ident as *const #type_name_ident))
-                            });
+                            call_args.push(quote!(&*(#arg_ident as *const #type_name_ident)));
                         }
                     }
                     FnArg::Typed(pat_type) => {
@@ -104,58 +102,11 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                             docs: vec![],
                         });
 
-                        match xross_ty {
-                            XrossType::String => {
-                                let raw_name = format_ident!("{}_raw", arg_ident);
-                                c_args.push(quote! { #raw_name: *const std::ffi::c_char });
-                                conversion_logic.push(quote! {
-                                    let #arg_ident = unsafe {
-                                        if #raw_name.is_null() { "" }
-                                        else { std::ffi::CStr::from_ptr(#raw_name).to_str().unwrap_or("") }
-                                    };
-                                });
-                                let is_string_owned = if let Type::Path(p) = &*pat_type.ty {
-                                    p.path.is_ident("String")
-                                } else {
-                                    false
-                                };
-                                if is_string_owned {
-                                    call_args.push(quote! { #arg_ident.to_string() });
-                                } else {
-                                    call_args.push(quote! { #arg_ident });
-                                }
-                            }
-                            XrossType::Object { .. } => {
-                                let raw_ty = &pat_type.ty;
-                                c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-                                if let Type::Reference(_) = &*pat_type.ty {
-                                    call_args.push(quote! { &*(#arg_ident as *mut #raw_ty) });
-                                } else {
-                                    call_args.push(
-                                        quote! { *Box::from_raw(#arg_ident as *mut #raw_ty) },
-                                    );
-                                }
-                            }
-                            XrossType::Option(_inner) => {
-                                let raw_ty = &pat_type.ty;
-                                c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-
-                                let inner_rust_ty = extract_inner_type(raw_ty);
-                                conversion_logic.push(quote! {
-                                    let #arg_ident = if #arg_ident.is_null() {
-                                        None
-                                    } else {
-                                        Some(*Box::from_raw(#arg_ident as *mut #inner_rust_ty))
-                                    };
-                                });
-                                call_args.push(quote! { #arg_ident });
-                            }
-                            _ => {
-                                let rust_type_token = &pat_type.ty;
-                                c_args.push(quote! { #arg_ident: #rust_type_token });
-                                call_args.push(quote! { #arg_ident });
-                            }
-                        }
+                        let (c_arg, conv, call_arg) =
+                            gen_arg_conversion(&pat_type.ty, &arg_ident, &xross_ty);
+                        c_args.push(c_arg);
+                        conversion_logic.push(conv);
+                        call_args.push(call_arg);
                     }
                 }
             }
@@ -166,10 +117,10 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 } else {
                     format!("{}.{}", package_name, type_name_ident)
                 };
-                XrossType::Object { signature: sig, ownership: Ownership::Owned }
+                xross_metadata::XrossType::Object { signature: sig, ownership: Ownership::Owned }
             } else {
                 match &method.sig.output {
-                    ReturnType::Default => XrossType::Void,
+                    ReturnType::Default => xross_metadata::XrossType::Void,
                     ReturnType::Type(_, ty) => {
                         let mut xross_ty = resolve_type_with_attr(
                             ty,
@@ -189,7 +140,8 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                             _ => Ownership::Owned,
                         };
 
-                        if let XrossType::Object { ownership: o, .. } = &mut xross_ty {
+                        if let xross_metadata::XrossType::Object { ownership: o, .. } = &mut xross_ty
+                        {
                             *o = ownership;
                         }
                         xross_ty
@@ -208,92 +160,9 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
             });
 
             let inner_call = quote! { #type_name_ident::#rust_fn_name(#(#call_args),*) };
-            let (c_ret_type, wrapper_body) = match &ret_ty {
-                XrossType::Void => (quote! { () }, quote! { #inner_call; }),
-                XrossType::String => (
-                    quote! { *mut std::ffi::c_char },
-                    quote! { std::ffi::CString::new(#inner_call).unwrap_or_default().into_raw() },
-                ),
-                XrossType::Object { ownership, .. } => match ownership {
-                    Ownership::Ref | Ownership::MutRef => (
-                        quote! { *mut std::ffi::c_void },
-                        quote! { #inner_call as *const _ as *mut std::ffi::c_void },
-                    ),
-                    Ownership::Owned => (
-                        quote! { *mut std::ffi::c_void },
-                        quote! { Box::into_raw(Box::new(#inner_call)) as *mut std::ffi::c_void },
-                    ),
-                    Ownership::Boxed => (
-                        quote! { *mut std::ffi::c_void },
-                        quote! { Box::into_raw(#inner_call) as *mut std::ffi::c_void },
-                    ),
-                },
-                XrossType::Option(inner) => match &**inner {
-                    XrossType::String => (
-                        quote! { *mut std::ffi::c_char },
-                        quote! {
-                            match #inner_call {
-                                Some(s) => std::ffi::CString::new(s).unwrap_or_default().into_raw(),
-                                None => std::ptr::null_mut(),
-                            }
-                        },
-                    ),
-                    XrossType::Object { .. } => (
-                        quote! { *mut std::ffi::c_void },
-                        quote! {
-                            match #inner_call {
-                                Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
-                                None => std::ptr::null_mut(),
-                            }
-                        },
-                    ),
-                    _ => (
-                        quote! { *mut std::ffi::c_void },
-                        quote! {
-                            match #inner_call {
-                                Some(val) => Box::into_raw(Box::new(val)) as *mut std::ffi::c_void,
-                                None => std::ptr::null_mut(),
-                            }
-                        },
-                    ),
-                },
-                XrossType::Result { ok, err } => {
-                    let gen_ptr = |ty: &XrossType, val_ident: proc_macro2::TokenStream| match ty {
-                        XrossType::String => quote! {
-                            std::ffi::CString::new(#val_ident).unwrap_or_default().into_raw() as *mut std::ffi::c_void
-                        },
-                        _ => quote! {
-                            Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void
-                        },
-                    };
-                    let ok_ptr_logic = gen_ptr(ok, quote! { val });
-                    let err_ptr_logic = gen_ptr(err, quote! { e });
+            let (c_ret_type, wrapper_body) =
+                gen_ret_wrapping(&ret_ty, &method.sig.output, inner_call);
 
-                    (
-                        quote! { xross_core::XrossResult },
-                        quote! {
-                            match #inner_call {
-                                Ok(val) => xross_core::XrossResult {
-                                    is_ok: true,
-                                    ptr: #ok_ptr_logic,
-                                },
-                                Err(e) => xross_core::XrossResult {
-                                    is_ok: false,
-                                    ptr: #err_ptr_logic,
-                                },
-                            }
-                        },
-                    )
-                }
-                _ => {
-                    let raw_ret = if let ReturnType::Type(_, ty) = &method.sig.output {
-                        quote! { #ty }
-                    } else {
-                        quote! { () }
-                    };
-                    (raw_ret, quote! { #inner_call })
-                }
-            };
             extra_functions.push(quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> #c_ret_type {
@@ -307,9 +176,7 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
     match &mut definition {
         XrossDefinition::Struct(s) => s.methods.extend(methods_meta),
         XrossDefinition::Enum(e) => e.methods.extend(methods_meta),
-        XrossDefinition::Opaque(_) => {
-            panic!("Unsupported. Why is there Opaque??????")
-        }
+        XrossDefinition::Opaque(o) => o.methods.extend(methods_meta),
     }
 
     save_definition(&definition);

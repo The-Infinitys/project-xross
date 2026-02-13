@@ -1,4 +1,6 @@
-use crate::codegen::ffi::{generate_common_ffi, generate_enum_layout, generate_struct_layout};
+use crate::codegen::ffi::{
+    generate_common_ffi, generate_property_accessors,
+};
 use crate::metadata::save_definition;
 use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::*;
@@ -23,7 +25,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
             let package = extract_package(&s.attrs);
             let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
 
-            let layout_logic = generate_struct_layout(&s);
+            let layout_logic = crate::codegen::ffi::generate_struct_layout(&s);
             let is_clonable = extract_is_clonable(&s.attrs);
 
             let mut fields = Vec::new();
@@ -63,133 +65,14 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                             docs: extract_docs(&field.attrs),
                         });
 
-                        match &xross_ty {
-                            XrossType::String => {
-                                let get_fn = format_ident!(
-                                    "{}_property_{}_str_get",
-                                    symbol_base,
-                                    field_name
-                                );
-                                let set_fn = format_ident!(
-                                    "{}_property_{}_str_set",
-                                    symbol_base,
-                                    field_name
-                                );
-                                extra_functions.push(quote! {
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #get_fn(ptr: *const #name) -> *mut std::ffi::c_char {
-                                                                if ptr.is_null() { return std::ptr::null_mut(); }
-                                                                let obj = &*ptr;
-                                                                std::ffi::CString::new(obj.#field_ident.as_str()).unwrap().into_raw()
-                                                            }
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #set_fn(ptr: *mut #name, val: *const std::ffi::c_char) {
-                                                                if ptr.is_null() || val.is_null() { return; }
-                                                                let obj = &mut *ptr;
-                                                                let s = std::ffi::CStr::from_ptr(val).to_string_lossy().into_owned();
-                                                                obj.#field_ident = s;
-                                                            }
-                                                        });
-                            }
-                            XrossType::Option(inner_xross) => {
-                                let get_fn = format_ident!(
-                                    "{}_property_{}_opt_get",
-                                    symbol_base,
-                                    field_name
-                                );
-                                let set_fn = format_ident!(
-                                    "{}_property_{}_opt_set",
-                                    symbol_base,
-                                    field_name
-                                );
-                                let inner_rust_ty = extract_inner_type(&field.ty);
-
-                                let get_val_logic = if matches!(**inner_xross, XrossType::String) {
-                                    quote! { std::ffi::CString::new(v.as_str()).unwrap().into_raw() as *mut std::ffi::c_void }
-                                } else {
-                                    quote! { Box::into_raw(Box::new(v.clone())) as *mut std::ffi::c_void }
-                                };
-
-                                extra_functions.push(quote! {
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #get_fn(ptr: *const #name) -> *mut std::ffi::c_void {
-                                                                if ptr.is_null() { return std::ptr::null_mut(); }
-                                                                let obj = &*ptr;
-                                                                match &obj.#field_ident {
-                                                                    Some(v) => #get_val_logic,
-                                                                    None => std::ptr::null_mut(),
-                                                                }
-                                                            }
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #set_fn(ptr: *mut #name, val: *mut std::ffi::c_void) {
-                                                                if ptr.is_null() { return; }
-                                                                let obj = &mut *ptr;
-                                                                obj.#field_ident = if val.is_null() {
-                                                                    None
-                                                                } else {
-                                                                    let v = &*(val as *const #inner_rust_ty);
-                                                                    Some(v.clone())
-                                                                };
-                                                            }
-                                                        });
-                            }
-                            XrossType::Result { ok: ok_xross, err: err_xross } => {
-                                let get_fn = format_ident!(
-                                    "{}_property_{}_res_get",
-                                    symbol_base,
-                                    field_name
-                                );
-                                let set_fn = format_ident!(
-                                    "{}_property_{}_res_set",
-                                    symbol_base,
-                                    field_name
-                                );
-                                let inner_ok_ty = extract_inner_type_from_res(&field.ty, true);
-                                let inner_err_ty = extract_inner_type_from_res(&field.ty, false);
-
-                                let gen_ptr = |ty: &XrossType, val_expr: TokenStream| match ty {
-                                    XrossType::String => quote! {
-                                        std::ffi::CString::new(#val_expr.as_str()).unwrap().into_raw() as *mut std::ffi::c_void
-                                    },
-                                    _ => quote! {
-                                        Box::into_raw(Box::new(#val_expr.clone())) as *mut std::ffi::c_void
-                                    },
-                                };
-                                let ok_ptr_logic = gen_ptr(ok_xross, quote! { v });
-                                let err_ptr_logic = gen_ptr(err_xross, quote! { e });
-
-                                extra_functions.push(quote! {
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #get_fn(ptr: *const #name) -> xross_core::XrossResult {
-                                                                if ptr.is_null() { return xross_core::XrossResult { is_ok: false, ptr: std::ptr::null_mut() }; }
-                                                                let obj = &*ptr;
-                                                                match &obj.#field_ident {
-                                                                    Ok(v) => xross_core::XrossResult {
-                                                                        is_ok: true,
-                                                                        ptr: #ok_ptr_logic,
-                                                                    },
-                                                                    Err(e) => xross_core::XrossResult {
-                                                                        is_ok: false,
-                                                                        ptr: #err_ptr_logic,
-                                                                    },
-                                                                }
-                                                            }
-                                                            #[unsafe(no_mangle)]
-                                                            pub unsafe extern "C" fn #set_fn(ptr: *mut #name, val: xross_core::XrossResult) {
-                                                                if ptr.is_null() { return; }
-                                                                let obj = &mut *ptr;
-                                                                obj.#field_ident = if val.is_ok {
-                                                                    let v = &*(val.ptr as *const #inner_ok_ty);
-                                                                    Ok(v.clone())
-                                                                } else {
-                                                                    let e = &*(val.ptr as *const #inner_err_ty);
-                                                                    Err(e.clone())
-                                                                };
-                                                            }
-                                                        });
-                            }
-                            _ => {}
-                        }
+                        generate_property_accessors(
+                            name,
+                            field_ident,
+                            &field.ty,
+                            &xross_ty,
+                            &symbol_base,
+                            &mut extra_functions,
+                        );
                     }
                 }
             }
@@ -222,7 +105,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
             let package = extract_package(&e.attrs);
             let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
 
-            let layout_logic = generate_enum_layout(&e);
+            let layout_logic = crate::codegen::ffi::generate_enum_layout(&e);
             let is_clonable = extract_is_clonable(&e.attrs);
 
             let mut variants = Vec::new();
@@ -273,29 +156,15 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                     });
 
                     let arg_id = format_ident!("arg_{}", i);
-                    let raw_ty = &field.ty;
+                    let (c_arg, conv, call_arg) =
+                        crate::codegen::ffi::gen_arg_conversion(&field.ty, &arg_id, &ty);
+                    c_param_defs.push(c_arg);
+                    internal_conversions.push(conv);
 
-                    if ty.is_owned() {
-                        c_param_defs.push(quote! { #arg_id: *mut std::ffi::c_void });
-                        if matches!(ty, XrossType::Object { ownership: Ownership::Boxed, .. }) {
-                            internal_conversions
-                                .push(quote! { let #arg_id = Box::from_raw(#arg_id as *mut _); });
-                        } else {
-                            internal_conversions.push(
-                                quote! { let #arg_id = *Box::from_raw(#arg_id as *mut #raw_ty); },
-                            );
-                        }
-                    } else if matches!(ty, XrossType::Object { .. }) {
-                        c_param_defs.push(quote! { #arg_id: *mut std::ffi::c_void });
-                        internal_conversions
-                            .push(quote! { let #arg_id = &*(#arg_id as *const #raw_ty); });
-                    } else {
-                        c_param_defs.push(quote! { #arg_id: #raw_ty });
-                    }
                     if let Some(id) = &field.ident {
-                        call_args.push(quote! { #id: #arg_id });
+                        call_args.push(quote! { #id: #call_arg });
                     } else {
-                        call_args.push(quote! { #arg_id });
+                        call_args.push(quote! { #call_arg });
                     }
                 }
 
