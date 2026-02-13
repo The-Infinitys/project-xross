@@ -189,11 +189,8 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                             _ => Ownership::Owned,
                         };
 
-                        match &mut xross_ty {
-                            XrossType::Object { ownership: o, .. } => {
-                                *o = ownership;
-                            }
-                            _ => {}
+                        if let XrossType::Object { ownership: o, .. } = &mut xross_ty {
+                            *o = ownership;
                         }
                         xross_ty
                     }

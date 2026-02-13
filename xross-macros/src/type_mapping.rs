@@ -58,7 +58,7 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
                 }
 
                 // 構造体や列挙型
-                s if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
+                s if s.chars().next().is_some_and(|c| c.is_uppercase()) => {
                     XrossType::Object { signature: s.to_string(), ownership: Ownership::Owned }
                 }
                 _ => XrossType::Pointer,

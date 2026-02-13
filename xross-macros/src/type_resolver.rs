@@ -19,11 +19,10 @@ pub fn resolve_type_with_attr(
         _ => (ty, Ownership::Owned),
     };
 
-    if let XrossType::Object { ownership: base_ow, .. } = &base_ty {
-        if *base_ow == Ownership::Boxed {
+    if let XrossType::Object { ownership: base_ow, .. } = &base_ty
+        && *base_ow == Ownership::Boxed {
             ownership = Ownership::Boxed;
         }
-    }
 
     let mut xross_ty = None;
     for attr in attrs {
@@ -51,9 +50,9 @@ pub fn resolve_type_with_attr(
         return ty;
     }
 
-    if let Type::Path(tp) = inner_ty {
-        if tp.path.is_ident("Self") {
-            if let Some(ident) = current_ident {
+    if let Type::Path(tp) = inner_ty
+        && tp.path.is_ident("Self")
+            && let Some(ident) = current_ident {
                 let sig = if current_pkg.is_empty() {
                     ident.to_string()
                 } else {
@@ -61,35 +60,30 @@ pub fn resolve_type_with_attr(
                 };
                 return XrossType::Object { signature: sig, ownership: ownership.clone() };
             }
-        }
-    }
 
     let mut final_ty = map_type(inner_ty);
 
-    match &mut final_ty {
-        XrossType::Object { ownership: o, signature } => {
-            if ownership != Ownership::Owned {
-                *o = ownership;
-            }
+    if let XrossType::Object { ownership: o, signature } = &mut final_ty {
+        if ownership != Ownership::Owned {
+            *o = ownership;
+        }
 
-            let is_self = current_ident.map_or(false, |ident| {
-                let self_name = ident.to_string();
-                signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
-            });
+        let is_self = current_ident.is_some_and(|ident| {
+            let self_name = ident.to_string();
+            signature == &self_name || signature == &format!("{}.{}", current_pkg, self_name)
+        });
 
-            if is_self {
-                *signature = if current_pkg.is_empty() {
-                    current_ident.unwrap().to_string()
-                } else {
-                    format!("{}.{}", current_pkg, current_ident.unwrap())
-                };
+        if is_self {
+            *signature = if current_pkg.is_empty() {
+                current_ident.unwrap().to_string()
             } else {
-                if let Some(discovered) = discover_signature(signature) {
-                    *signature = discovered;
-                }
+                format!("{}.{}", current_pkg, current_ident.unwrap())
+            };
+        } else {
+            if let Some(discovered) = discover_signature(signature) {
+                *signature = discovered;
             }
         }
-        _ => {}
     }
 
     final_ty

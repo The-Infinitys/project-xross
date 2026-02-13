@@ -62,13 +62,11 @@ pub fn extract_is_clonable(attrs: &[Attribute]) -> bool {
 
 pub fn extract_package(attrs: &[Attribute]) -> String {
     for attr in attrs {
-        if attr.path().is_ident("xross_package") {
-            if let Ok(lit) = attr.parse_args::<Lit>() {
-                if let Lit::Str(s) = lit {
+        if attr.path().is_ident("xross_package")
+            && let Ok(lit) = attr.parse_args::<Lit>()
+                && let Lit::Str(s) = lit {
                     return s.value();
                 }
-            }
-        }
     }
     "".to_string()
 }
@@ -78,11 +76,10 @@ pub fn extract_docs(attrs: &[Attribute]) -> Vec<String> {
         .iter()
         .filter(|a| a.path().is_ident("doc"))
         .filter_map(|a| {
-            if let Meta::NameValue(nv) = &a.meta {
-                if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
+            if let Meta::NameValue(nv) = &a.meta
+                && let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
                     return Some(s.value().trim().to_string());
                 }
-            }
             None
         })
         .collect()
@@ -121,29 +118,24 @@ pub fn build_symbol_base(crate_name: &str, package: &str, type_name: &str) -> St
 }
 
 pub fn extract_inner_type(ty: &syn::Type) -> &syn::Type {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(last_segment) = tp.path.segments.last() {
-            if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+    if let syn::Type::Path(tp) = ty
+        && let Some(last_segment) = tp.path.segments.last()
+            && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                && let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                     return inner;
                 }
-            }
-        }
-    }
     ty
 }
 
 pub fn extract_inner_type_from_res(ty: &syn::Type, is_ok: bool) -> &syn::Type {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(last_segment) = tp.path.segments.last() {
-            if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+    if let syn::Type::Path(tp) = ty
+        && let Some(last_segment) = tp.path.segments.last()
+            && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
                 let idx = if is_ok { 0 } else { 1 };
                 if let Some(syn::GenericArgument::Type(inner)) = args.args.get(idx) {
                     return inner;
                 }
             }
-        }
-    }
     ty
 }
 /// Returns the English ordinal name as a word (no digits).

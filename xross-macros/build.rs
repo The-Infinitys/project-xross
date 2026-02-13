@@ -10,8 +10,8 @@ fn main() {
     }
 
     // 2. OUT_DIR から遡って target ディレクトリを特定する
-    if xross_dir.is_none() {
-        if let Ok(out_dir) = std::env::var("OUT_DIR") {
+    if xross_dir.is_none()
+        && let Ok(out_dir) = std::env::var("OUT_DIR") {
             let path = PathBuf::from(out_dir);
             let mut target = path.as_path();
             while let Some(parent) = target.parent() {
@@ -22,14 +22,12 @@ fn main() {
                 target = parent;
             }
         }
-    }
 
     // 3. CARGO_TARGET_DIR 環境変数をチェック
-    if xross_dir.is_none() {
-        if let Ok(val) = std::env::var("CARGO_TARGET_DIR") {
+    if xross_dir.is_none()
+        && let Ok(val) = std::env::var("CARGO_TARGET_DIR") {
             xross_dir = Some(PathBuf::from(val).join("xross"));
         }
-    }
 
     // 4. フォールバック: ワークスペースルートを探索
     let xross_dir = xross_dir.unwrap_or_else(|| {
@@ -47,11 +45,10 @@ fn main() {
         root.join("target").join("xross")
     });
 
-    if xross_dir.exists() {
-        if let Err(e) = fs::remove_dir_all(&xross_dir) {
+    if xross_dir.exists()
+        && let Err(e) = fs::remove_dir_all(&xross_dir) {
             eprintln!("cargo:warning=Failed to delete directory {:?}: {}", xross_dir, e);
         }
-    }
 
     if let Err(e) = fs::create_dir_all(&xross_dir) {
         eprintln!("cargo:warning=Failed to create directory {:?}: {}", xross_dir, e);
