@@ -34,6 +34,50 @@ fun CodeBlock.Builder.addResourceConstruction(
     }
 }
 
+fun CodeBlock.Builder.addFactoryBody(
+    basePackage: String,
+    handleCall: CodeBlock,
+    structSizeExpr: CodeBlock,
+    dropHandleExpr: CodeBlock,
+): CodeBlock.Builder {
+    val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+    val arena = ClassName("java.lang.foreign", "Arena")
+    val memorySegment = ClassName("java.lang.foreign", "MemorySegment")
+
+    addStatement("val newAutoArena = %T.ofAuto()", arena)
+    addStatement("val newOwnerArena = %T.ofAuto()", arena)
+    addStatement("val flag = %T(true)", aliveFlagType)
+    addStatement("val resRaw = %L as %T", handleCall, memorySegment)
+    addStatement(
+        "if (resRaw == %T.NULL) throw %T(%S)",
+        memorySegment,
+        RuntimeException::class.asTypeName(),
+        "Fail",
+    )
+    addStatement(
+        "val res = resRaw.reinterpret(%L, newAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
+        structSizeExpr,
+        dropHandleExpr,
+    )
+    return this
+}
+
+fun CodeBlock.Builder.addResultAllocation(
+    ty: XrossType.Result,
+    valueName: String,
+    targetMemoryName: String,
+): CodeBlock.Builder {
+    addStatement("val $targetMemoryName = arena.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
+    beginControlFlow("if ($valueName.isSuccess)")
+    addStatement("$targetMemoryName.set(%M, 0L, 1.toByte())", FFMConstants.JAVA_BYTE)
+    addStatement("$targetMemoryName.set(%M, 8L, %L)", FFMConstants.ADDRESS, GeneratorUtils.generateAllocMsg(ty.ok, "$valueName.getOrNull()!!"))
+    nextControlFlow("else")
+    addStatement("$targetMemoryName.set(%M, 0L, 0.toByte())", FFMConstants.JAVA_BYTE)
+    addStatement("$targetMemoryName.set(%M, 8L, %T.NULL)", FFMConstants.ADDRESS, ClassName("java.lang.foreign", "MemorySegment"))
+    endControlFlow()
+    return this
+}
+
 fun CodeBlock.Builder.addRustStringResolution(call: Any, resultVar: String = "str", isAssignment: Boolean = false, shouldFree: Boolean = true): CodeBlock.Builder {
     val resRawName = if (call is String && call.endsWith("Raw")) call else "${resultVar}RawInternal"
     if (!(call is String && call == resRawName)) {

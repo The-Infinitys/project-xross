@@ -149,27 +149,6 @@ object GeneratorUtils {
     }
 
     /**
-     * Adds logic to resolve a Rust string from a [java.lang.foreign.MemorySegment].
-     */
-    fun addRustStringResolution(body: CodeBlock.Builder, call: Any, resultVar: String = "str", isAssignment: Boolean = false, shouldFree: Boolean = true) {
-        val resRawName = if (call is String && call.endsWith("Raw")) call else "${resultVar}RawInternal"
-        if (call is String && call == resRawName) {
-            // Already cast or assigned
-        } else {
-            body.addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
-        }
-        val prefix = if (isAssignment) "" else "val "
-        body.addStatement(
-            "$prefix$resultVar = if ($resRawName == %T.NULL) \"\" else $resRawName.reinterpret(%T.MAX_VALUE).getString(0)",
-            MEMORY_SEGMENT,
-            Long::class.asTypeName(),
-        )
-        if (shouldFree) {
-            body.addStatement("if ($resRawName != %T.NULL) xrossFreeStringHandle.invokeExact($resRawName)", MEMORY_SEGMENT)
-        }
-    }
-
-    /**
      * Returns the type for the factory method return value.
      */
     fun getFactoryTripleType(basePackage: String): TypeName {
@@ -179,32 +158,18 @@ object GeneratorUtils {
     }
 
     /**
-     * Adds the body for a factory method.
+     * Returns an allocation expression based on the XrossType.
      */
-    fun addFactoryBody(
-        body: CodeBlock.Builder,
-        basePackage: String,
-        handleCall: CodeBlock,
-        structSizeExpr: CodeBlock,
-        dropHandleExpr: CodeBlock,
-    ) {
-        val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-
-        body.addStatement("val newAutoArena = %T.ofAuto()", ARENA)
-        body.addStatement("val newOwnerArena = %T.ofAuto()", ARENA)
-        body.addStatement("val flag = %T(true)", aliveFlagType)
-        body.addStatement("val resRaw = %L as %T", handleCall, MEMORY_SEGMENT)
-        body.addStatement(
-            "if (resRaw == %T.NULL) throw %T(%S)",
-            MEMORY_SEGMENT,
-            RuntimeException::class.asTypeName(),
-            "Fail",
-        )
-        body.addStatement(
-            "val res = resRaw.reinterpret(%L, newAutoArena) { s -> if (flag.tryInvalidate()) { %L.invokeExact(s) } }",
-            structSizeExpr,
-            dropHandleExpr,
-        )
+    fun generateAllocMsg(ty: XrossType, valueName: String): CodeBlock = when (ty) {
+        is XrossType.Object -> CodeBlock.of("$valueName.segment")
+        is XrossType.RustString -> CodeBlock.of("arena.allocateFrom($valueName)")
+        is XrossType.F32 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits().toLong())", valueName)
+        is XrossType.F64 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits())", valueName)
+        is XrossType.Bool -> CodeBlock.of("MemorySegment.ofAddress(if (%L) 1L else 0L)", valueName)
+        else -> {
+            // Integer types <= 8 bytes
+            CodeBlock.of("MemorySegment.ofAddress(%L.toLong())", valueName)
+        }
     }
 
     /**

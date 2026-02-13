@@ -113,18 +113,11 @@ object MethodGenerator {
 
                     is XrossType.Bool -> callArgs.add(CodeBlock.of("if ($name) 1.toByte() else 0.toByte()"))
                     is XrossType.Optional -> {
-                        argPrep.addStatement("val ${name}Memory = if ($name == null) %T.NULL else %L", MEMORY_SEGMENT, generateAllocMsg(arg.ty.inner, name))
+                        argPrep.addStatement("val ${name}Memory = if ($name == null) %T.NULL else %L", MEMORY_SEGMENT, GeneratorUtils.generateAllocMsg(arg.ty.inner, name))
                         callArgs.add(CodeBlock.of("${name}Memory"))
                     }
                     is XrossType.Result -> {
-                        argPrep.addStatement("val ${name}Memory = arena.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
-                        argPrep.beginControlFlow("if ($name.isSuccess)")
-                        argPrep.addStatement("${name}Memory.set(%M, 0L, 1.toByte())", FFMConstants.JAVA_BYTE)
-                        argPrep.addStatement("${name}Memory.set(%M, 8L, %L)", FFMConstants.ADDRESS, generateAllocMsg(arg.ty.ok, "$name.getOrNull()!!"))
-                        argPrep.nextControlFlow("else")
-                        argPrep.addStatement("${name}Memory.set(%M, 0L, 0.toByte())", FFMConstants.JAVA_BYTE)
-                        argPrep.addStatement("${name}Memory.set(%M, 8L, %T.NULL)", FFMConstants.ADDRESS, MEMORY_SEGMENT)
-                        argPrep.endControlFlow()
+                        argPrep.addResultAllocation(arg.ty, name, "${name}Memory")
                         callArgs.add(CodeBlock.of("${name}Memory"))
                     }
                     else -> callArgs.add(CodeBlock.of("%L", name))
@@ -240,7 +233,7 @@ object MethodGenerator {
 
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
-                GeneratorUtils.addRustStringResolution(body, call)
+                body.addRustStringResolution(call)
                 body.addStatement("str")
                 body.endControlFlow()
             }
@@ -350,26 +343,18 @@ object MethodGenerator {
                 is XrossType.Bool -> callArgs.add(CodeBlock.of("if ($name) 1.toByte() else 0.toByte()"))
                 is XrossType.Object -> callArgs.add(CodeBlock.of("$name.segment"))
                 is XrossType.Optional -> {
-                    body.addStatement("val ${name}Memory = if ($name == null) %T.NULL else %L", MEMORY_SEGMENT, generateAllocMsg(arg.ty.inner, name))
+                    body.addStatement("val ${name}Memory = if ($name == null) %T.NULL else %L", MEMORY_SEGMENT, GeneratorUtils.generateAllocMsg(arg.ty.inner, name))
                     callArgs.add(CodeBlock.of("${name}Memory"))
                 }
                 is XrossType.Result -> {
-                    body.addStatement("val ${name}Memory = arena.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
-                    body.beginControlFlow("if ($name.isSuccess)")
-                    body.addStatement("${name}Memory.set(%M, 0L, 1.toByte())", FFMConstants.JAVA_BYTE)
-                    body.addStatement("${name}Memory.set(%M, 8L, %L)", FFMConstants.ADDRESS, generateAllocMsg(arg.ty.ok, "$name.getOrNull()!!"))
-                    body.nextControlFlow("else")
-                    body.addStatement("${name}Memory.set(%M, 0L, 0.toByte())", FFMConstants.JAVA_BYTE)
-                    body.addStatement("${name}Memory.set(%M, 8L, %T.NULL)", FFMConstants.ADDRESS, MEMORY_SEGMENT)
-                    body.endControlFlow()
+                    body.addResultAllocation(arg.ty, name, "${name}Memory")
                     callArgs.add(CodeBlock.of("${name}Memory"))
                 }
                 else -> callArgs.add(CodeBlock.of("%L", name))
             }
         }
 
-        GeneratorUtils.addFactoryBody(
-            body,
+        body.addFactoryBody(
             basePackage,
             CodeBlock.of("newHandle.invokeExact(%L)", callArgs.joinToCode(", ")),
             CodeBlock.of("STRUCT_SIZE"),
@@ -409,18 +394,5 @@ object MethodGenerator {
                 .callThisConstructor(CodeBlock.of("xrossNewInternal(${method.args.joinToString(", ") { "argOf" + it.name.toCamelCase() }})"))
                 .build(),
         )
-    }
-
-    // ヘルパー: 型に応じた allocate 式を返す
-    private fun generateAllocMsg(ty: XrossType, valueName: String): CodeBlock = when (ty) {
-        is XrossType.Object -> CodeBlock.of("$valueName.segment")
-        is XrossType.RustString -> CodeBlock.of("arena.allocateFrom($valueName)")
-        is XrossType.F32 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits().toLong())", valueName)
-        is XrossType.F64 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits())", valueName)
-        is XrossType.Bool -> CodeBlock.of("MemorySegment.ofAddress(if (%L) 1L else 0L)", valueName)
-        else -> {
-            // Integer types <= 8 bytes
-            CodeBlock.of("MemorySegment.ofAddress(%L.toLong())", valueName)
-        }
     }
 }

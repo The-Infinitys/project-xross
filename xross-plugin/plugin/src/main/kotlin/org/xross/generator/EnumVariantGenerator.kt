@@ -37,8 +37,7 @@ object EnumVariantGenerator {
                 .returns(tripleType)
                 .addCode(
                     CodeBlock.builder().apply {
-                        GeneratorUtils.addFactoryBody(
-                            this,
+                        addFactoryBody(
                             basePackage,
                             handleCall,
                             CodeBlock.of("STRUCT_SIZE"),

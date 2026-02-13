@@ -93,7 +93,7 @@ object PropertyGenerator {
 
             is XrossType.RustString -> {
                 val callExpr = "${baseName}StrGetHandle.invokeExact(this.segment)"
-                GeneratorUtils.addRustStringResolution(body, callExpr, "res", isAssignment = true)
+                body.addRustStringResolution(callExpr, "res", isAssignment = true)
             }
 
             is XrossType.Bool -> body.addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
@@ -129,20 +129,11 @@ object PropertyGenerator {
                         body.addStatement("${baseName}StrSetHandle.invokeExact(this.segment, arena.allocateFrom(v)) as Unit")
                     }
                     is XrossType.Optional -> {
-                        body.addStatement("val allocated = if (v == null) %T.NULL else %L", MemorySegment::class, generateAllocMsg(ty.inner, "v"))
+                        body.addStatement("val allocated = if (v == null) %T.NULL else %L", MemorySegment::class, GeneratorUtils.generateAllocMsg(ty.inner, "v"))
                         body.addStatement("${baseName}OptSetHandle.invokeExact(this.segment, allocated) as Unit")
                     }
                     is XrossType.Result -> {
-                        // Resultの構造体構築を共通化
-                        body.addStatement("val xrossRes = arena.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
-                        body.beginControlFlow("if (v.isSuccess)")
-                        body.addStatement("xrossRes.set(%M, 0L, 1.toByte())", FFMConstants.JAVA_BYTE)
-                        body.addStatement("val okAllocated = %L", generateAllocMsg(ty.ok, "v.getOrNull()!!"))
-                        body.addStatement("xrossRes.set(%M, 8L, okAllocated)", FFMConstants.ADDRESS)
-                        body.nextControlFlow("else")
-                        body.addStatement("xrossRes.set(%M, 0L, 0.toByte())", FFMConstants.JAVA_BYTE)
-                        body.addStatement("xrossRes.set(%M, 8L, %T.NULL)", FFMConstants.ADDRESS, MemorySegment::class)
-                        body.endControlFlow()
+                        body.addResultAllocation(ty, "v", "xrossRes")
                         body.addStatement("${baseName}ResSetHandle.invokeExact(this.segment, xrossRes) as Unit")
                     }
                 }
@@ -160,18 +151,6 @@ object PropertyGenerator {
         ).build()
     }
 
-    // ヘルパー: 型に応じた allocate 式を返す
-    private fun generateAllocMsg(ty: XrossType, valueName: String): CodeBlock = when (ty) {
-        is XrossType.Object -> CodeBlock.of("$valueName.segment")
-        is XrossType.RustString -> CodeBlock.of("arena.allocateFrom($valueName)")
-        is XrossType.F32 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits().toLong())", valueName)
-        is XrossType.F64 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits())", valueName)
-        is XrossType.Bool -> CodeBlock.of("MemorySegment.ofAddress(if (%L) 1L else 0L)", valueName)
-        else -> {
-            // Integer types <= 8 bytes
-            CodeBlock.of("MemorySegment.ofAddress(%L.toLong())", valueName)
-        }
-    }
     private fun generateAtomicProperty(
         classBuilder: TypeSpec.Builder,
         baseName: String,
