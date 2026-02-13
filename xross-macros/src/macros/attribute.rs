@@ -1,10 +1,10 @@
-use crate::codegen::ffi::{gen_arg_conversion, gen_ret_wrapping};
+use crate::codegen::ffi::{gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping, resolve_return_type};
 use crate::metadata::{load_definition, save_definition};
 use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
+use syn::{FnArg, ImplItem, ItemImpl, Pat, Type};
 use xross_metadata::{
     Ownership, ThreadSafety, XrossDefinition, XrossField, XrossMethod, XrossMethodType,
 };
@@ -61,25 +61,10 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
             for input in &method.sig.inputs {
                 match input {
                     FnArg::Receiver(receiver) => {
-                        let arg_ident = format_ident!("_self");
-                        method_type = if receiver.reference.is_none() {
-                            XrossMethodType::OwnedInstance
-                        } else if receiver.mutability.is_some() {
-                            XrossMethodType::MutInstance
-                        } else {
-                            XrossMethodType::ConstInstance
-                        };
-
-                        c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-                        if receiver.reference.is_none() {
-                            call_args.push(
-                                quote! { *Box::from_raw(#arg_ident as *mut #type_name_ident) },
-                            );
-                        } else if receiver.mutability.is_some() {
-                            call_args.push(quote!(&mut *(#arg_ident as *mut #type_name_ident)));
-                        } else {
-                            call_args.push(quote!(&*(#arg_ident as *const #type_name_ident)));
-                        }
+                        let (m_ty, c_arg, call_arg) = gen_receiver_logic(receiver, type_name_ident);
+                        method_type = m_ty;
+                        c_args.push(c_arg);
+                        call_args.push(call_arg);
                     }
                     FnArg::Typed(pat_type) => {
                         let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
@@ -119,35 +104,9 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 };
                 xross_metadata::XrossType::Object { signature: sig, ownership: Ownership::Owned }
             } else {
-                match &method.sig.output {
-                    ReturnType::Default => xross_metadata::XrossType::Void,
-                    ReturnType::Type(_, ty) => {
-                        let mut xross_ty = resolve_type_with_attr(
-                            ty,
-                            &method.attrs,
-                            &package_name,
-                            Some(type_name_ident),
-                        );
-
-                        let ownership = match &**ty {
-                            Type::Reference(r) => {
-                                if r.mutability.is_some() {
-                                    Ownership::MutRef
-                                } else {
-                                    Ownership::Ref
-                                }
-                            }
-                            _ => Ownership::Owned,
-                        };
-
-                        if let xross_metadata::XrossType::Object { ownership: o, .. } = &mut xross_ty
-                        {
-                            *o = ownership;
-                        }
-                        xross_ty
-                    }
-                }
+                resolve_return_type(&method.sig.output, &method.attrs, &package_name, type_name_ident)
             };
+
             methods_meta.push(XrossMethod {
                 name: rust_fn_name.to_string(),
                 symbol: symbol_name.clone(),

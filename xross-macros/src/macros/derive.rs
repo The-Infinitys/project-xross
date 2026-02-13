@@ -1,5 +1,6 @@
 use crate::codegen::ffi::{
-    generate_common_ffi, generate_property_accessors,
+    add_clone_method, generate_common_ffi, generate_enum_aux_ffi, generate_enum_layout,
+    generate_property_accessors, generate_struct_layout,
 };
 use crate::metadata::save_definition;
 use crate::types::resolver::resolve_type_with_attr;
@@ -8,8 +9,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Item;
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
-    XrossStruct, XrossType, XrossVariant,
+    ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossStruct, XrossVariant,
 };
 
 pub fn impl_xross_class_derive(input: Item) -> TokenStream {
@@ -22,33 +22,18 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
     match input {
         Item::Struct(s) => {
             let name = &s.ident;
+            let name_str = name.to_string();
             let package = extract_package(&s.attrs);
-            let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
+            let symbol_base = build_symbol_base(&crate_name, &package, &name_str);
 
-            let layout_logic = crate::codegen::ffi::generate_struct_layout(&s);
+            let layout_logic = generate_struct_layout(&s);
             let is_clonable = extract_is_clonable(&s.attrs);
 
             let mut fields = Vec::new();
             let mut methods = Vec::new();
 
             if is_clonable {
-                methods.push(XrossMethod {
-                    name: "clone".to_string(),
-                    symbol: format!("{}_clone", symbol_base),
-                    method_type: XrossMethodType::ConstInstance,
-                    is_constructor: false,
-                    args: vec![],
-                    ret: XrossType::Object {
-                        signature: if package.is_empty() {
-                            name.to_string()
-                        } else {
-                            format!("{}.{}", package, name)
-                        },
-                        ownership: Ownership::Owned,
-                    },
-                    safety: ThreadSafety::Lock,
-                    docs: vec!["Creates a clone of the native object.".to_string()],
-                });
+                add_clone_method(&mut methods, &symbol_base, &package, &name_str);
             }
 
             if let syn::Fields::Named(f) = &s.fields {
@@ -78,13 +63,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
             }
             save_definition(&XrossDefinition::Struct(XrossStruct {
                 signature: if package.is_empty() {
-                    name.to_string()
+                    name_str.clone()
                 } else {
-                    format!("{}.{}", package, name)
+                    format!("{}.{}", package, name_str)
                 },
                 symbol_prefix: symbol_base.clone(),
                 package_name: package,
-                name: name.to_string(),
+                name: name_str,
                 fields,
                 methods,
                 docs: extract_docs(&s.attrs),
@@ -102,37 +87,24 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
 
         Item::Enum(e) => {
             let name = &e.ident;
+            let name_str = name.to_string();
             let package = extract_package(&e.attrs);
-            let symbol_base = build_symbol_base(&crate_name, &package, &name.to_string());
+            let symbol_base = build_symbol_base(&crate_name, &package, &name_str);
 
-            let layout_logic = crate::codegen::ffi::generate_enum_layout(&e);
+            let layout_logic = generate_enum_layout(&e);
             let is_clonable = extract_is_clonable(&e.attrs);
 
             let mut variants = Vec::new();
             let mut methods = Vec::new();
+            let mut variant_name_arms = Vec::new();
 
             if is_clonable {
-                methods.push(XrossMethod {
-                    name: "clone".to_string(),
-                    symbol: format!("{}_clone", symbol_base),
-                    method_type: XrossMethodType::ConstInstance,
-                    is_constructor: false,
-                    args: vec![],
-                    ret: XrossType::Object {
-                        signature: if package.is_empty() {
-                            name.to_string()
-                        } else {
-                            format!("{}.{}", package, name)
-                        },
-                        ownership: Ownership::Owned,
-                    },
-                    safety: ThreadSafety::Lock,
-                    docs: vec!["Creates a clone of the native object.".to_string()],
-                });
+                add_clone_method(&mut methods, &symbol_base, &package, &name_str);
             }
 
             for v in &e.variants {
                 let v_ident = &v.ident;
+                let v_str = v_ident.to_string();
                 let mut v_fields = Vec::new();
                 let constructor_name = format_ident!("{}_new_{}", symbol_base, v_ident);
 
@@ -169,10 +141,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 }
 
                 let enum_construct = if v.fields.is_empty() {
+                    variant_name_arms.push(quote!(#name::#v_ident => #v_str));
                     quote! { #name::#v_ident }
                 } else if matches!(v.fields, syn::Fields::Named(_)) {
+                    variant_name_arms.push(quote!(#name::#v_ident { .. } => #v_str));
                     quote! { #name::#v_ident { #(#call_args),* } }
                 } else {
+                    variant_name_arms.push(quote!(#name::#v_ident(..) => #v_str));
                     quote! { #name::#v_ident(#(#call_args),*) }
                 };
 
@@ -185,7 +160,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 });
 
                 variants.push(XrossVariant {
-                    name: v_ident.to_string(),
+                    name: v_str,
                     fields: v_fields,
                     docs: extract_docs(&v.attrs),
                 });
@@ -193,13 +168,13 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
 
             save_definition(&XrossDefinition::Enum(XrossEnum {
                 signature: if package.is_empty() {
-                    name.to_string()
+                    name_str.clone()
                 } else {
-                    format!("{}.{}", package, name)
+                    format!("{}.{}", package, name_str)
                 },
                 symbol_prefix: symbol_base.clone(),
                 package_name: package,
-                name: name.to_string(),
+                name: name_str,
                 variants,
                 methods,
                 docs: extract_docs(&e.attrs),
@@ -214,34 +189,7 @@ pub fn impl_xross_class_derive(input: Item) -> TokenStream {
                 is_clonable,
             );
 
-            let tag_fn_id = format_ident!("{}_get_tag", symbol_base);
-            let variant_name_fn_id = format_ident!("{}_get_variant_name", symbol_base);
-            let mut variant_arms = Vec::new();
-            for v in &e.variants {
-                let v_ident = &v.ident;
-                let v_str = v_ident.to_string();
-                variant_arms.push(quote! {
-                    #name::#v_ident { .. } => #v_str,
-                });
-            }
-
-            extra_functions.push(quote! {
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #tag_fn_id(ptr: *const #name) -> i32 {
-                    if ptr.is_null() { return -1; }
-                    *(ptr as *const i32)
-                }
-
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #variant_name_fn_id(ptr: *const #name) -> *mut std::ffi::c_char {
-                    if ptr.is_null() { return std::ptr::null_mut(); }
-                    let val = &*ptr;
-                    let name = match val {
-                        #(#variant_arms)*
-                    };
-                    std::ffi::CString::new(name).unwrap().into_raw()
-                }
-            });
+            generate_enum_aux_ffi(name, &symbol_base, variant_name_arms, &mut extra_functions);
         }
         _ => panic!("#[derive(XrossClass)] only supports Struct and Enum"),
     }

@@ -1,4 +1,7 @@
-use crate::codegen::ffi::{gen_arg_conversion, gen_ret_wrapping, generate_property_accessors};
+use crate::codegen::ffi::{
+    add_clone_method, gen_arg_conversion, gen_receiver_logic, gen_ret_wrapping,
+    generate_enum_aux_ffi, generate_property_accessors, resolve_return_type,
+};
 use crate::metadata::save_definition;
 use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::*;
@@ -8,8 +11,8 @@ use syn::{
     braced, parenthesized, parse_macro_input, FnArg, Pat, ReturnType, Signature, Token, Type,
 };
 use xross_metadata::{
-    Ownership, ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
-    XrossStruct, XrossType, XrossVariant,
+    ThreadSafety, XrossDefinition, XrossEnum, XrossField, XrossMethod, XrossMethodType,
+    XrossStruct, XrossVariant,
 };
 
 syn::custom_keyword!(package);
@@ -237,9 +240,13 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let symbol_base = build_symbol_base(&crate_name, &package, &name);
 
     let mut extra_functions = Vec::new();
+    let mut methods_meta = Vec::new();
+
+    if is_clonable {
+        add_clone_method(&mut methods_meta, &symbol_base, &package, &name);
+    }
 
     // Process Common Methods
-    let mut methods_meta = Vec::new();
     for (sig, type_override) in methods_raw {
         let rust_fn_name = &sig.ident;
         let symbol_name = format!("{}_{}", symbol_base, rust_fn_name);
@@ -254,23 +261,10 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         for input_arg in &sig.inputs {
             match input_arg {
                 FnArg::Receiver(receiver) => {
-                    let arg_ident = format_ident!("_self");
-                    method_type = if receiver.reference.is_none() {
-                        XrossMethodType::OwnedInstance
-                    } else if receiver.mutability.is_some() {
-                        XrossMethodType::MutInstance
-                    } else {
-                        XrossMethodType::ConstInstance
-                    };
-
-                    c_args.push(quote! { #arg_ident: *mut std::ffi::c_void });
-                    if receiver.reference.is_none() {
-                        call_args.push(quote! { *Box::from_raw(#arg_ident as *mut #type_ident) });
-                    } else if receiver.mutability.is_some() {
-                        call_args.push(quote! { &mut *(#arg_ident as *mut #type_ident) });
-                    } else {
-                        call_args.push(quote! { &*(#arg_ident as *const #type_ident) });
-                    }
+                    let (m_ty, c_arg, call_arg) = gen_receiver_logic(receiver, &type_ident);
+                    method_type = m_ty;
+                    c_args.push(c_arg);
+                    call_args.push(call_arg);
                 }
                 FnArg::Typed(pat_type) => {
                     let arg_name = if let Pat::Ident(id) = &*pat_type.pat {
@@ -298,26 +292,7 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             }
         }
 
-        let ret_ty = match &sig.output {
-            ReturnType::Default => XrossType::Void,
-            ReturnType::Type(_, ty) => {
-                let mut xty = resolve_type_with_attr(ty, &[], &package, Some(&type_ident));
-                let ownership = match &**ty {
-                    Type::Reference(r) => {
-                        if r.mutability.is_some() {
-                            Ownership::MutRef
-                        } else {
-                            Ownership::Ref
-                        }
-                    }
-                    _ => Ownership::Owned,
-                };
-                if let XrossType::Object { ownership: o, .. } = &mut xty {
-                    *o = ownership;
-                }
-                xty
-            }
-        };
+        let ret_ty = resolve_return_type(&sig.output, &[], &package, &type_ident);
 
         let is_constructor = if let ReturnType::Type(_, ty) = &sig.output {
             match &**ty {
@@ -496,26 +471,7 @@ pub fn impl_xross_class(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             parts.join(";")
         };
 
-        // Add tag and name functions for Enum
-        let tag_fn_id = format_ident!("{}_get_tag", symbol_base);
-        let variant_name_fn_id = format_ident!("{}_get_variant_name", symbol_base);
-        extra_functions.push(quote! {
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #tag_fn_id(ptr: *const #type_ident) -> i32 {
-                if ptr.is_null() { return -1; }
-                *(ptr as *const i32)
-            }
-
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #variant_name_fn_id(ptr: *const #type_ident) -> *mut std::ffi::c_char {
-                if ptr.is_null() { return std::ptr::null_mut(); }
-                let val = &*ptr;
-                let name = match val {
-                    #(#variant_name_arms),*
-                };
-                std::ffi::CString::new(name).unwrap().into_raw()
-            }
-        });
+        generate_enum_aux_ffi(&type_ident, &symbol_base, variant_name_arms, &mut extra_functions);
     } else {
         // Struct Processing
         let mut fields_meta = Vec::new();

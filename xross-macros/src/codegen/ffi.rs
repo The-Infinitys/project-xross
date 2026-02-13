@@ -1,8 +1,9 @@
+use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::extract_inner_type;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ReturnType, Type};
-use xross_metadata::{Ownership, XrossType};
+use syn::{Attribute, Receiver, ReturnType, Type};
+use xross_metadata::{Ownership, ThreadSafety, XrossMethod, XrossMethodType, XrossType};
 
 /// Generates common FFI functions for a type, such as drop, clone, and metadata layout retrieval.
 pub fn generate_common_ffi(
@@ -60,6 +61,115 @@ pub fn generate_common_ffi(
             let s = <#name as #trait_name>::xross_layout();
             std::ffi::CString::new(s).unwrap().into_raw()
         }
+    });
+}
+
+/// Generates helper functions for Enums (tag and variant name).
+pub fn generate_enum_aux_ffi(
+    type_ident: &syn::Ident,
+    symbol_base: &str,
+    variant_name_arms: Vec<TokenStream>,
+    toks: &mut Vec<TokenStream>,
+) {
+    let tag_fn_id = format_ident!("{}_get_tag", symbol_base);
+    let variant_name_fn_id = format_ident!("{}_get_variant_name", symbol_base);
+    toks.push(quote! {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn #tag_fn_id(ptr: *const #type_ident) -> i32 {
+            if ptr.is_null() { return -1; }
+            *(ptr as *const i32)
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn #variant_name_fn_id(ptr: *const #type_ident) -> *mut std::ffi::c_char {
+            if ptr.is_null() { return std::ptr::null_mut(); }
+            let val = &*ptr;
+            let name = match val {
+                #(#variant_name_arms),*
+            };
+            std::ffi::CString::new(name).unwrap().into_raw()
+        }
+    });
+}
+
+/// Resolves the Xross return type and ownership.
+pub fn resolve_return_type(
+    output: &ReturnType,
+    attrs: &[Attribute],
+    package: &str,
+    type_ident: &syn::Ident,
+) -> XrossType {
+    match output {
+        ReturnType::Default => XrossType::Void,
+        ReturnType::Type(_, ty) => {
+            let mut xty = resolve_type_with_attr(ty, attrs, package, Some(type_ident));
+            let ownership = match &**ty {
+                Type::Reference(r) => {
+                    if r.mutability.is_some() {
+                        Ownership::MutRef
+                    } else {
+                        Ownership::Ref
+                    }
+                }
+                _ => Ownership::Owned,
+            };
+            if let XrossType::Object { ownership: o, .. } = &mut xty {
+                *o = ownership;
+            }
+            xty
+        }
+    }
+}
+
+/// Handles the receiver (&self, &mut self, self) conversion.
+pub fn gen_receiver_logic(
+    receiver: &Receiver,
+    type_ident: &syn::Ident,
+) -> (XrossMethodType, TokenStream, TokenStream) {
+    let arg_ident = format_ident!("_self");
+    let method_type = if receiver.reference.is_none() {
+        XrossMethodType::OwnedInstance
+    } else if receiver.mutability.is_some() {
+        XrossMethodType::MutInstance
+    } else {
+        XrossMethodType::ConstInstance
+    };
+
+    let c_arg = quote! { #arg_ident: *mut std::ffi::c_void };
+    let call_arg = if receiver.reference.is_none() {
+        quote! { *Box::from_raw(#arg_ident as *mut #type_ident) }
+    } else if receiver.mutability.is_some() {
+        quote! { &mut *(#arg_ident as *mut #type_ident) }
+    } else {
+        quote! { &*(#arg_ident as *const #type_ident) }
+    };
+
+    (method_type, c_arg, call_arg)
+}
+
+/// Adds a standard clone method to the methods list if clonable.
+pub fn add_clone_method(
+    methods: &mut Vec<XrossMethod>,
+    symbol_base: &str,
+    package: &str,
+    name: &str,
+) {
+    methods.push(XrossMethod {
+        name: "clone".to_string(),
+        symbol: format!("{}_clone", symbol_base),
+        method_type: XrossMethodType::ConstInstance,
+        is_constructor: false,
+        args: vec![],
+        ret: XrossType::Object {
+            signature: if package.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}.{}", package, name)
+            },
+            ownership: Ownership::Owned,
+        },
+        safety: ThreadSafety::Lock,
+        docs: vec!["Creates a clone of the native object.".to_string()],
     });
 }
 
