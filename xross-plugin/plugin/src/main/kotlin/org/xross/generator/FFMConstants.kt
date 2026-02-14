@@ -30,4 +30,15 @@ object FFMConstants {
         ADDRESS,
         "ptr",
     )
+
+    val XROSS_TASK_LAYOUT_CODE = com.squareup.kotlinpoet.CodeBlock.of(
+        "%T.structLayout(%M.withName(%S), %M.withName(%S), %M.withName(%S))",
+        MEMORY_LAYOUT,
+        ADDRESS,
+        "taskPtr",
+        ADDRESS,
+        "pollFn",
+        ADDRESS,
+        "dropFn",
+    )
 }

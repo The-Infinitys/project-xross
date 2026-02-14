@@ -59,6 +59,7 @@ pub fn impl_xross_class(input: XrossClassInput) -> proc_macro::TokenStream {
 
     for (sig, type_override) in methods_raw {
         let rust_fn_name = &sig.ident;
+        let is_async = sig.asyncness.is_some();
         let mut ffi_data = MethodFfiData::new(&symbol_base, rust_fn_name);
         process_method_args(&sig.inputs, &package, &type_ident, &mut ffi_data);
         let ret_ty = resolve_return_type(&sig.output, &[], &package, &type_ident);
@@ -78,6 +79,7 @@ pub fn impl_xross_class(input: XrossClassInput) -> proc_macro::TokenStream {
             handle_mode: xross_metadata::HandleMode::Normal,
             safety: ThreadSafety::Lock,
             is_constructor,
+            is_async,
             args: ffi_data.args_meta.clone(),
             ret: ret_ty.clone(),
             docs: vec![],

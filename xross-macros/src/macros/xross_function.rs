@@ -95,6 +95,7 @@ pub fn impl_xross_function(input: proc_macro::TokenStream) -> proc_macro::TokenS
     let package_name = input.package_name;
     let rust_fn_name = &input.signature.ident;
     let name_str = rust_fn_name.to_string();
+    let is_async = input.signature.asyncness.is_some();
 
     let symbol_prefix = if package_name.is_empty() {
         crate_name.clone()
@@ -103,6 +104,7 @@ pub fn impl_xross_function(input: proc_macro::TokenStream) -> proc_macro::TokenS
     };
 
     let mut ffi_data = MethodFfiData::new(&symbol_prefix, rust_fn_name);
+    ffi_data.is_async = is_async;
     let dummy_ident = syn::Ident::new("Global", proc_macro2::Span::call_site());
     process_method_args(&input.signature.inputs, &package_name, &dummy_ident, &mut ffi_data);
 
@@ -120,6 +122,7 @@ pub fn impl_xross_function(input: proc_macro::TokenStream) -> proc_macro::TokenS
         handle_mode: input.handle_mode,
         safety: input.safety,
         is_constructor: false,
+        is_async,
         args: ffi_data.args_meta.clone(),
         ret: ret_ty.clone(),
         docs: vec![],

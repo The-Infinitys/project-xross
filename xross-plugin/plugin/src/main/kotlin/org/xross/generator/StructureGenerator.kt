@@ -31,6 +31,17 @@ object StructureGenerator {
                 .initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock"))
                 .build(),
         )
+        companionBuilder.addProperty(
+            PropertySpec.builder("al", ClassName("$basePackage.xross.runtime", "XrossAsyncLock"))
+                .addModifiers(KModifier.INTERNAL)
+                .initializer("%T()", ClassName("$basePackage.xross.runtime", "XrossAsyncLock"))
+                .build(),
+        )
+        companionBuilder.addProperty(
+            PropertySpec.builder("autoArena", ClassName("java.lang.foreign", "Arena"), KModifier.INTERNAL)
+                .initializer("%T.ofAuto()", ClassName("java.lang.foreign", "Arena"))
+                .build(),
+        )
 
         if (meta is XrossDefinition.Function) return
 
@@ -60,6 +71,12 @@ object StructureGenerator {
                 PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock"))
                     .addModifiers(KModifier.INTERNAL)
                     .initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                    .build(),
+            )
+            classBuilder.addProperty(
+                PropertySpec.builder("al", ClassName("$basePackage.xross.runtime", "XrossAsyncLock"))
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", ClassName("$basePackage.xross.runtime", "XrossAsyncLock"))
                     .build(),
             )
 
@@ -95,6 +112,7 @@ object StructureGenerator {
 
             classBuilder.addProperty(PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock")).addModifiers(KModifier.INTERNAL).initializer("%T()", ClassName("java.util.concurrent.locks", "StampedLock")).build())
             classBuilder.addProperty(PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock")).addModifiers(KModifier.INTERNAL).initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock")).build())
+            classBuilder.addProperty(PropertySpec.builder("al", ClassName("$basePackage.xross.runtime", "XrossAsyncLock")).addModifiers(KModifier.INTERNAL).initializer("%T()", ClassName("$basePackage.xross.runtime", "XrossAsyncLock")).build())
         }
 
         // --- fromPointer メソッド ---

@@ -18,7 +18,6 @@ object CompanionGenerator {
         defineProperties(companionBuilder, meta)
 
         val init = CodeBlock.builder()
-            .addStatement("val linker = %T.nativeLinker()", Linker::class.asTypeName())
             .addStatement("val lookup = %T.loaderLookup()", SymbolLookup::class.asTypeName())
 
         HandleResolver.resolveAllHandles(init, meta)
@@ -73,6 +72,14 @@ object CompanionGenerator {
 
     private fun defineProperties(builder: TypeSpec.Builder, meta: XrossDefinition) {
         val handles = mutableListOf<String>()
+
+        builder.addProperty(
+
+            PropertySpec.builder("linker", Linker::class.asTypeName(), KModifier.INTERNAL)
+                .initializer("%T.nativeLinker()", Linker::class.asTypeName())
+                .build(),
+
+        )
 
         if (meta !is XrossDefinition.Function) {
             handles.addAll(listOf("dropHandle", "layoutHandle", "xrossFreeStringHandle"))

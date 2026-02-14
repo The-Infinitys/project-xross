@@ -46,6 +46,7 @@ object MethodGenerator {
             val returnType = GeneratorUtils.resolveReturnType(method.ret, basePackage)
             val kotlinName = method.name.toCamelCase().escapeKotlinKeyword()
             val funBuilder = FunSpec.builder(kotlinName).returns(returnType)
+            if (method.isAsync) funBuilder.addModifiers(KModifier.SUSPEND)
 
             // Avoid clash with property accessors
             val fields = when (meta) {
@@ -102,7 +103,7 @@ object MethodGenerator {
 
             val handleName = "${method.name.toCamelCase()}Handle"
             val isPanicable = method.handleMode is HandleMode.Panicable
-            val call = if (method.ret is XrossType.Result || isPanicable) {
+            val call = if (method.isAsync || method.ret is XrossType.Result || isPanicable) {
                 CodeBlock.of(
                     "$handleName.invokeExact(this.autoArena as %T, %L)",
                     SegmentAllocator::class,
@@ -140,37 +141,73 @@ object MethodGenerator {
         val isVoid = method.ret is XrossType.Void
         val body = CodeBlock.builder()
 
-        when (method.safety) {
-            XrossThreadSafety.Immutable -> {
-                // Fair Lock (ReentrantLock(true)) to preserve call order
-                if (!isVoid) body.addStatement("var resValue: %T", returnType)
-                body.addStatement("this.fl.lock()")
-                body.beginControlFlow("try")
-                if (!isVoid) body.add("resValue = ")
-                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
-                body.nextControlFlow("finally")
-                body.addStatement("this.fl.unlock()")
-                body.endControlFlow()
-            }
-            XrossThreadSafety.Lock -> {
-                // Standard synchronized lock using StampedLock
-                if (!isVoid) body.addStatement("var resValue: %T", returnType)
-                body.addStatement("val stamp = this.sl.writeLock()")
-                body.beginControlFlow("try")
-                if (!isVoid) body.add("resValue = ")
-                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
-                body.nextControlFlow("finally")
-                body.addStatement("this.sl.unlockWrite(stamp)")
-                body.endControlFlow()
-            }
-            else -> {
-                // Atomic or Unsafe - Direct call
-                if (!isVoid) body.add("val resValue = ")
-                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+        // Prepare list of objects to lock (including self and arguments)
+        val targets = mutableListOf<LockTarget>()
+        if (method.methodType != XrossMethodType.Static) {
+            val isMut = method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance
+            targets.add(LockTarget("this", isMut, isSelf = true))
+        }
+        method.args.forEach { arg ->
+            if (arg.ty is XrossType.Object) {
+                val isMut = arg.ty.ownership == XrossType.Ownership.MutRef || arg.ty.ownership == XrossType.Ownership.Owned || arg.ty.ownership == XrossType.Ownership.Boxed
+                targets.add(LockTarget(arg.name.toCamelCase().escapeKotlinKeyword(), isMut, isSelf = false))
             }
         }
 
-        // Post-call logic for OwnedInstance
+        if (!isVoid) body.addStatement("var resValue: %T", returnType)
+
+        // Helper to generate nested locks
+        fun wrapWithLocks(index: Int) {
+            if (index >= targets.size) {
+                if (!isVoid) body.add("resValue = ")
+                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+                return
+            }
+
+            val target = targets[index]
+            val suffix = if (method.isAsync) "" else "Blocking"
+            val action = if (target.isMutable) "Write" else "Read"
+
+            val lockMethod = "lock$action$suffix"
+            val unlockMethod = "unlock$action$suffix"
+
+            // If target is self, use sl as well for sync-async consistency
+            val useSl = target.isSelf
+
+            body.addStatement("${target.name}.al.%L()", lockMethod)
+            body.beginControlFlow("try")
+
+            if (useSl) {
+                body.addStatement("val stamp = if (%L) ${target.name}.sl.writeLock() else ${target.name}.sl.readLock()", target.isMutable)
+                body.beginControlFlow("try")
+            }
+
+            wrapWithLocks(index + 1)
+
+            if (useSl) {
+                body.nextControlFlow("finally")
+                body.addStatement("if (%L) ${target.name}.sl.unlockWrite(stamp) else ${target.name}.sl.unlockRead(stamp)", target.isMutable)
+                body.endControlFlow()
+            }
+
+            body.nextControlFlow("finally")
+            body.addStatement("${target.name}.al.%L()", unlockMethod)
+            body.endControlFlow()
+        }
+
+        // Special handling for Immutable synchronous locking (Fair lock)
+        if (!method.isAsync && method.safety == XrossThreadSafety.Immutable && method.methodType != XrossMethodType.Static) {
+            body.addStatement("this.fl.lock()")
+            body.beginControlFlow("try")
+            wrapWithLocks(0)
+            body.nextControlFlow("finally")
+            body.addStatement("this.fl.unlock()")
+            body.endControlFlow()
+        } else {
+            wrapWithLocks(0)
+        }
+
+        // Post-call ownership logic (Relinquish)
         if (method.methodType == XrossMethodType.OwnedInstance) {
             val isPureEnum = GeneratorUtils.isPureEnum(meta)
             val isCopy = meta.isCopy
@@ -182,13 +219,10 @@ object MethodGenerator {
                 }
                 body.addStatement("}")
             } else if (!isCopy || !isPureEnum) {
-                // If it's an Enum (complex) or Struct, and it's consumed, we relinquish it.
-                // Note: Structs don't have isPureEnum true.
                 body.addStatement("this.relinquishInternal()")
             }
         }
 
-        // Relinquish owned arguments
         method.args.forEach { arg ->
             if (arg.ty is XrossType.Object && arg.ty.isOwned) {
                 val name = arg.name.toCamelCase().escapeKotlinKeyword()
@@ -199,6 +233,8 @@ object MethodGenerator {
         if (!isVoid) body.addStatement("resValue")
         return body.build()
     }
+
+    private data class LockTarget(val name: String, val isMutable: Boolean, val isSelf: Boolean)
 
     private fun generateInvokeLogic(
         method: XrossMethod,
@@ -218,6 +254,30 @@ object MethodGenerator {
             if (type == selfType) CodeBlock.of("dropHandle") else CodeBlock.of("%T.dropHandle", type),
             if (type == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", type),
         )
+
+        if (method.isAsync) {
+            body.beginControlFlow("run")
+            body.addStatement("val task = %L as %T", call, MEMORY_SEGMENT)
+            body.addStatement("val taskPtr = task.get(%M, 0L)", ADDRESS)
+            body.addStatement("val pollFnPtr = task.get(%M, 8L)", ADDRESS)
+            body.addStatement("val dropFnPtr = task.get(%M, 16L)", ADDRESS)
+
+            body.addStatement("val pollFn = linker.downcallHandle(pollFnPtr, %T.of(%L, %M))", FFMConstants.FUNCTION_DESCRIPTOR, FFMConstants.XROSS_RESULT_LAYOUT_CODE, ADDRESS)
+            body.addStatement("val dropFn = linker.downcallHandle(dropFnPtr, %T.ofVoid(%M))", FFMConstants.FUNCTION_DESCRIPTOR, ADDRESS)
+
+            body.beginControlFlow("%T.awaitFuture(taskPtr, pollFn, dropFn)", ClassName(runtimePkg, "XrossAsync"))
+            body.addResultVariantResolution(
+                method.ret,
+                "it",
+                returnType,
+                selfType,
+                basePackage,
+                "dropHandle",
+            )
+            body.endControlFlow()
+            body.endControlFlow()
+            return body.build()
+        }
 
         if (isPanicable) {
             body.beginControlFlow("run")

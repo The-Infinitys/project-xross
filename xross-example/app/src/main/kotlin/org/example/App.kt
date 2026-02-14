@@ -1,5 +1,6 @@
 package org.example
 
+import kotlinx.coroutines.runBlocking
 import org.example.complex.ComplexStruct
 import org.example.external.ExternalStruct
 import org.example.some.HelloEnum
@@ -48,6 +49,7 @@ fun main() {
             executeComplexStructPropertyTest()
             executePanicAndTrivialTest()
             executeStandaloneFunctionTest()
+            executeAsyncTest()
 
             if (i % 10 == 0) {
                 println(">>> Completed cycle $i / $repeatCount")
@@ -123,6 +125,28 @@ fun executeStandaloneFunctionTest() {
     if (product != 30) throw RuntimeException("Global function multiply failed!")
 
     println("✅ Standalone function tests passed.")
+}
+
+fun executeAsyncTest() = runBlocking {
+    println("\n--- [10] Async (suspend fun) Test ---")
+    
+    // 1. Standalone Async Function
+    val sum = org.example.standalone.AsyncAdd.asyncAdd(100, 200)
+    println("asyncAdd(100, 200) = $sum")
+    if (sum != 300) throw RuntimeException("Async add failed")
+
+    val greeting = org.example.standalone.AsyncGreet.asyncGreet("Coroutines")
+    println("asyncGreet(\"Coroutines\") = $greeting")
+    if (greeting != "Async Hello, Coroutines!") throw RuntimeException("Async greet failed")
+
+    // 2. Class Method Async
+    val service = MyService()
+    val res = service.asyncExecute(42)
+    println("MyService.asyncExecute(42) = $res")
+    if (res != 84) throw RuntimeException("Async method execution failed")
+    
+    service.close()
+    println("✅ Async tests passed.")
 }
 
 fun executeComplexStructPropertyTest() {

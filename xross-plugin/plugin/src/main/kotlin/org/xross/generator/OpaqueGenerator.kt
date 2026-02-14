@@ -108,7 +108,7 @@ object OpaqueGenerator {
         val baseName = field.name.toCamelCase()
         val body = CodeBlock.builder()
         body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Object invalid")
-        
+
         val setHandle = when (field.ty) {
             is XrossType.RustString -> "${baseName}StrSetHandle"
             is XrossType.Optional -> "${baseName}OptSetHandle"

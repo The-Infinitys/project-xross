@@ -54,7 +54,9 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
             }
 
             let rust_fn_name = &method.sig.ident;
+            let is_async = method.sig.asyncness.is_some();
             let mut ffi_data = MethodFfiData::new(&symbol_base, rust_fn_name);
+            ffi_data.is_async = is_async;
 
             process_method_args(&method.sig.inputs, &package_name, type_name_ident, &mut ffi_data);
 
@@ -81,6 +83,7 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
                 handle_mode,
                 safety: extract_safety_attr(&method.attrs, ThreadSafety::Lock),
                 is_constructor: is_new,
+                is_async,
                 args: ffi_data.args_meta.clone(),
                 ret: ret_ty.clone(),
                 docs: extract_docs(&method.attrs),
@@ -111,7 +114,7 @@ pub fn impl_xross_class_attribute(_attr: TokenStream, mut input_impl: ItemImpl) 
     }
 
     save_definition(&definition);
-    quote! { #input_impl #(#extra_functions)* }
+    quote! { #(#extra_functions)* #input_impl }
 }
 
 pub fn impl_xross_function_attribute(attr: TokenStream, input_fn: syn::ItemFn) -> TokenStream {
@@ -165,6 +168,7 @@ pub fn impl_xross_function_attribute(attr: TokenStream, input_fn: syn::ItemFn) -
 
     let rust_fn_name = &input_fn.sig.ident;
     let name_str = rust_fn_name.to_string();
+    let is_async = input_fn.sig.asyncness.is_some();
 
     let symbol_prefix = if package_name.is_empty() {
         crate_name.clone()
@@ -173,6 +177,8 @@ pub fn impl_xross_function_attribute(attr: TokenStream, input_fn: syn::ItemFn) -
     };
 
     let mut ffi_data = MethodFfiData::new(&symbol_prefix, rust_fn_name);
+    ffi_data.is_async = is_async;
+    // Standalone functions don't have a receiver, so we use a dummy ident for type_name_ident
     let dummy_ident = syn::Ident::new("Global", proc_macro2::Span::call_site());
     process_method_args(&input_fn.sig.inputs, &package_name, &dummy_ident, &mut ffi_data);
 
@@ -193,6 +199,7 @@ pub fn impl_xross_function_attribute(attr: TokenStream, input_fn: syn::ItemFn) -
         handle_mode,
         safety,
         is_constructor: false,
+        is_async,
         args: ffi_data.args_meta.clone(),
         ret: ret_ty.clone(),
         docs: extract_docs(&input_fn.attrs),

@@ -193,11 +193,12 @@ object HandleResolver {
                 }
             }
 
-            val desc = if (method.ret is XrossType.Void) {
+            val desc = if (method.ret is XrossType.Void && !method.isAsync) {
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, args.joinToCode(", "))
             } else {
                 val argsPart = if (args.isEmpty()) CodeBlock.of("") else CodeBlock.of(", %L", args.joinToCode(", "))
                 val retLayout = when {
+                    method.isAsync -> FFMConstants.XROSS_TASK_LAYOUT_CODE
                     method.handleMode is HandleMode.Panicable -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
                     method.ret is XrossType.Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
                     else -> CodeBlock.of("%M", method.ret.layoutMember)

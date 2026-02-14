@@ -2,12 +2,32 @@
 
 use std::cmp::{max, min};
 use std::sync::atomic::{AtomicIsize, Ordering};
-use xross_core::{XrossClass, xross_class, xross_methods};
+use xross_core::{XrossClass, xross_class, xross_methods, xross_function, xross_function_dsl};
 
 // --- グローバル・カウンター ---
 static SERVICE_COUNT: AtomicIsize = AtomicIsize::new(0);
 static UNKNOWN_STRUCT_COUNT: AtomicIsize = AtomicIsize::new(0);
 static SERVICE2_COUNT: AtomicIsize = AtomicIsize::new(0);
+
+// For testing async tasks
+static _RUNTIME: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+});
+
+#[xross_function(package = "standalone")]
+pub async fn async_add(a: i32, b: i32) -> i32 {
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    a + b
+}
+
+#[xross_function(package = "standalone")]
+pub async fn async_greet(name: String) -> String {
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    format!("Async Hello, {}!", name)
+}
 
 // --- UnknownStruct ---
 
@@ -164,6 +184,12 @@ impl MyService {
         SERVICE_COUNT.fetch_add(1, Ordering::SeqCst);
         // UnknownStruct::default() 内でカウント +1 済み
         MyService { _boxes: vec![0; 1_000_000], unknown_struct: Box::new(UnknownStruct::default()) }
+    }
+
+    #[xross_method]
+    pub async fn async_execute(&self, val: i32) -> i32 {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        val * 2
     }
 
     #[xross_method]
@@ -341,8 +367,6 @@ xross_class! {
     method &mut self.set_value(v: i32);
     method &self.greet(prefix: String) -> String;
 }
-
-use xross_core::{xross_function, xross_function_dsl};
 
 #[xross_function(package = "standalone", critical)]
 pub fn global_add(a: i32, b: i32) -> i32 {

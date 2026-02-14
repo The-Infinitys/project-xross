@@ -46,62 +46,91 @@ object PropertyGenerator {
         val offsetName = "OFFSET_$baseName"
         val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
 
-        when (val ty = field.ty) {
-            is XrossType.Object -> {
-                // キャッシュチェック
-                body.addStatement("val cached = this.$backingFieldName?.get()")
-                body.beginControlFlow("if (cached != null && cached.aliveFlag.isValid)")
-                body.addStatement("res = cached")
-                body.nextControlFlow("else")
+        val readLogic = CodeBlock.builder().apply {
+            when (val ty = field.ty) {
+                is XrossType.Object -> {
+                    // キャッシュチェック
+                    addStatement("val cached = this.$backingFieldName?.get()")
+                    beginControlFlow("if (cached != null && cached.aliveFlag.isValid)")
+                    addStatement("res = cached")
+                    nextControlFlow("else")
 
-                val isOwned = ty.ownership == XrossType.Ownership.Owned
-                val sizeExpr = if (kType == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
-                val fromPointerExpr = if (kType == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", kType)
-                val ffiHelpers = ClassName("$basePackage.xross.runtime", "FfiHelpers")
+                    val isOwned = ty.ownership == XrossType.Ownership.Owned
+                    val sizeExpr = if (kType == selfType) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", kType)
+                    val fromPointerExpr = if (kType == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", kType)
+                    val ffiHelpers = ClassName("$basePackage.xross.runtime", "FfiHelpers")
 
-                body.addStatement("val resSeg = %T.resolveFieldSegment(this.segment, ${if (isOwned) "null" else vhName}, $offsetName, $sizeExpr, $isOwned)", ffiHelpers)
-                body.addStatement("res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
-                body.addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
-                body.endControlFlow()
+                    addStatement("val resSeg = %T.resolveFieldSegment(this.segment, ${if (isOwned) "null" else vhName}, $offsetName, $sizeExpr, $isOwned)", ffiHelpers)
+                    addStatement("res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))", fromPointerExpr, flagType)
+                    addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
+                    endControlFlow()
+                }
+
+                is XrossType.Optional -> {
+                    addStatement("val resRaw = ${baseName}OptGetHandle.invokeExact(this.segment) as %T", MemorySegment::class)
+                    add("res = ")
+                    beginControlFlow("if (resRaw == %T.NULL)", MemorySegment::class).addStatement("null").nextControlFlow("else")
+                    addResultVariantResolution(ty.inner, "resRaw", GeneratorUtils.resolveReturnType(ty.inner, basePackage), selfType, basePackage, "dropHandle")
+                    endControlFlow()
+                }
+
+                is XrossType.Result -> {
+                    addStatement("val resRaw = ${baseName}ResGetHandle.invokeExact(this.autoArena as %T, this.segment) as %T", SegmentAllocator::class, MemorySegment::class)
+                    addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
+                    addStatement("val ptr = resRaw.get(%M, 8L)", FFMConstants.ADDRESS)
+
+                    add("res = ")
+                    beginControlFlow("if (isOk)")
+                    add("val okVal = ")
+                    addResultVariantResolution(ty.ok, "ptr", GeneratorUtils.resolveReturnType(ty.ok, basePackage), selfType, basePackage, "dropHandle")
+                    addStatement("Result.success(okVal)")
+
+                    nextControlFlow("else")
+                    add("val errVal = ")
+                    addResultVariantResolution(ty.err, "ptr", GeneratorUtils.resolveReturnType(ty.err, basePackage), selfType, basePackage, "dropHandle")
+                    addStatement("Result.failure(%T(errVal))", ClassName("$basePackage.xross.runtime", "XrossException"))
+                    endControlFlow()
+                }
+
+                is XrossType.RustString -> {
+                    val callExpr = "${baseName}StrGetHandle.invokeExact(this.segment)"
+                    addRustStringResolution(callExpr, "res", isAssignment = true)
+                }
+
+                is XrossType.Bool -> addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
+                else -> addStatement("res = $vhName.get(this.segment, $offsetName) as %T", kType)
             }
+        }.build()
 
-            is XrossType.Optional -> {
-                body.addStatement("val resRaw = ${baseName}OptGetHandle.invokeExact(this.segment) as %T", MemorySegment::class)
-                body.add("res = ")
-                body.beginControlFlow("if (resRaw == %T.NULL)", MemorySegment::class).addStatement("null").nextControlFlow("else")
-                body.addResultVariantResolution(ty.inner, "resRaw", GeneratorUtils.resolveReturnType(ty.inner, basePackage), selfType, basePackage, "dropHandle")
-                body.endControlFlow()
-            }
+        val optimisticReadCode = CodeBlock.builder()
+            .addStatement("var stamp = this.sl.tryOptimisticRead()")
+            .addStatement("var res: %T", kType)
+            .add("\n// Optimistic read\n")
+            .add(readLogic)
+            .beginControlFlow("if (!this.sl.validate(stamp))")
+            .addStatement("stamp = this.sl.readLock()")
+            .beginControlFlow("try")
+            .add("\n// Pessimistic read\n")
+            .add(readLogic)
+            .nextControlFlow("finally")
+            .addStatement("this.sl.unlockRead(stamp)")
+            .endControlFlow()
+            .endControlFlow()
+            .addStatement("return res")
+            .build()
 
-            is XrossType.Result -> {
-                body.addStatement("val resRaw = ${baseName}ResGetHandle.invokeExact(this.autoArena as %T, this.segment) as %T", SegmentAllocator::class, MemorySegment::class)
-                body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
-                body.addStatement("val ptr = resRaw.get(%M, 8L)", FFMConstants.ADDRESS)
+        val fullBody = CodeBlock.builder()
+            .addStatement("this.al.lockReadBlocking()")
+            .beginControlFlow("try")
+            .add(optimisticReadCode)
+            .nextControlFlow("finally")
+            .addStatement("this.al.unlockReadBlocking()")
+            .endControlFlow()
+            .build()
 
-                body.add("res = ")
-                body.beginControlFlow("if (isOk)")
-                body.add("val okVal = ")
-                body.addResultVariantResolution(ty.ok, "ptr", GeneratorUtils.resolveReturnType(ty.ok, basePackage), selfType, basePackage, "dropHandle")
-                body.addStatement("Result.success(okVal)")
-
-                body.nextControlFlow("else")
-                body.add("val errVal = ")
-                body.addResultVariantResolution(ty.err, "ptr", GeneratorUtils.resolveReturnType(ty.err, basePackage), selfType, basePackage, "dropHandle")
-                body.addStatement("Result.failure(%T(errVal))", ClassName("$basePackage.xross.runtime", "XrossException"))
-                body.endControlFlow()
-            }
-
-            is XrossType.RustString -> {
-                val callExpr = "${baseName}StrGetHandle.invokeExact(this.segment)"
-                body.addRustStringResolution(callExpr, "res", isAssignment = true)
-            }
-
-            is XrossType.Bool -> body.addStatement("res = ($vhName.get(this.segment, $offsetName) as Byte) != (0).toByte()")
-            else -> body.addStatement("res = $vhName.get(this.segment, $offsetName) as %T", kType)
-        }
-
-        return GeneratorUtils.buildOptimisticReadGetter(kType, body.build())
+        return FunSpec.getterBuilder().addCode(fullBody).build()
     }
+
     private fun buildSetter(field: XrossField, vhName: String, kType: TypeName, backingFieldName: String?, selfType: ClassName): FunSpec {
         val body = CodeBlock.builder()
         body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Invalid Access")
@@ -121,7 +150,6 @@ object PropertyGenerator {
                 if (backingFieldName != null) body.addStatement("this.$backingFieldName = null")
             }
 
-            // String, Optional, Result はすべて Temporary Arena を必要とするグループ
             is XrossType.RustString, is XrossType.Optional, is XrossType.Result -> {
                 body.beginControlFlow("%T.ofConfined().use { arena ->", java.lang.foreign.Arena::class)
                 when (ty) {
@@ -144,13 +172,15 @@ object PropertyGenerator {
             else -> body.addStatement("$vhName.set(this.segment, $offsetName, v)")
         }
 
-        // 共通のLockラッパーでラップして返す
         val lockCode = when (field.safety) {
             XrossThreadSafety.Immutable -> {
                 """
                 this.fl.lock()
                 try {
-                    %L
+                    this.al.lockWriteBlocking()
+                    try {
+                        %L
+                    } finally { this.al.unlockWriteBlocking() }
                 } finally { this.fl.unlock() }
                 """.trimIndent()
             }
@@ -158,7 +188,10 @@ object PropertyGenerator {
                 """
                 val stamp = this.sl.writeLock()
                 try {
-                    %L
+                    this.al.lockWriteBlocking()
+                    try {
+                        %L
+                    } finally { this.al.unlockWriteBlocking() }
                 } finally { this.sl.unlockWrite(stamp) }
                 """.trimIndent()
             }

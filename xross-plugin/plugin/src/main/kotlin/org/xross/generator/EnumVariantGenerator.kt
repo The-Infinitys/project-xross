@@ -243,7 +243,7 @@ object EnumVariantGenerator {
 
     private fun buildVariantGetter(field: XrossField, vhName: String, offsetName: String, kType: TypeName, selfType: ClassName, backingFieldName: String?, basePackage: String): FunSpec {
         val isSelf = kType == selfType
-        val readCode = CodeBlock.builder()
+        val readLogic = CodeBlock.builder()
             .addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Access error")
             .apply {
                 when (field.ty) {
@@ -295,7 +295,33 @@ object EnumVariantGenerator {
                 }
             }.build()
 
-        return GeneratorUtils.buildOptimisticReadGetter(kType, readCode)
+        val optimisticReadCode = CodeBlock.builder()
+            .addStatement("var stamp = this.sl.tryOptimisticRead()")
+            .addStatement("var res: %T", kType)
+            .add("\n// Optimistic read\n")
+            .add(readLogic)
+            .beginControlFlow("if (!this.sl.validate(stamp))")
+            .addStatement("stamp = this.sl.readLock()")
+            .beginControlFlow("try")
+            .add("\n// Pessimistic read\n")
+            .add(readLogic)
+            .nextControlFlow("finally")
+            .addStatement("this.sl.unlockRead(stamp)")
+            .endControlFlow()
+            .endControlFlow()
+            .addStatement("return res")
+            .build()
+
+        val fullBody = CodeBlock.builder()
+            .addStatement("this.al.lockReadBlocking()")
+            .beginControlFlow("try")
+            .add(optimisticReadCode)
+            .nextControlFlow("finally")
+            .addStatement("this.al.unlockReadBlocking()")
+            .endControlFlow()
+            .build()
+
+        return FunSpec.getterBuilder().addCode(fullBody).build()
     }
 
     private fun buildVariantSetter(field: XrossField, vhName: String, offsetName: String, kType: TypeName, backingFieldName: String?): FunSpec {
@@ -324,7 +350,10 @@ object EnumVariantGenerator {
                 """
                 this.fl.lock()
                 try {
-                    %L
+                    this.al.lockWriteBlocking()
+                    try {
+                        %L
+                    } finally { this.al.unlockWriteBlocking() }
                 } finally { this.fl.unlock() }
                 """.trimIndent()
             }
@@ -332,7 +361,10 @@ object EnumVariantGenerator {
                 """
                 val stamp = this.sl.writeLock()
                 try {
-                    %L
+                    this.al.lockWriteBlocking()
+                    try {
+                        %L
+                    } finally { this.al.unlockWriteBlocking() }
                 } finally { this.sl.unlockWrite(stamp) }
                 """.trimIndent()
             }

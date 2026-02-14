@@ -101,32 +101,70 @@ object RuntimeGenerator {
                 FunSpec.builder("awaitFuture")
                     .addModifiers(KModifier.SUSPEND)
                     .addTypeVariable(TypeVariableName("T"))
-                    .addParameter("futurePtr", MEMORY_SEGMENT)
-                    .addParameter("pollFunc", LambdaTypeName.get(null, MEMORY_SEGMENT, returnType = MEMORY_SEGMENT))
+                    .addParameter("taskPtr", MEMORY_SEGMENT)
+                    .addParameter("pollFn", ClassName("java.lang.invoke", "MethodHandle"))
+                    .addParameter("dropFn", ClassName("java.lang.invoke", "MethodHandle"))
                     .addParameter("mapper", LambdaTypeName.get(null, MEMORY_SEGMENT, returnType = TypeVariableName("T")))
                     .returns(TypeVariableName("T"))
                     .addCode(
                         """
-                    while (true) {
-                        val result = pollFunc(futurePtr)
-                        if (result != %T.NULL) {
-                            return mapper(result)
+                    try {
+                        while (true) {
+                            java.lang.foreign.Arena.ofConfined().use { arena ->
+                                val resultRaw = pollFn.invokeExact(arena as java.lang.foreign.SegmentAllocator, taskPtr) as MemorySegment
+                                val isOk = resultRaw.get(ValueLayout.JAVA_BYTE, 0L) != (0).toByte()
+                                val ptr = resultRaw.get(ValueLayout.ADDRESS, 8L)
+
+                                if (ptr != MemorySegment.NULL) {
+                                    if (!isOk) throw XrossException(ptr.reinterpret(Long.MAX_VALUE).getString(0))
+                                    return mapper(ptr)
+                                }
+                            }
+                            kotlinx.coroutines.delay(1)
                         }
-                        kotlinx.coroutines.delay(1)
+                    } finally {
+                        dropFn.invokeExact(taskPtr)
                     }
                         """.trimIndent(),
-                        MEMORY_SEGMENT,
                     )
                     .build(),
             )
             .build()
 
+        // --- XrossAsyncLock ---
+        val xrossAsyncLock = TypeSpec.classBuilder("XrossAsyncLock")
+            .addKdoc("A hybrid Read/Write lock supporting both coroutine suspension and thread blocking to enforce Rust ownership rules.")
+            .addProperty(PropertySpec.builder("rw", ClassName("java.util.concurrent.locks", "ReentrantReadWriteLock")).initializer("java.util.concurrent.locks.ReentrantReadWriteLock(true)").addModifiers(KModifier.PRIVATE).build())
+            .addFunction(
+                FunSpec.builder("lockRead")
+                    .addModifiers(KModifier.SUSPEND)
+                    .addCode("while (!rw.readLock().tryLock()) { kotlinx.coroutines.delay(1) }")
+                    .build(),
+            )
+            .addFunction(FunSpec.builder("unlockRead").addCode("rw.readLock().unlock()").build())
+            .addFunction(
+                FunSpec.builder("lockWrite")
+                    .addModifiers(KModifier.SUSPEND)
+                    .addCode("while (!rw.writeLock().tryLock()) { kotlinx.coroutines.delay(1) }")
+                    .build(),
+            )
+            .addFunction(FunSpec.builder("unlockWrite").addCode("rw.writeLock().unlock()").build())
+            .addFunction(FunSpec.builder("lockReadBlocking").addCode("rw.readLock().lock()").build())
+            .addFunction(FunSpec.builder("unlockReadBlocking").addCode("rw.readLock().unlock()").build())
+            .addFunction(FunSpec.builder("lockWriteBlocking").addCode("rw.writeLock().lock()").build())
+            .addFunction(FunSpec.builder("unlockWriteBlocking").addCode("rw.writeLock().unlock()").build())
+            .build()
+
         val file = FileSpec.builder(pkg, "XrossRuntime")
             .addImport("java.util.concurrent.atomic", "AtomicBoolean")
+            .addImport("java.util.concurrent.locks", "ReentrantReadWriteLock")
+            .addImport("java.lang.foreign", "ValueLayout")
+            .addImport("kotlinx.coroutines.sync", "withLock")
             .addType(xrossException)
             .addType(aliveFlag)
             .addType(ffiHelpers)
             .addType(xrossAsync)
+            .addType(xrossAsyncLock)
             .build()
 
         GeneratorUtils.writeToDisk(file, outputDir)

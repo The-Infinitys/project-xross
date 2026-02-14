@@ -13,6 +13,7 @@ pub struct MethodFfiData {
     pub symbol_name: String,
     pub export_ident: syn::Ident,
     pub method_type: XrossMethodType,
+    pub is_async: bool,
     pub args_meta: Vec<XrossField>,
     pub c_args: Vec<TokenStream>,
     pub call_args: Vec<TokenStream>,
@@ -27,6 +28,7 @@ impl MethodFfiData {
             symbol_name,
             export_ident,
             method_type: XrossMethodType::Static,
+            is_async: false,
             args_meta: Vec::new(),
             c_args: Vec::new(),
             call_args: Vec::new(),
@@ -49,6 +51,11 @@ pub fn write_ffi_function(
     handle_mode: HandleMode,
     toks: &mut Vec<TokenStream>,
 ) {
+    if ffi_data.is_async {
+        write_async_ffi_function(ffi_data, ret_ty, sig_output, inner_call, toks);
+        return;
+    }
+
     let (c_ret_type, wrapper_body) = gen_ret_wrapping(ret_ty, sig_output, inner_call);
     let export_ident = &ffi_data.export_ident;
     let c_args = &ffi_data.c_args;
@@ -186,6 +193,7 @@ pub fn add_clone_method(
         method_type: XrossMethodType::ConstInstance,
         handle_mode: HandleMode::Normal,
         is_constructor: false,
+        is_async: false,
         args: vec![],
         ret: XrossType::Object {
             signature: build_signature(package, name),
@@ -193,5 +201,33 @@ pub fn add_clone_method(
         },
         safety: ThreadSafety::Lock,
         docs: vec!["Creates a clone of the native object.".to_string()],
+    });
+}
+
+pub fn write_async_ffi_function(
+    ffi_data: &MethodFfiData,
+    ret_ty: &XrossType,
+    _sig_output: &ReturnType,
+    inner_call: TokenStream,
+    toks: &mut Vec<TokenStream>,
+) {
+    let export_ident = &ffi_data.export_ident;
+    let c_args = &ffi_data.c_args;
+    let conv_logic = &ffi_data.conversion_logic;
+
+    let res_mapper = match ret_ty {
+        XrossType::Void => quote! { |_| xross_core::XrossResult { is_ok: true, ptr: std::ptr::null_mut() } },
+        _ => {
+            let ptr_logic = super::conversion::gen_single_value_to_ptr(ret_ty, quote! { val });
+            quote! { |val| xross_core::XrossResult { is_ok: true, ptr: #ptr_logic } }
+        }
+    };
+
+    toks.push(quote! {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> xross_core::XrossTask {
+            #(#conv_logic)*
+            xross_core::xross_spawn_task(#inner_call, #res_mapper)
+        }
     });
 }

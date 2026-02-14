@@ -17,18 +17,18 @@ constructor() : Plugin<Project> {
         val extension = project.extensions.create("xross", XrossExtension::class.java)
         val outputDir = project.layout.buildDirectory.dir("generated/source/xross/main/kotlin")
 
-        project.afterEvaluate {
-            project.extensions.findByType(SourceSetContainer::class.java)?.named("main") { ss ->
-                ss.java.srcDir(outputDir)
-            }
-        }
-
-        project.tasks.register("generateXrossBindings", GenerateXrossTask::class.java) { task ->
+        val generateXrossBindings = project.tasks.register("generateXrossBindings", GenerateXrossTask::class.java) { task ->
             val metadataDirStr = extension.metadataDir
             val metadataDir = File(metadataDirStr)
             task.metadataDir.set(metadataDir)
             task.outputDir.set(outputDir)
             task.packageName.set(extension.packageName)
+        }
+
+        project.afterEvaluate {
+            project.extensions.findByType(SourceSetContainer::class.java)?.named("main") { ss ->
+                ss.java.srcDir(generateXrossBindings)
+            }
         }
     }
 }

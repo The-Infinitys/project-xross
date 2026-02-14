@@ -12,6 +12,7 @@ data class XrossMethod(
     val methodType: XrossMethodType = XrossMethodType.Static,
     val handleMode: HandleMode = HandleMode.Normal,
     val isConstructor: Boolean,
+    val isAsync: Boolean = false,
     val args: List<XrossField>,
     val ret: XrossType,
     val safety: XrossThreadSafety,

@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
 pub use xross_macros::{XrossClass, xross_class, xross_function, xross_function_dsl, xross_methods};
 
@@ -10,6 +11,70 @@ pub struct XrossResult {
     pub is_ok: bool,
     /// Pointer to the result data or an error message.
     pub ptr: *mut c_void,
+}
+
+unsafe impl Send for XrossResult {}
+unsafe impl Sync for XrossResult {}
+
+/// A handle to an asynchronous task being executed in Rust.
+#[repr(C)]
+pub struct XrossTask {
+    /// Pointer to the internal task state (the Future).
+    pub task_ptr: *mut c_void,
+    /// Function to poll the task.
+    pub poll_fn: unsafe extern "C" fn(*mut c_void) -> XrossResult,
+    /// Function to drop the task state.
+    pub drop_fn: unsafe extern "C" fn(*mut c_void),
+}
+
+unsafe impl Send for XrossTask {}
+unsafe impl Sync for XrossTask {}
+
+#[cfg(feature = "tokio")]
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+#[cfg(feature = "tokio")]
+fn get_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime")
+    })
+}
+
+#[cfg(feature = "tokio")]
+pub fn xross_spawn_task<F, T>(future: F, mapper: fn(T) -> XrossResult) -> XrossTask
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let rt = get_runtime();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    rt.spawn(async move {
+        let res = future.await;
+        let _ = tx.send(mapper(res));
+    });
+
+    unsafe extern "C" fn poll_task<T>(ptr: *mut c_void) -> XrossResult {
+        let rx = unsafe { &mut *(ptr as *mut tokio::sync::mpsc::UnboundedReceiver<XrossResult>) };
+        match rx.try_recv() {
+            Ok(res) => res,
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => XrossResult { is_ok: true, ptr: std::ptr::null_mut() }, // Still running
+            Err(_) => XrossResult { is_ok: false, ptr: std::ptr::null_mut() }, // Channel closed
+        }
+    }
+
+    unsafe extern "C" fn drop_task<T>(ptr: *mut c_void) {
+        let _ = unsafe { Box::from_raw(ptr as *mut tokio::sync::mpsc::UnboundedReceiver<XrossResult>) };
+    }
+
+    XrossTask {
+        task_ptr: Box::into_raw(Box::new(rx)) as *mut c_void,
+        poll_fn: poll_task::<T>,
+        drop_fn: drop_task::<T>,
+    }
 }
 
 /// A marker trait for types that can be bridged between Rust and JVM.
