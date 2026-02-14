@@ -1,7 +1,7 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
-import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import org.xross.generator.util.*
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
@@ -9,150 +9,181 @@ import org.xross.structures.XrossField
 import org.xross.structures.XrossThreadSafety
 import org.xross.structures.XrossType
 import java.lang.foreign.MemorySegment
-import java.lang.foreign.Arena
 
 object EnumVariantGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
+
+    private fun addVariantFactoryMethod(
+        companionBuilder: TypeSpec.Builder,
+        factoryMethodName: String,
+        tripleType: TypeName,
+        basePackage: String,
+        handleCall: CodeBlock,
+        fields: List<XrossField> = emptyList(),
+    ) {
+        companionBuilder.addFunction(
+            FunSpec.builder(factoryMethodName)
+                .addModifiers(KModifier.PRIVATE)
+                .addParameters(
+                    fields.map { field ->
+                        val kType = if (field.ty is XrossType.Object) {
+                            GeneratorUtils.getClassName(field.ty.signature, basePackage)
+                        } else {
+                            field.ty.kotlinType
+                        }
+                        ParameterSpec.builder("argOf" + field.name.toCamelCase(), kType).build()
+                    },
+                )
+                .returns(tripleType)
+                .addCode(
+                    CodeBlock.builder().apply {
+                        addFactoryBody(
+                            basePackage,
+                            handleCall,
+                            CodeBlock.of("STRUCT_SIZE"),
+                            CodeBlock.of("dropHandle"),
+                        )
+                        fields.forEach { field ->
+                            if (field.ty is XrossType.Object && field.ty.isOwned) {
+                                val argName = "argOf" + field.name.toCamelCase()
+                                addStatement("$argName.relinquish()")
+                            }
+                        }
+                        addStatement("return %T(res, %T(newAutoArena, newOwnerArena), flag)", Triple::class.asTypeName(), Pair::class.asTypeName())
+                    }.build(),
+                )
+                .build(),
+        )
+    }
 
     fun generateVariants(
         classBuilder: TypeSpec.Builder,
         companionBuilder: TypeSpec.Builder,
         meta: XrossDefinition.Enum,
         targetPackage: String,
-        basePackage: String
+        basePackage: String,
     ) {
-        val isPure = XrossGenerator.isPureEnum(meta)
+        val isPure = GeneratorUtils.isPureEnum(meta)
         val baseClassName = ClassName(targetPackage, meta.name)
-        val pairType = Pair::class.asClassName().parameterizedBy(MEMORY_SEGMENT, Arena::class.asTypeName())
+        val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+        val tripleType = GeneratorUtils.getFactoryTripleType(basePackage)
 
-        val fromPointerBuilder = FunSpec.builder("fromPointer")
-            .addParameter("ptr", MEMORY_SEGMENT)
-            .addParameter("arena", Arena::class.asTypeName())
-            .addParameter(ParameterSpec.builder("isArenaOwner", Boolean::class).defaultValue("false").build())
-            .returns(baseClassName)
-            .addModifiers(KModifier.INTERNAL)
+        val fromPointerBuilder = GeneratorUtils.buildFromPointerBase("fromPointer", baseClassName, basePackage)
 
         if (isPure) {
             meta.variants.forEach { variant ->
                 classBuilder.addEnumConstant(variant.name)
             }
-
             fromPointerBuilder.addCode(
-                """
-                try {
-                    if (ptr == %T.NULL) throw %T("Pointer is NULL")
-                    val nameRaw = Companion.getVariantNameHandle.invokeExact(ptr) as %T
-                    val name = if (nameRaw == %T.NULL) "" else nameRaw.reinterpret(%T.MAX_VALUE).getString(0)
-                    if (nameRaw != %T.NULL) Companion.xrossFreeStringHandle.invokeExact(nameRaw)
-                    return valueOf(name)
-                } finally {
-                    if (isArenaOwner) {
-                        arena.close()
-                    }
-                }
-                """.trimIndent(),
-                MEMORY_SEGMENT, NullPointerException::class.asTypeName(), MEMORY_SEGMENT, MEMORY_SEGMENT, Long::class.asTypeName(), MEMORY_SEGMENT
+                CodeBlock.builder()
+                    .beginControlFlow("try")
+                    .addStatement("if (ptr == %T.NULL) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Pointer is NULL")
+                    .addRustStringResolution("getVariantNameHandle.invokeExact(ptr)", "name")
+                    .addStatement("return valueOf(name)")
+                    .nextControlFlow("finally")
+                    .add("// Manual close is removed because we use Arena.ofAuto() for safety\n")
+                    .endControlFlow()
+                    .build(),
             )
         } else {
-            fromPointerBuilder.addStatement("""
-                val name = run {
-                    if (ptr == %T.NULL) throw %T(%S)
-                    val nameRaw = Companion.getVariantNameHandle.invokeExact(ptr) as %T
-                    val n = if (nameRaw == %T.NULL) "" else nameRaw.reinterpret(%T.MAX_VALUE).getString(0)
-                    if (nameRaw != %T.NULL) Companion.xrossFreeStringHandle.invokeExact(nameRaw)
-                    n
-                }
-            """.trimIndent(), MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Pointer is NULL", MEMORY_SEGMENT, MEMORY_SEGMENT, Long::class.asTypeName(), MEMORY_SEGMENT)
+            fromPointerBuilder.addCode(
+                CodeBlock.builder()
+                    .beginControlFlow("val name = run")
+                    .addStatement("if (ptr == %T.NULL) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Pointer is NULL")
+                    .addRustStringResolution("getVariantNameHandle.invokeExact(ptr)", "n")
+                    .addStatement("n")
+                    .endControlFlow()
+                    .build(),
+            )
 
+            fromPointerBuilder.addStatement("val reinterpretedPtr = if (ptr.byteSize() >= STRUCT_SIZE) ptr else ptr.reinterpret(STRUCT_SIZE)")
             fromPointerBuilder.beginControlFlow("return when (name)")
 
             meta.variants.forEach { variant ->
                 val variantClassName = baseClassName.nestedClass(variant.name)
                 val isObject = variant.fields.isEmpty()
 
+                val variantTypeBuilder = TypeSpec.classBuilder(variant.name)
+                    .superclass(baseClassName)
+
+                GeneratorUtils.buildRawInitializer(variantTypeBuilder, aliveFlagType)
+                GeneratorUtils.addInternalConstructor(variantTypeBuilder, tripleType)
+
                 if (isObject) {
-                    val objectBuilder = TypeSpec.objectBuilder(variant.name)
-                        .addModifiers(KModifier.DATA)
-                        .superclass(baseClassName)
-                        .addSuperclassConstructorParameter("%T.NULL", MEMORY_SEGMENT)
-                        .addSuperclassConstructorParameter("%T.global()", Arena::class.asTypeName())
-                        .addSuperclassConstructorParameter("false")
-                    
-                    val segmentProp = PropertySpec.builder("segment", MEMORY_SEGMENT, KModifier.INTERNAL, KModifier.OVERRIDE)
-                        .mutable(true)
-                        .getter(FunSpec.getterBuilder()
-                            .addStatement("if (field == %T.NULL) field = Companion.new${variant.name}Handle.invokeExact() as %T", MEMORY_SEGMENT, MEMORY_SEGMENT)
-                            .addStatement("return field")
-                            .build())
-                        .setter(FunSpec.setterBuilder().addParameter("value", MEMORY_SEGMENT).addStatement("field = value").build())
-                        .initializer("%T.NULL", MEMORY_SEGMENT)
-                        .build()
-                    objectBuilder.addProperty(segmentProp)
-
-                    classBuilder.addType(objectBuilder.build())
-
-                    fromPointerBuilder.addCode("%S -> {\n", variant.name)
-                    fromPointerBuilder.addStatement("    if (isArenaOwner) arena.close()")
-                    fromPointerBuilder.addStatement("    %T", variantClassName)
-                    fromPointerBuilder.addCode("}\n")
-                } else {
-                    fromPointerBuilder.addStatement("%S -> %T(ptr.reinterpret(Companion.STRUCT_SIZE), arena, isArenaOwner = isArenaOwner)", variant.name, variantClassName)
-
-                    val variantTypeBuilder = TypeSpec.classBuilder(variant.name)
-                    variantTypeBuilder.superclass(baseClassName)
-
-                    variantTypeBuilder.primaryConstructor(FunSpec.constructorBuilder()
-                        .addModifiers(KModifier.INTERNAL)
-                        .addParameter("raw", MEMORY_SEGMENT)
-                        .addParameter("arena", Arena::class.asTypeName())
-                        .addParameter(ParameterSpec.builder("isArenaOwner", Boolean::class).defaultValue("true").build())
-                        .build())
-                    variantTypeBuilder.addSuperclassConstructorParameter("raw")
-                    variantTypeBuilder.addSuperclassConstructorParameter("arena")
-                    variantTypeBuilder.addSuperclassConstructorParameter("isArenaOwner")
-
                     val factoryMethodName = "xrossNew${variant.name}Internal"
-                    companionBuilder.addFunction(FunSpec.builder(factoryMethodName)
-                        .addModifiers(KModifier.PRIVATE)
-                        .addParameters(variant.fields.map { field ->
-                            val kType = if (field.ty is XrossType.Object) {
-                                XrossGenerator.getClassName(field.ty.signature, basePackage)
-                            } else {
-                                field.ty.kotlinType
-                            }
-                            ParameterSpec.builder("arg_" + field.name.toCamelCase(), kType).build()
-                        })
-                        .returns(pairType)
-                        .addCode(CodeBlock.builder()
-                            .addStatement("val newArena = Arena.ofAuto()")
-                            .addStatement("val resRaw = Companion.new${variant.name}Handle.invokeExact(${variant.fields.joinToString(", ") { field ->
-                                val argName = "arg_" + field.name.toCamelCase()
-                                if (field.ty is XrossType.Bool) "if ($argName) 1.toByte() else 0.toByte()" 
-                                else if (field.ty is XrossType.Object) "$argName.segment"
-                                else argName
-                            }}) as %T", MEMORY_SEGMENT)
-                            .addStatement("val res = resRaw.reinterpret(Companion.STRUCT_SIZE, newArena) { s -> Companion.dropHandle.invokeExact(s) }")
-                            .addStatement("return res to newArena")
-                            .build())
-                        .build())
+                    addVariantFactoryMethod(
+                        companionBuilder,
+                        factoryMethodName,
+                        tripleType,
+                        basePackage,
+                        CodeBlock.of("new${variant.name}Handle.invokeExact()"),
+                    )
 
-                    variantTypeBuilder.addFunction(FunSpec.constructorBuilder()
-                        .addModifiers(KModifier.PRIVATE)
-                        .addParameter("p", pairType)
-                        .callThisConstructor(CodeBlock.of("p.first"), CodeBlock.of("p.second"), CodeBlock.of("true"))
-                        .build())
-                    
-                    variantTypeBuilder.addFunction(FunSpec.constructorBuilder()
-                        .addParameters(variant.fields.map { field ->
-                            val kType = if (field.ty is XrossType.Object) {
-                                XrossGenerator.getClassName(field.ty.signature, basePackage)
-                            } else {
-                                field.ty.kotlinType
-                            }
-                            ParameterSpec.builder(field.name.toCamelCase().escapeKotlinKeyword(), kType).build()
-                        })
-                        .callThisConstructor(CodeBlock.of("Companion.$factoryMethodName(${variant.fields.joinToString(", ") { it.name.toCamelCase().escapeKotlinKeyword() }})"))
-                        .build())
+                    variantTypeBuilder.addFunction(
+                        FunSpec.constructorBuilder()
+                            .callThisConstructor(CodeBlock.of("$factoryMethodName()"))
+                            .build(),
+                    )
+
+                    variantTypeBuilder.addFunction(
+                        FunSpec.builder("equals")
+                            .addModifiers(KModifier.OVERRIDE)
+                            .addParameter("other", Any::class.asTypeName().copy(nullable = true))
+                            .returns(Boolean::class)
+                            .addStatement("return other is %T", variantClassName)
+                            .build(),
+                    )
+
+                    variantTypeBuilder.addFunction(
+                        FunSpec.builder("hashCode")
+                            .addModifiers(KModifier.OVERRIDE)
+                            .returns(Int::class)
+                            .addStatement("return %S.hashCode()", variant.name)
+                            .build(),
+                    )
+                } else {
+                    val factoryMethodName = "xrossNew${variant.name}Internal"
+                    addVariantFactoryMethod(
+                        companionBuilder,
+                        factoryMethodName,
+                        tripleType,
+                        basePackage,
+                        CodeBlock.of(
+                            "new${variant.name}Handle.invokeExact(${variant.fields.joinToString(", ") { field ->
+                                val argName = "argOf" + field.name.toCamelCase()
+                                when (field.ty) {
+                                    is XrossType.Bool -> {
+                                        "if ($argName) 1.toByte() else 0.toByte()"
+                                    }
+
+                                    is XrossType.Object -> {
+                                        "$argName.segment"
+                                    }
+
+                                    else -> {
+                                        argName
+                                    }
+                                }
+                            }})",
+                        ),
+                        variant.fields,
+                    )
+
+                    variantTypeBuilder.addFunction(
+                        FunSpec.constructorBuilder()
+                            .addParameters(
+                                variant.fields.map { field ->
+                                    val kType = if (field.ty is XrossType.Object) {
+                                        GeneratorUtils.getClassName(field.ty.signature, basePackage)
+                                    } else {
+                                        field.ty.kotlinType
+                                    }
+                                    ParameterSpec.builder(field.name.toCamelCase().escapeKotlinKeyword(), kType).build()
+                                },
+                            )
+                            .callThisConstructor(CodeBlock.of("$factoryMethodName(${variant.fields.joinToString(", ") { it.name.toCamelCase().escapeKotlinKeyword() }})"))
+                            .build(),
+                    )
 
                     val equalsBuilder = FunSpec.builder("equals")
                         .addModifiers(KModifier.OVERRIDE)
@@ -163,32 +194,39 @@ object EnumVariantGenerator {
 
                     variant.fields.forEach { field ->
                         val baseCamelName = field.name.toCamelCase()
-                        val vhName = "VH_${variant.name}_$baseCamelName"
-                        val offsetName = "OFFSET_${variant.name}_$baseCamelName"
+                        val isPrimitive = field.ty !is XrossType.Object && field.ty !is XrossType.Optional && field.ty !is XrossType.Result
+                        val combinedName = "${variant.name}_$baseCamelName"
+                        val vhName = if (isPrimitive) "VH_$combinedName" else "null"
+                        val offsetName = "OFFSET_$combinedName"
                         val kType = if (field.ty is XrossType.Object) {
-                            XrossGenerator.getClassName(field.ty.signature, basePackage)
+                            GeneratorUtils.getClassName(field.ty.signature, basePackage)
                         } else {
                             field.ty.kotlinType
                         }
 
-                        variantTypeBuilder.addProperty(PropertySpec.builder(baseCamelName.escapeKotlinKeyword(), kType)
-                            .mutable(field.safety != XrossThreadSafety.Immutable)
-                            .getter(buildVariantGetter(field, vhName, offsetName, kType, baseClassName))
-                            .apply {
-                                if (field.safety != XrossThreadSafety.Immutable) {
-                                    setter(buildVariantSetter(field, vhName, offsetName, kType))
+                        val backingFieldName = GeneratorUtils.addBackingPropertyIfNeeded(variantTypeBuilder, field, baseCamelName, kType)
+
+                        variantTypeBuilder.addProperty(
+                            PropertySpec.builder(baseCamelName.escapeKotlinKeyword(), kType)
+                                .mutable(field.safety != XrossThreadSafety.Immutable)
+                                .getter(GeneratorUtils.buildFullGetter(kType, buildVariantGetterBody(variant.name, field, vhName, offsetName, kType, baseClassName, backingFieldName, basePackage)))
+                                .apply {
+                                    if (field.safety != XrossThreadSafety.Immutable) {
+                                        setter(GeneratorUtils.buildFullSetter(field.safety, kType, buildVariantSetterBody(variant.name, field, vhName, offsetName, kType, backingFieldName)))
+                                    }
                                 }
-                            }
-                            .build())
-                        
+                                .build(),
+                        )
+
                         equalsBuilder.addStatement("if (this.%L != other.%L) return false", baseCamelName.escapeKotlinKeyword(), baseCamelName.escapeKotlinKeyword())
                     }
-                    
+
                     equalsBuilder.addStatement("return true")
                     variantTypeBuilder.addFunction(equalsBuilder.build())
-
-                    classBuilder.addType(variantTypeBuilder.build())
                 }
+
+                classBuilder.addType(variantTypeBuilder.build())
+                fromPointerBuilder.addStatement("%S -> %T(reinterpretedPtr, autoArena, confinedArena = confinedArena, sharedFlag = sharedFlag)", variant.name, variantClassName)
             }
 
             fromPointerBuilder.addStatement("else -> throw %T(%S + name)", RuntimeException::class.asTypeName(), "Unknown variant: ")
@@ -198,119 +236,44 @@ object EnumVariantGenerator {
         companionBuilder.addFunction(fromPointerBuilder.build())
     }
 
-    private fun buildVariantGetter(field: XrossField, vhName: String, offsetName: String, kType: TypeName, selfType: ClassName): FunSpec {
-        val isSelf = kType == selfType
-        val readCode = CodeBlock.builder()
-            .addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Access error")
-            .apply {
-                when (field.ty) {
-                    is XrossType.Bool -> addStatement("res = (Companion.$vhName.get(this.segment, Companion.$offsetName) as Byte) != (0).toByte()")
-                    is XrossType.RustString -> {
-                        addStatement("val rawSegment = Companion.$vhName.get(this.segment, Companion.$offsetName) as %T", MEMORY_SEGMENT)
-                        addStatement("res = if (rawSegment == %T.NULL) \"\" else rawSegment.reinterpret(%T.MAX_VALUE).getString(0)", MEMORY_SEGMENT, Long::class.asTypeName())
-                    }
-                    is XrossType.Object -> {
-                        if (field.ty.ownership == XrossType.Ownership.Owned) {
-                            val sizeExpr = if (isSelf) CodeBlock.of("Companion.STRUCT_SIZE") else CodeBlock.of("%T.Companion.STRUCT_SIZE", kType)
-                            addStatement("val resSeg = this.segment.asSlice(Companion.$offsetName, %L)", sizeExpr)
-                            val fromPointerExpr = if (isSelf) CodeBlock.of("Companion.fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
-                            addStatement("res = %L(resSeg, this.arena)", fromPointerExpr)
-                        } else {
-                            val sizeExpr = if (isSelf) "Companion.STRUCT_SIZE" else "%T.Companion.STRUCT_SIZE"
-                            val fromPointerExpr = if (isSelf) "Companion.fromPointer" else "%T.Companion.fromPointer"
-                            
-                            val resolveArgs = mutableListOf<Any?>()
-                            resolveArgs.add(false) // isOwned = false
-                            if (!isSelf) resolveArgs.add(kType)
-                            resolveArgs.add(false)
-
-                            addStatement(
-                                "val resSeg = resolveFieldSegment(this.segment, Companion.$vhName, Companion.$offsetName, $sizeExpr, %L)",
-                                *resolveArgs.toTypedArray()
-                            )
-
-                            if (field.ty.ownership == XrossType.Ownership.Boxed) {
-                                addStatement("val retArena = Arena.ofConfined()")
-                                val dropExpr = if (isSelf) CodeBlock.of("Companion.dropHandle") else CodeBlock.of("%T.Companion.dropHandle", kType)
-                                addStatement("val finalSeg = resSeg.reinterpret(%L, retArena) { s -> %L.invokeExact(s) }", if (isSelf) "Companion.STRUCT_SIZE" else CodeBlock.of("%T.Companion.STRUCT_SIZE", kType), dropExpr)
-                                val fromPointerExprOwned = if (isSelf) CodeBlock.of("Companion.fromPointer") else CodeBlock.of("%T.Companion.fromPointer", kType)
-                                addStatement("res = %L(finalSeg, retArena, isArenaOwner = true)", fromPointerExprOwned)
-                            } else {
-                                val fromPointerArgs = mutableListOf<Any?>()
-                                if (!isSelf) fromPointerArgs.add(kType)
-                                addStatement("res = $fromPointerExpr(resSeg, this.arena)", *fromPointerArgs.toTypedArray())
-                            }
-                        }
-                    }
-                    else -> addStatement("res = Companion.$vhName.get(this.segment, Companion.$offsetName) as %T", kType)
-                }
-            }.build()
-
-        return FunSpec.getterBuilder().addCode(
-            """
-            var stamp = this.sl.tryOptimisticRead()
-            var res: %T
-            // Optimistic read
-            %L
-            if (!this.sl.validate(stamp)) {
-                stamp = this.sl.readLock()
-                try { 
-                    // Pessimistic read
-                    %L
-                } finally { this.sl.unlockRead(stamp) }
+    private fun buildVariantGetterBody(variantName: String, field: XrossField, vhName: String, offsetName: String, kType: TypeName, selfType: ClassName, backingFieldName: String?, basePackage: String): CodeBlock {
+        val baseCamel = field.name.toCamelCase()
+        val combinedName = "${variantName}_$baseCamel"
+        return FieldBodyGenerator.buildGetterBody(
+            field,
+            vhName,
+            offsetName,
+            kType,
+            selfType,
+            backingFieldName,
+            basePackage,
+        ) { ty ->
+            when (ty) {
+                is XrossType.Optional -> "${combinedName}OptGetHandle"
+                is XrossType.Result -> "${combinedName}ResGetHandle"
+                is XrossType.RustString -> "${combinedName}StrGetHandle"
+                else -> ""
             }
-            return res
-        """.trimIndent(), kType, readCode, readCode
-        ).build()
+        }
     }
 
-    private fun buildVariantSetter(field: XrossField, vhName: String, offsetName: String, kType: TypeName): FunSpec {
-        val isOwnedObject = field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned
-        val writeCode = CodeBlock.builder()
-            .addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Object invalid")
-            .apply {
-                if (isOwnedObject) {
-                    addStatement("if (v.segment == %T.NULL || !v.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Arg invalid")
-                    addStatement("this.segment.asSlice(Companion.$offsetName, %T.Companion.STRUCT_SIZE).copyFrom(v.segment)", kType)
-                } else if (field.ty is XrossType.Object) {
-                    addStatement("Companion.$vhName.set(this.segment, Companion.$offsetName, v.segment)")
-                } else if (field.ty is XrossType.Bool) {
-                    addStatement("Companion.$vhName.set(this.segment, Companion.$offsetName, if (v) 1.toByte() else 0.toByte())")
-                } else {
-                    addStatement("Companion.$vhName.set(this.segment, Companion.$offsetName, v)")
-                }
-            }.build()
-
-        return FunSpec.setterBuilder().addParameter("v", kType).addCode(
-            """
-            val stamp = this.sl.writeLock()
-            try { 
-                %L 
-            } finally { this.sl.unlockWrite(stamp) }
-        """.trimIndent(), writeCode
-        ).build()
-    }
-
-    private fun generateAtomicPropertyInVariant(builder: TypeSpec.Builder, baseName: String, vhName: String, kType: TypeName, variantName: String) {
-        val innerClassName = "AtomicFieldOf${baseName.replaceFirstChar { it.uppercase() }}"
-        val innerClass = TypeSpec.classBuilder(innerClassName).addModifiers(KModifier.INNER)
-            .addProperty(PropertySpec.builder("value", kType)
-                .getter(FunSpec.getterBuilder().addStatement("return Companion.$vhName.getVolatile(this@${variantName}.segment, 0L) as %T", kType).build()).build())
-            .addFunction(FunSpec.builder("update")
-                .addParameter("block", LambdaTypeName.get(null, kType, returnType = kType)).returns(kType)
-                .beginControlFlow("while (true)")
-                .beginControlFlow("try")
-                .addStatement("val current = value")
-                .addStatement("val next = block(current)")
-                .beginControlFlow("if (Companion.$vhName.compareAndSet(this@${variantName}.segment, 0L, current, next))")
-                .addStatement("return next")
-                .endControlFlow()
-                .nextControlFlow("catch (e: %T)", Throwable::class.asTypeName())
-                .addStatement("throw e")
-                .endControlFlow()
-                .endControlFlow().build())
-            .build()
-        builder.addType(innerClass)
-        builder.addProperty(PropertySpec.builder(baseName.escapeKotlinKeyword(), ClassName("", innerClassName)).initializer("%L()", innerClassName).build())
+    private fun buildVariantSetterBody(variantName: String, field: XrossField, vhName: String, offsetName: String, kType: TypeName, backingFieldName: String?): CodeBlock {
+        val baseCamel = field.name.toCamelCase()
+        val combinedName = "${variantName}_$baseCamel"
+        return FieldBodyGenerator.buildSetterBody(
+            field,
+            vhName,
+            offsetName,
+            kType,
+            ClassName("", "UNUSED"),
+            backingFieldName,
+        ) { ty ->
+            when (ty) {
+                is XrossType.Optional -> "${combinedName}OptSetHandle"
+                is XrossType.Result -> "${combinedName}ResSetHandle"
+                is XrossType.RustString -> "${combinedName}StrSetHandle"
+                else -> ""
+            }
+        }
     }
 }

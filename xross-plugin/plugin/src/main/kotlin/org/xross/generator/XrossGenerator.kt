@@ -1,115 +1,150 @@
 package org.xross.generator
 
-import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.FileSpec
+import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.TypeSpec
+import org.xross.generator.util.GeneratorUtils
+import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
+import org.xross.structures.XrossMethod
 import org.xross.structures.XrossType
 import java.io.File
 
+/**
+ * Main entry point for generating Kotlin bindings from Xross metadata.
+ */
 object XrossGenerator {
-    fun generate(meta: XrossDefinition, outputDir: File, targetPackage: String, resolver: TypeResolver) {
-        val basePackage = if (meta.packageName.isEmpty()) {
-            targetPackage
-        } else {
-            targetPackage.removeSuffix(meta.packageName).removeSuffix(".")
-        }
+    /**
+     * Generates Kotlin source code for a given type definition.
+     *
+     * @param meta The type definition metadata.
+     * @param outputDir The directory where the generated code will be written.
+     * @param targetPackage The base package name for the generated code.
+     * @param resolver The resolver for looking up other type definitions.
+     */
+    fun generate(
+        meta: XrossDefinition,
+        outputDir: File,
+        targetPackage: String,
+        resolver: TypeResolver,
+    ) {
+        val basePackage =
+            if (meta.packageName.isEmpty()) {
+                targetPackage
+            } else {
+                targetPackage.removeSuffix(meta.packageName).removeSuffix(".")
+            }
 
         // 共通ランタイムの生成
         RuntimeGenerator.generate(outputDir, basePackage)
 
         when (val resolvedMeta = resolveAllTypes(meta, resolver)) {
             is XrossDefinition.Opaque -> {
-                OpaqueGenerator.generateSingle(resolvedMeta, outputDir, targetPackage)
+                OpaqueGenerator.generateSingle(resolvedMeta, outputDir, targetPackage, basePackage)
             }
 
             is XrossDefinition.Struct, is XrossDefinition.Enum -> {
                 generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)
             }
+
+            is XrossDefinition.Function -> {
+                generateFunction(resolvedMeta, outputDir, targetPackage, basePackage)
+            }
         }
     }
 
-    fun isPureEnum(meta: XrossDefinition): Boolean {
-        return meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
-    }
-
-    private fun resolveAllTypes(meta: XrossDefinition, resolver: TypeResolver): XrossDefinition {
-        return when (meta) {
-            is XrossDefinition.Struct -> meta.copy(
+    private fun resolveAllTypes(
+        meta: XrossDefinition,
+        resolver: TypeResolver,
+    ): XrossDefinition = when (meta) {
+        is XrossDefinition.Struct ->
+            meta.copy(
                 fields = meta.fields.map { it.copy(ty = resolveType(it.ty, resolver, meta.name)) },
-                methods = meta.methods.map { m ->
-                    m.copy(
-                        args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "${meta.name}.${m.name}")) },
-                        ret = resolveType(m.ret, resolver, "${meta.name}.${m.name}")
-                    )
-                }
+                methods = resolveMethods(meta.methods, resolver, meta.name),
             )
 
-            is XrossDefinition.Enum -> meta.copy(
-                variants = meta.variants.map { v ->
-                    v.copy(fields = v.fields.map {
-                        it.copy(
-                            ty = resolveType(
-                                it.ty,
-                                resolver,
-                                "${meta.name}.${v.name}"
+        is XrossDefinition.Enum ->
+            meta.copy(
+                variants =
+                meta.variants.map { v ->
+                    v.copy(
+                        fields =
+                        v.fields.map {
+                            it.copy(
+                                ty =
+                                resolveType(
+                                    it.ty,
+                                    resolver,
+                                    "${meta.name}.${v.name}",
+                                ),
                             )
-                        )
-                    })
-                },
-                methods = meta.methods.map { m ->
-                    m.copy(
-                        args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "${meta.name}.${m.name}")) },
-                        ret = resolveType(m.ret, resolver, "${meta.name}.${m.name}")
+                        },
                     )
-                }
+                },
+                methods = resolveMethods(meta.methods, resolver, meta.name),
             )
 
-            is XrossDefinition.Opaque -> meta
-        }
+        is XrossDefinition.Opaque -> meta
+
+        is XrossDefinition.Function ->
+            meta.copy(
+                method = resolveMethods(listOf(meta.method), resolver, meta.name).first(),
+            )
     }
 
-    private fun resolveType(type: XrossType, resolver: TypeResolver, context: String): XrossType {
-        return when (type) {
-            is XrossType.Object -> type.copy(signature = resolver.resolve(type.signature, context))
-            is XrossType.Optional -> type.copy(inner = resolveType(type.inner, resolver, context))
-            is XrossType.Result -> type.copy(
+    private fun resolveMethods(methods: List<XrossMethod>, resolver: TypeResolver, context: String): List<XrossMethod> = methods.map { m ->
+        m.copy(
+            args = m.args.map { it.copy(ty = resolveType(it.ty, resolver, "$context.${m.name}")) },
+            ret = resolveType(m.ret, resolver, "$context.${m.name}"),
+        )
+    }
+
+    private fun resolveType(
+        type: XrossType,
+        resolver: TypeResolver,
+        context: String,
+    ): XrossType = when (type) {
+        is XrossType.Object -> type.copy(signature = resolver.resolve(type.signature, context))
+        is XrossType.Optional -> type.copy(inner = resolveType(type.inner, resolver, context))
+        is XrossType.Result ->
+            type.copy(
                 ok = resolveType(type.ok, resolver, context),
-                err = resolveType(type.err, resolver, context)
+                err = resolveType(type.err, resolver, context),
             )
 
-            is XrossType.Async -> type.copy(inner = resolveType(type.inner, resolver, context))
-            else -> type
-        }
+        is XrossType.Async -> type.copy(inner = resolveType(type.inner, resolver, context))
+        else -> type
     }
 
     private fun generateComplexType(
         meta: XrossDefinition,
         outputDir: File,
         targetPackage: String,
-        basePackage: String
+        basePackage: String,
     ) {
         val className = meta.name
         val isEnum = meta is XrossDefinition.Enum
-        val isPure = isPureEnum(meta)
+        val isPure = GeneratorUtils.isPureEnum(meta)
 
-        val classBuilder = when {
-            meta is XrossDefinition.Struct -> {
-                TypeSpec.classBuilder(className).addSuperinterface(AutoCloseable::class)
+        val classBuilder =
+            when {
+                meta is XrossDefinition.Struct -> {
+                    TypeSpec.classBuilder(className).addSuperinterface(AutoCloseable::class)
+                }
+
+                isPure -> {
+                    TypeSpec.enumBuilder(className)
+                }
+
+                isEnum -> {
+                    TypeSpec
+                        .classBuilder(className)
+                        .addModifiers(KModifier.SEALED)
+                        .addSuperinterface(AutoCloseable::class)
+                }
+
+                else -> throw IllegalArgumentException("Unsupported type")
             }
-
-            isPure -> {
-                TypeSpec.enumBuilder(className)
-            }
-
-            isEnum -> {
-                TypeSpec.classBuilder(className).addModifiers(KModifier.SEALED)
-                    .addSuperinterface(AutoCloseable::class)
-            }
-
-            else -> throw IllegalArgumentException("Unsupported type")
-        }
 
         val companionBuilder = TypeSpec.companionObjectBuilder()
         StructureGenerator.buildBase(classBuilder, companionBuilder, meta, basePackage)
@@ -117,16 +152,21 @@ object XrossGenerator {
         MethodGenerator.generateMethods(classBuilder, companionBuilder, meta, basePackage)
 
         when {
-            meta is XrossDefinition.Struct -> PropertyGenerator.generateFields(
-                classBuilder,
-                meta,
-                targetPackage,
-                basePackage
-            )
+            meta is XrossDefinition.Struct ->
+                PropertyGenerator.generateFields(
+                    classBuilder,
+                    meta,
+                    basePackage,
+                )
 
-            isEnum -> EnumVariantGenerator.generateVariants(
-                classBuilder, companionBuilder, meta, targetPackage, basePackage
-            )
+            isEnum ->
+                EnumVariantGenerator.generateVariants(
+                    classBuilder,
+                    companionBuilder,
+                    meta,
+                    targetPackage,
+                    basePackage,
+                )
         }
 
         classBuilder.addType(companionBuilder.build())
@@ -134,40 +174,27 @@ object XrossGenerator {
             StructureGenerator.addFinalBlocks(classBuilder, meta)
         }
 
-        writeToDisk(classBuilder.build(), targetPackage, className, outputDir)
+        GeneratorUtils.writeToDisk(classBuilder.build(), targetPackage, className, outputDir)
     }
 
-    fun getClassName(signature: String, basePackage: String): ClassName {
-        val fqn = if (basePackage.isEmpty() || signature.startsWith(basePackage)) {
-            signature
-        } else {
-            "$basePackage.$signature"
-        }
-        val lastDot = fqn.lastIndexOf('.')
-        return if (lastDot == -1) ClassName("", fqn)
-        else ClassName(fqn.substring(0, lastDot), fqn.substring(lastDot + 1))
-    }
+    private fun generateFunction(
+        meta: XrossDefinition.Function,
+        outputDir: File,
+        targetPackage: String,
+        basePackage: String,
+    ) {
+        val className = meta.name.toCamelCase().replaceFirstChar { it.uppercase() }
+        val classBuilder = TypeSpec.classBuilder(className)
+            .addKdoc(meta.docs.joinToString("\n"))
+            .primaryConstructor(FunSpec.constructorBuilder().addModifiers(KModifier.PRIVATE).build())
 
-    private fun writeToDisk(typeSpec: TypeSpec, pkg: String, name: String, outputDir: File) {
-        val fileSpec = FileSpec.builder(pkg, name).addType(typeSpec).indent("    ").build()
-        val content = cleanupPublic(fileSpec.toString())
+        val companionBuilder = TypeSpec.companionObjectBuilder()
+        StructureGenerator.buildBase(classBuilder, companionBuilder, meta, basePackage)
+        CompanionGenerator.generateCompanions(companionBuilder, meta)
+        MethodGenerator.generateMethods(classBuilder, companionBuilder, meta, basePackage)
 
-        val fileDir = outputDir.resolve(pkg.replace('.', '/'))
-        if (!fileDir.exists()) fileDir.mkdirs()
-        fileDir.resolve("$name.kt").writeText(content)
-    }
+        classBuilder.addType(companionBuilder.build())
 
-    /**
-     * Kotlin においてデフォルト（省略可能）な public 修飾子を正規表現で一括削除する。
-     */
-    fun cleanupPublic(content: String): String {
-        val keywords = listOf(
-            "class", "interface", "fun", "val", "var", "object", "enum",
-            "sealed", "open", "abstract", "constructor", "companion",
-            "init", "data", "override", "lateinit", "inner"
-        ).joinToString("|")
-
-        val regex = Regex("""public\s+(?=$keywords)""")
-        return content.replace(regex, "")
+        GeneratorUtils.writeToDisk(classBuilder.build(), targetPackage, className, outputDir)
     }
 }

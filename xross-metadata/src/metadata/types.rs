@@ -1,41 +1,75 @@
 use serde::{Deserialize, Serialize};
 
+/// Represents the ownership model of a type when bridged between Rust and JVM.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Ownership {
-    Owned,  // Inline (for fields) or Value (for returns)
-    Boxed,  // Boxed pointer (Box<T>)
-    Ref,    // Immutable reference (&T)
-    MutRef, // Mutable reference (&mut T)
+    /// Owned value, either inline in a struct or passed by value.
+    Owned,
+    /// Value wrapped in a Box (Box<T>).
+    Boxed,
+    /// Immutable reference (&T).
+    Ref,
+    /// Mutable reference (&mut T).
+    MutRef,
 }
 
+/// Represents the data types supported by the Xross bridge.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum XrossType {
+    /// No value.
     Void,
+    /// Boolean value.
     Bool,
+    /// 8-bit signed integer.
     I8,
+    /// 8-bit unsigned integer.
+    U8,
+    /// 16-bit signed integer.
     I16,
-    I32,
-    I64,
+    /// 16-bit unsigned integer.
     U16,
+    /// 32-bit signed integer.
+    I32,
+    /// 32-bit unsigned integer.
+    U32,
+    /// 64-bit signed integer.
+    I64,
+    /// 64-bit unsigned integer.
+    U64,
+    /// Pointer-sized signed integer.
+    ISize,
+    /// Pointer-sized unsigned integer.
+    USize,
+    /// 32-bit floating point number.
     F32,
+    /// 64-bit floating point number.
     F64,
+    /// Raw pointer.
     Pointer,
+    /// UTF-8 string.
     String,
+    /// A user-defined object type.
     Object {
+        /// Unique signature of the object type.
         signature: String,
+        /// Ownership model for this object.
         ownership: Ownership,
     },
-    // 追加: 再帰的な型定義
+    /// An optional value.
     Option(Box<XrossType>),
+    /// A result value that can be either Ok or Err.
     Result {
+        /// Type of the successful value.
         ok: Box<XrossType>,
+        /// Type of the error value.
         err: Box<XrossType>,
     },
-    // 追加: 非同期
+    /// An asynchronous computation.
     Async(Box<XrossType>),
 }
 
 impl XrossType {
+    /// Returns true if the type represents an owned value.
     pub fn is_owned(&self) -> bool {
         match self {
             XrossType::Object { ownership, .. } => {

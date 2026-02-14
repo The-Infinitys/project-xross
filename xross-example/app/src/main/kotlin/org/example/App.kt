@@ -1,5 +1,12 @@
 package org.example
 
+import kotlinx.coroutines.runBlocking
+import org.example.complex.ComplexStruct
+import org.example.external.ExternalStruct
+import org.example.some.HelloEnum
+import org.example.standalone.GlobalAdd
+import org.example.standalone.GlobalGreet
+import org.example.standalone.GlobalMultiply
 import org.example.test.test2.MyService2
 import java.io.File
 import java.nio.file.Files
@@ -25,18 +32,32 @@ fun main() {
             loadFromResources(tempDir)
         }
 
-        // 1. メモリリークテスト
+        // 1. メモリリークテスト (高負荷なため1回のみ)
         executeMemoryLeakTest()
 
-        // 2. 参照と所有権テスト
-        executeReferenceAndOwnershipTest()
+        // 2-7. 安定性テストの繰り返し実行
+        val repeatCount = 100
+        println("\n--- Starting Repetitive Stability Test ($repeatCount cycles) ---")
 
-        // 3. アトミック並行アクセステスト
-        executeConcurrencyTest()
-        // 4. Enumに関するテスト
-        executeEnumTest()
-        // 5. Optionに関するテスト
-        executeCollectionAndOptionalTest()
+        for (i in 1..repeatCount) {
+            executePrimitiveTypeTest() // 先に実行
+            executeReferenceAndOwnershipTest()
+            executeConcurrencyTest()
+            executeEnumTest()
+            executeCollectionAndOptionalTest()
+            executePropertyTest()
+            executeComplexFieldTest()
+            executeComplexStructPropertyTest()
+            executePanicAndTrivialTest()
+            executeStandaloneFunctionTest()
+            executeAsyncTest()
+
+            if (i % 10 == 0) {
+                println(">>> Completed cycle $i / $repeatCount")
+            }
+        }
+
+        println("\n✅ All $repeatCount cycles finished without any crashes or memory errors!")
     } catch (e: Exception) {
         println("Test failed with exception:")
         e.printStackTrace()
@@ -45,7 +66,134 @@ fun main() {
             tempDir.deleteRecursively()
             println("\nTemporary directory deleted.")
         }
+        println("\n--- Final Analysis before GC ---")
+        println(UnknownStruct.displayAnalysis())
+        // --- 強制的にGCを促して確認 ---
+        System.gc()
+        Thread.sleep(1000)
+        println("\n--- Final Analysis after GC ---")
+        println(UnknownStruct.displayAnalysis())
     }
+}
+
+fun executePanicAndTrivialTest() {
+    println("\n--- [8] Panicable & Trivial Method Test ---")
+    val service = MyService()
+
+    // 1. Trivial Test
+    val sum = service.addTrivial(10, 20)
+    println("Trivial add(10, 20) = $sum")
+    if (sum != 30) throw RuntimeException("Trivial calculation failed!")
+
+    val sumHeap = service.addCriticalHeap(100, 200)
+    println("Critical Heap add(100, 200) = $sumHeap")
+    if (sumHeap != 300) throw RuntimeException("Critical Heap calculation failed!")
+
+    // 2. Panicable Test (No Panic)
+    val noPanic = service.causePanic(false)
+    println("Panicable causePanic(false) = $noPanic")
+
+    // 3. Panicable Test (With Panic)
+    try {
+        println("Calling causePanic(true) - Expecting panic to be caught...")
+        service.causePanic(true)
+        println("❌ Failure: Panic was NOT caught!")
+    } catch (e: org.example.xross.runtime.XrossException) {
+        println("✅ Success: Caught expected XrossException (Panic): ${e.error}")
+    } catch (e: Exception) {
+        println("❌ Failure: Caught wrong exception type: ${e.javaClass.name}")
+        e.printStackTrace()
+    }
+
+    service.close()
+}
+
+fun executeStandaloneFunctionTest() {
+    println("\n--- [9] Standalone Function Test ---")
+
+    // 1. #[xross_function]
+    val sum = GlobalAdd.globalAdd(10, 20)
+    println("GlobalAdd.globalAdd(10, 20) = $sum")
+    if (sum != 30) throw RuntimeException("Global function add failed!")
+
+    val greeting = GlobalGreet.globalGreet("Xross")
+    println("GlobalGreet.globalGreet(\"Xross\") = $greeting")
+    if (greeting != "Hello, Xross!") throw RuntimeException("Global function greet failed!")
+
+    // 2. xross_function_dsl!
+    val product = GlobalMultiply.globalMultiply(5, 6)
+    println("GlobalMultiply.globalMultiply(5, 6) = $product")
+    if (product != 30) throw RuntimeException("Global function multiply failed!")
+
+    println("✅ Standalone function tests passed.")
+}
+
+fun executeAsyncTest() = runBlocking {
+    println("\n--- [10] Async (suspend fun) Test ---")
+
+    // 1. Standalone Async Function
+    val sum = org.example.standalone.AsyncAdd.asyncAdd(100, 200)
+    println("asyncAdd(100, 200) = $sum")
+    if (sum != 300) throw RuntimeException("Async add failed")
+
+    val greeting = org.example.standalone.AsyncGreet.asyncGreet("Coroutines")
+    println("asyncGreet(\"Coroutines\") = $greeting")
+    if (greeting != "Async Hello, Coroutines!") throw RuntimeException("Async greet failed")
+
+    // 2. Class Method Async
+    val service = MyService()
+    val res = service.asyncExecute(42)
+    println("MyService.asyncExecute(42) = $res")
+    if (res != 84) throw RuntimeException("Async method execution failed")
+
+    service.close()
+    println("✅ Async tests passed.")
+}
+
+fun executePrimitiveTypeTest() {
+    println("\n--- [11] Primitive Unsigned Types Test (u8, u32, u64) ---")
+
+    // 1. Standalone function test (Unsigned)
+    val u8Val: Byte = 10
+    val u32Val: Int = 1000
+    val u64Val: Long = 1000000L
+    val sum = org.example.standalone.TestUnsigned.testUnsigned(u8Val, u32Val, u64Val)
+    println("testUnsigned(10, 1000, 1000000) = $sum")
+    if (sum != 1001010L) throw RuntimeException("Unsigned sum failed: $sum")
+
+    // 2. Struct field test
+    val pt = PrimitiveTest(5.toByte(), 500, 5000L)
+    println("PrimitiveTest initial: u8=${pt.u8Val}, u32=${pt.u32Val}, u64=${pt.u64Val}")
+
+    if (pt.u8Val != 5.toByte() || pt.u32Val != 500 || pt.u64Val != 5000L) {
+        throw RuntimeException("PrimitiveTest field mismatch")
+    }
+
+    pt.addU32(500)
+    println("PrimitiveTest after addU32(500): u32=${pt.u32Val}")
+    if (pt.u32Val != 1000) throw RuntimeException("PrimitiveTest update failed")
+
+    pt.close()
+    println("✅ Primitive type tests passed.")
+}
+
+fun executeComplexStructPropertyTest() {
+    println("\n--- [7] ComplexStruct Property (Option/Result) Test ---")
+    val cs = ComplexStruct(42, Result.success(100))
+    println("ComplexStruct opt initial: ${cs.opt}")
+    println("ComplexStruct res initial: ${cs.res}")
+
+    cs.opt = 100
+    cs.res = Result.success(500)
+    println("ComplexStruct opt after set: ${cs.opt}")
+    println("ComplexStruct res after set: ${cs.res}")
+
+    cs.opt = null
+    cs.res = Result.failure(org.example.xross.runtime.XrossException("Native Error"))
+    println("ComplexStruct opt after set null: ${cs.opt}")
+    println("ComplexStruct res after set failure: ${cs.res}")
+
+    cs.close()
 }
 
 private fun loadFromResources(tempDir: File) {
@@ -58,13 +206,56 @@ private fun loadFromResources(tempDir: File) {
     System.load(libFile.absolutePath)
     println("Native library loaded from: ${libFile.absolutePath}")
 }
+fun executeComplexFieldTest() {
+    println("\n--- [6] Complex Field & External/Enum Test ---")
+
+    // 1. ExternalStruct Test (DSL based external binding)
+    val ext = ExternalStruct(100, "Xross Native")
+    println("ExternalStruct property 'value': ${ext.value}")
+    ext.value = 500
+    println("ExternalStruct getter after set: ${ext.getValue()}")
+    println("ExternalStruct greet: ${ext.greet("Hello")}")
+    ext.close()
+
+    // 2. HelloEnum Test (DSL based enum with recursion)
+    val b = HelloEnum.B(42)
+    val c = HelloEnum.C(b) // b is boxed into c (ownership transfer)
+
+    println("HelloEnum.C tag: ${c.zeroth}")
+    val inner = c.zeroth
+    if (inner is HelloEnum.B) {
+        println("HelloEnum nested B.i: ${inner.i}")
+    }
+
+    // Deeper recursion
+    val deep = HelloEnum.C(HelloEnum.C(HelloEnum.B(1000)))
+    val mid = deep.zeroth
+    if (mid is HelloEnum.C) {
+        val inner = mid.zeroth
+        if (inner is HelloEnum.B) {
+            println("HelloEnum deep recursive value: ${inner.i}")
+        }
+    }
+
+    c.close()
+    deep.close()
+    println("✅ Complex field tests passed.")
+}
+
+fun executePropertyTest() {
+    UnknownStruct(1, "Hello", 1f).use { unknownStruct ->
+        println(unknownStruct.s)
+        unknownStruct.s = "Hello, World. from modified, 無限、❤"
+        println(unknownStruct.s)
+    }
+}
 
 fun executeEnumTest() {
     println("\n--- [4] Enum Return & Pattern Matching Statistics ---")
     val myService = MyService()
 
     // 1. 基本的なフィールドアクセステスト
-    val enum1 = XrossTestEnum.A
+    val enum1 = XrossTestEnum.A()
     val enum2 = XrossTestEnum.B(1)
     println("Static Variant A: $enum1")
     println("Static Variant B value: ${enum2.i}")
@@ -72,6 +263,7 @@ fun executeEnumTest() {
     println("Modified Variant B value: ${enum2.i}")
 
     val unknownStruct = myService.unknownStruct
+    println("UnknownStruct segment: ${unknownStruct.segment}, alive: ${unknownStruct.aliveFlag.isValid}")
     val enum3 = XrossTestEnum.C(unknownStruct.clone())
     println("Static Variant C value (i): ${enum3.j}")
 
@@ -84,10 +276,12 @@ fun executeEnumTest() {
     val startTime = System.currentTimeMillis()
     repeat(iterations) {
         // equals実装により A は定数として比較可能、B/C は型チェック(is)で分岐
-        when (myService.retEnum()) {
-            is XrossTestEnum.A -> countA++
-            is XrossTestEnum.B -> countB++
-            is XrossTestEnum.C -> countC++
+        myService.retEnum().use {
+            when (it) {
+                is XrossTestEnum.A -> countA++
+                is XrossTestEnum.B -> countB++
+                is XrossTestEnum.C -> countC++
+            }
         }
     }
     val endTime = System.currentTimeMillis()
@@ -131,17 +325,29 @@ fun executeReferenceAndOwnershipTest() {
     val parent = MyService2(100)
     val borrowed = parent.getSelfRef()
 
-    println("Parent value: ${parent.`val`}")
+    println("Parent value: ${parent.`val`.value}")
     borrowed.close()
+    println("Borrowed reference closed.")
+
+    // 参照を閉めても親は生きているはず
+    try {
+        println("Checking parent after borrowed.close(): ${parent.execute()}")
+        println("✅ Success: Parent is still alive after closing a borrowed reference.")
+    } catch (e: NullPointerException) {
+        println("❌ Failure: Parent was incorrectly invalidated by closing a borrowed reference!")
+        println("Reason: ${e.message}")
+    }
 
     val borrowed2 = parent.getSelfRef()
     parent.close()
     println("Parent closed.")
 
+    // 親を閉めたら、そこから派生した参照も死ぬはず
     try {
         borrowed2.execute()
+        println("❌ Failure: Borrowed reference should have been invalidated by closing the parent!")
     } catch (e: NullPointerException) {
-        println("Success: Caught expected NullPointerException for borrowed2, $e")
+        println("✅ Success: Caught expected NullPointerException for borrowed2 after parent.close(), $e")
     }
 
     println("\n--- [2.1] Consumption (self) Test ---")
@@ -149,9 +355,9 @@ fun executeReferenceAndOwnershipTest() {
     val len = serviceToConsume.consumeSelf()
     println("Service consumed, len: $len")
     try {
-        serviceToConsume.execute(5)
+        serviceToConsume.execute(10)
         println("❌ Failure: Service should have been invalidated!")
-    } catch (e: NullPointerException) {
+    } catch (_: NullPointerException) {
         println("✅ Success: Caught expected NullPointerException for consumed service.")
     }
 }
@@ -199,15 +405,15 @@ fun executeCollectionAndOptionalTest() {
     println("\n--- [5] Optional Types Test ---")
     val service = MyService()
     // 1. Option Test
-    val someStruct = service.getOptionStruct(true)
-    println("Option(true) result: $someStruct (i=${someStruct?.i})")
-    val noneStruct = service.getOptionStruct(false)
-    println("Option(false) result: $noneStruct")
+    val someEnum = service.getOptionEnum(true)
+    println("Option(true) result: $someEnum")
+    val noneEnum = service.getOptionEnum(false)
+    println("Option(false) result: $noneEnum")
 
     // 2. Result Test
     val okResult = service.getResultStruct(true)
-    println("Result(true) isSuccess: ${okResult.isSuccess}, value: ${okResult.getOrNull()?.i}")
-    
+    println("Result(true) isSuccess: ${okResult.isSuccess}, value: ${okResult.getOrNull()?.`val`?.value}")
+
     val errResult = service.getResultStruct(false)
     println("Result(false) isFailure: ${errResult.isFailure}, exception: ${errResult.exceptionOrNull()}")
     if (errResult.isFailure) {

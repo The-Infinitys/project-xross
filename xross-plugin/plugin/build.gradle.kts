@@ -12,6 +12,17 @@ plugins {
     // Apply the Kotlin JVM plugin to add support for Kotlin.
     alias(libs.plugins.kotlin.serialization)
     kotlin("jvm") version "2.3.10"
+    alias(libs.plugins.spotless)
+}
+
+configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+    kotlin {
+        target("src/**/*.kt")
+        ktlint().editorConfigOverride(mapOf("ktlint_standard_no-wildcard-imports" to "disabled"))
+        trimTrailingWhitespace()
+        leadingTabsToSpaces()
+        endWithNewline()
+    }
 }
 
 repositories {
@@ -32,7 +43,7 @@ gradlePlugin {
     // Define the plugin
     val xross by plugins.creating {
         id = "org.xross"
-        implementationClass = "org.xross.XrossPlugin"
+        implementationClass = "org.xross.gradle.XrossPlugin"
     }
 }
 
@@ -78,10 +89,17 @@ project.tasks.withType(Test::class.java).configureEach {
 }
 
 project.tasks.withType(JavaExec::class.java).configureEach {
+
     jvmArgs("--enable-native-access=ALL-UNNAMED")
+
 }
+
 group = "org.xross"
-version = "1.0.0"
+
+version = "2.0.0"
+
 kotlin {
+
     jvmToolchain(25)
+
 }
