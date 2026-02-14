@@ -145,10 +145,26 @@ object PropertyGenerator {
         }
 
         // 共通のLockラッパーでラップして返す
-        return FunSpec.setterBuilder().addParameter("v", kType).addCode(
-            "val stamp = this.sl.writeLock()\ntry { %L } finally { this.sl.unlockWrite(stamp) }",
-            body.build(),
-        ).build()
+        val lockCode = when (field.safety) {
+            XrossThreadSafety.Immutable -> {
+                """
+                this.fl.lock()
+                try {
+                    %L
+                } finally { this.fl.unlock() }
+                """.trimIndent()
+            }
+            else -> {
+                """
+                val stamp = this.sl.writeLock()
+                try {
+                    %L
+                } finally { this.sl.unlockWrite(stamp) }
+                """.trimIndent()
+            }
+        }
+
+        return FunSpec.setterBuilder().addParameter("v", kType).addCode(lockCode, body.build()).build()
     }
 
     private fun generateAtomicProperty(

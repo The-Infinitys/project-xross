@@ -14,13 +14,28 @@ object StructureGenerator {
      * Builds the base properties and constructors for the generated class.
      */
     fun buildBase(classBuilder: TypeSpec.Builder, companionBuilder: TypeSpec.Builder, meta: XrossDefinition, basePackage: String) {
+        val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
+        val selfType = GeneratorUtils.getClassName(meta.signature, basePackage)
+
+        // --- Class Level (Static) Locks ---
+        // Always add locks to the companion object so static methods can use them.
+        companionBuilder.addProperty(
+            PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
+                .addModifiers(KModifier.INTERNAL)
+                .initializer("%T()", ClassName("java.util.concurrent.locks", "StampedLock"))
+                .build(),
+        )
+        companionBuilder.addProperty(
+            PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                .addModifiers(KModifier.INTERNAL)
+                .initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                .build(),
+        )
+
         if (meta is XrossDefinition.Function) return
 
         val isEnum = meta is XrossDefinition.Enum
         val isPure = GeneratorUtils.isPureEnum(meta)
-        val aliveFlagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
-
-        val selfType = GeneratorUtils.getClassName(meta.signature, basePackage)
 
         if (isPure) {
             // --- Pure Enum Case (enum class) ---
@@ -39,6 +54,12 @@ object StructureGenerator {
                 PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
                     .addModifiers(KModifier.INTERNAL)
                     .initializer("%T()", ClassName("java.util.concurrent.locks", "StampedLock"))
+                    .build(),
+            )
+            classBuilder.addProperty(
+                PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock"))
                     .build(),
             )
 
@@ -73,6 +94,7 @@ object StructureGenerator {
             classBuilder.addProperty(segmentProp.build())
 
             classBuilder.addProperty(PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock")).addModifiers(KModifier.INTERNAL).initializer("%T()", ClassName("java.util.concurrent.locks", "StampedLock")).build())
+            classBuilder.addProperty(PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock")).addModifiers(KModifier.INTERNAL).initializer("%T(true)", ClassName("java.util.concurrent.locks", "ReentrantLock")).build())
         }
 
         // --- fromPointer メソッド ---

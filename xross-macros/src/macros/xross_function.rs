@@ -2,7 +2,6 @@ use crate::codegen::ffi::{
     MethodFfiData, build_signature, process_method_args, resolve_return_type, write_ffi_function,
 };
 use crate::metadata::save_definition;
-use proc_macro2::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{Signature, Token};

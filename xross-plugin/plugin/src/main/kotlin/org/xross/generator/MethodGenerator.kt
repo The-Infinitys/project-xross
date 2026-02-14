@@ -138,21 +138,36 @@ object MethodGenerator {
         meta: XrossDefinition,
     ): CodeBlock {
         val isVoid = method.ret is XrossType.Void
-        val useLock = method.safety == XrossThreadSafety.Lock && method.methodType != XrossMethodType.Static
         val body = CodeBlock.builder()
 
-        if (useLock) {
-            if (!isVoid) body.addStatement("var resValue: %T", returnType)
-            body.addStatement("val stamp = this.sl.writeLock()")
-            body.beginControlFlow("try")
-            if (!isVoid) body.add("resValue = ")
-            body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
-            body.nextControlFlow("finally")
-            body.addStatement("this.sl.unlockWrite(stamp)")
-            body.endControlFlow()
-        } else {
-            if (!isVoid) body.add("val resValue = ")
-            body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+        when (method.safety) {
+            XrossThreadSafety.Immutable -> {
+                // Fair Lock (ReentrantLock(true)) to preserve call order
+                if (!isVoid) body.addStatement("var resValue: %T", returnType)
+                body.addStatement("this.fl.lock()")
+                body.beginControlFlow("try")
+                if (!isVoid) body.add("resValue = ")
+                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+                body.nextControlFlow("finally")
+                body.addStatement("this.fl.unlock()")
+                body.endControlFlow()
+            }
+            XrossThreadSafety.Lock -> {
+                // Standard synchronized lock using StampedLock
+                if (!isVoid) body.addStatement("var resValue: %T", returnType)
+                body.addStatement("val stamp = this.sl.writeLock()")
+                body.beginControlFlow("try")
+                if (!isVoid) body.add("resValue = ")
+                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+                body.nextControlFlow("finally")
+                body.addStatement("this.sl.unlockWrite(stamp)")
+                body.endControlFlow()
+            }
+            else -> {
+                // Atomic or Unsafe - Direct call
+                if (!isVoid) body.add("val resValue = ")
+                body.add(generateInvokeLogic(method, call, returnType, selfType, basePackage))
+            }
         }
 
         // Post-call logic for OwnedInstance

@@ -319,14 +319,25 @@ object EnumVariantGenerator {
                 }
             }.build()
 
-        return FunSpec.setterBuilder().addParameter("v", kType).addCode(
-            """
-            val stamp = this.sl.writeLock()
-            try {
-                %L
-            } finally { this.sl.unlockWrite(stamp) }
-            """.trimIndent(),
-            writeCode,
-        ).build()
+        val lockCode = when (field.safety) {
+            XrossThreadSafety.Immutable -> {
+                """
+                this.fl.lock()
+                try {
+                    %L
+                } finally { this.fl.unlock() }
+                """.trimIndent()
+            }
+            else -> {
+                """
+                val stamp = this.sl.writeLock()
+                try {
+                    %L
+                } finally { this.sl.unlockWrite(stamp) }
+                """.trimIndent()
+            }
+        }
+
+        return FunSpec.setterBuilder().addParameter("v", kType).addCode(lockCode, writeCode).build()
     }
 }

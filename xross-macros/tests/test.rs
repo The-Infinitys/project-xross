@@ -40,7 +40,7 @@ impl MyService {
     }
 }
 
-#[xross_macros::xross_function(package = "test_func")]
+#[xross_function(package = "test_func")]
 pub fn global_add(a: i32, b: i32) -> i32 {
     a + b
 }
