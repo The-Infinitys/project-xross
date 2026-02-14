@@ -127,4 +127,3 @@ object OpaqueGenerator {
         return body.build()
     }
 }
-

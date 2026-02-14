@@ -61,12 +61,12 @@ object PropertyGenerator {
 
                     addStatement(
                         "val resSeg = %T.resolveFieldSegment(this.segment, ${if (isOwned) "null" else vhName}, $offsetName, $sizeExpr, $isOwned)",
-                        ffiHelpers
+                        ffiHelpers,
                     )
                     addStatement(
                         "res = %L(resSeg, this.autoArena, sharedFlag = %T(true, this.aliveFlag))",
                         fromPointerExpr,
-                        flagType
+                        flagType,
                     )
                     addStatement("this.$backingFieldName = %T(res)", WeakReference::class.asTypeName())
                     endControlFlow()
@@ -75,7 +75,7 @@ object PropertyGenerator {
                 is XrossType.Optional -> {
                     addStatement(
                         "val resRaw = ${baseName}OptGetHandle.invokeExact(this.segment) as %T",
-                        MemorySegment::class
+                        MemorySegment::class,
                     )
                     add("res = ")
                     beginControlFlow("if (resRaw == %T.NULL)", MemorySegment::class).addStatement("null")
@@ -86,7 +86,7 @@ object PropertyGenerator {
                         GeneratorUtils.resolveReturnType(ty.inner, basePackage),
                         selfType,
                         basePackage,
-                        "dropHandle"
+                        "dropHandle",
                     )
                     endControlFlow()
                 }
@@ -95,7 +95,7 @@ object PropertyGenerator {
                     addStatement(
                         "val resRaw = ${baseName}ResGetHandle.invokeExact(this.autoArena as %T, this.segment) as %T",
                         java.lang.foreign.SegmentAllocator::class,
-                        MemorySegment::class
+                        MemorySegment::class,
                     )
                     addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
                     addStatement("val ptr = resRaw.get(%M, 8L)", FFMConstants.ADDRESS)
@@ -109,7 +109,7 @@ object PropertyGenerator {
                         GeneratorUtils.resolveReturnType(ty.ok, basePackage),
                         selfType,
                         basePackage,
-                        "dropHandle"
+                        "dropHandle",
                     )
                     addStatement("Result.success(okVal)")
 
@@ -121,11 +121,11 @@ object PropertyGenerator {
                         GeneratorUtils.resolveReturnType(ty.err, basePackage),
                         selfType,
                         basePackage,
-                        "dropHandle"
+                        "dropHandle",
                     )
                     addStatement(
                         "Result.failure(%T(errVal))",
-                        ClassName("$basePackage.xross.runtime", "XrossException")
+                        ClassName("$basePackage.xross.runtime", "XrossException"),
                     )
                     endControlFlow()
                 }
@@ -185,7 +185,6 @@ object PropertyGenerator {
 
         return body.build()
     }
-
 
     private fun generateAtomicProperty(
         classBuilder: TypeSpec.Builder,

@@ -178,15 +178,23 @@ object MethodGenerator {
             body.beginControlFlow("try")
 
             if (useSl) {
-                body.addStatement("val stamp = if (%L) ${target.name}.sl.writeLock() else ${target.name}.sl.readLock()", target.isMutable)
+                val isMutable = target.isMutable
+                val lockMethod = if (isMutable) "writeLock" else "readLock"
+
+                // 生成コード内で stamp を val で固定し、三項演算子を排除
+                body.addStatement("val stamp = ${target.name}.sl.%L()", lockMethod)
                 body.beginControlFlow("try")
             }
 
             wrapWithLocks(index + 1)
 
             if (useSl) {
+                val isMutable = target.isMutable
+                val unlockMethod = if (isMutable) "unlockWrite" else "unlockRead"
+
                 body.nextControlFlow("finally")
-                body.addStatement("if (%L) ${target.name}.sl.unlockWrite(stamp) else ${target.name}.sl.unlockRead(stamp)", target.isMutable)
+                // unlock も直接指定
+                body.addStatement("${target.name}.sl.%L(stamp)", unlockMethod)
                 body.endControlFlow()
             }
 

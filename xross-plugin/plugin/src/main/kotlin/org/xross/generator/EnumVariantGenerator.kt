@@ -319,5 +319,4 @@ object EnumVariantGenerator {
             }
         return body.build()
     }
-
 }
