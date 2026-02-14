@@ -121,10 +121,10 @@ object OpaqueGenerator {
         if (field.ty is XrossType.RustString) {
             body.beginControlFlow("%T.ofConfined().use { arena ->", FFMConstants.ARENA)
             body.addStatement("val allocated = arena.allocateFrom(v)")
-            body.addStatement("$setHandle.invokeExact(this.segment, allocated) as Unit")
+            body.addStatement("$setHandle.invokeExact(this.segment, allocated)")
             body.endControlFlow()
         } else {
-            body.addStatement("$setHandle.invokeExact(this.segment, v) as Unit")
+            body.addStatement("$setHandle.invokeExact(this.segment, v)")
         }
 
         return body.build()

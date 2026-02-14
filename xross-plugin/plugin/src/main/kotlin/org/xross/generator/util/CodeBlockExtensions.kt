@@ -81,7 +81,11 @@ fun CodeBlock.Builder.addResultAllocation(
 fun CodeBlock.Builder.addRustStringResolution(call: Any, resultVar: String = "str", isAssignment: Boolean = false, shouldFree: Boolean = true): CodeBlock.Builder {
     val resRawName = if (call is String && call.endsWith("Raw")) call else "${resultVar}RawInternal"
     if (!(call is String && call == resRawName)) {
-        addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
+        if (call == "it") {
+            addStatement("val $resRawName = %L", call)
+        } else {
+            addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
+        }
     }
     val declaration = if (isAssignment) "" else "val "
     addStatement(

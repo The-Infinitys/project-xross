@@ -54,6 +54,7 @@ object GeneratorUtils {
                 "object",
                 "enum",
                 "sealed",
+                "suspend",
                 "open",
                 "abstract",
                 "constructor",

@@ -91,8 +91,7 @@ object FieldBodyGenerator {
                     val handleName = handleNameProvider(ty)
                     if (handleName.isNotEmpty()) {
                         addStatement(
-                            "val resRaw = $handleName.invokeExact(this.autoArena as %T, this.segment) as %T",
-                            java.lang.foreign.SegmentAllocator::class,
+                            "val resRaw = $handleName.invokeExact(this.autoArena, this.segment) as %T",
                             MEMORY_SEGMENT,
                         )
                         addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
@@ -178,7 +177,7 @@ object FieldBodyGenerator {
                     body.addStatement("this.segment.asSlice($offsetName, %L).copyFrom(v.segment)", sizeExpr)
                 } else {
                     if (vhName == "null") {
-                        body.addStatement("this.segment.set(%M, $offsetName, v.segment as %T)", FFMConstants.ADDRESS, MEMORY_SEGMENT)
+                        body.addStatement("this.segment.set(%M, $offsetName, v.segment)", FFMConstants.ADDRESS)
                     } else {
                         body.addStatement("$vhName.set(this.segment, $offsetName, v.segment)")
                     }
@@ -192,15 +191,15 @@ object FieldBodyGenerator {
                     body.beginControlFlow("%T.ofConfined().use { arena ->", java.lang.foreign.Arena::class)
                     when (ty) {
                         is XrossType.RustString -> {
-                            body.addStatement("$handleName.invokeExact(this.segment, arena.allocateFrom(v)) as Unit")
+                            body.addStatement("$handleName.invokeExact(this.segment, arena.allocateFrom(v))")
                         }
                         is XrossType.Optional -> {
                             body.addStatement("val allocated = if (v == null) %T.NULL else %L", MEMORY_SEGMENT, GeneratorUtils.generateAllocMsg(ty.inner, "v"))
-                            body.addStatement("$handleName.invokeExact(this.segment, allocated) as Unit")
+                            body.addStatement("$handleName.invokeExact(this.segment, allocated)")
                         }
                         is XrossType.Result -> {
                             body.addResultAllocation(ty, "v", "xrossRes")
-                            body.addStatement("$handleName.invokeExact(this.segment, xrossRes) as Unit")
+                            body.addStatement("$handleName.invokeExact(this.segment, xrossRes)")
                         }
                     }
                     body.endControlFlow()

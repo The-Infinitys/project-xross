@@ -205,7 +205,7 @@ object InvocationGenerator {
 
         when (val retTy = method.ret) {
             is XrossType.Void -> {
-                body.addStatement("%L as Unit", call)
+                body.addStatement("%L", call)
             }
 
             is XrossType.RustString -> {

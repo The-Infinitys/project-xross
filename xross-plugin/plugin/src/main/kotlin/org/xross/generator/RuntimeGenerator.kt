@@ -112,7 +112,7 @@ object RuntimeGenerator {
                     try {
                         while (true) {
                             java.lang.foreign.Arena.ofConfined().use { arena ->
-                                val resultRaw = pollFn.invokeExact(arena as java.lang.foreign.SegmentAllocator, taskPtr) as MemorySegment
+                                val resultRaw = pollFn.invokeExact(arena, taskPtr) as MemorySegment
                                 val isOk = resultRaw.get(ValueLayout.JAVA_BYTE, 0L) != (0).toByte()
                                 val ptr = resultRaw.get(ValueLayout.ADDRESS, 8L)
 

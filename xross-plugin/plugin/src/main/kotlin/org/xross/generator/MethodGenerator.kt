@@ -8,7 +8,6 @@ import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
-import java.lang.foreign.SegmentAllocator
 
 /**
  * Generates Kotlin methods that wrap native Rust functions using Java FFM.
@@ -107,8 +106,7 @@ object MethodGenerator {
             val isPanicable = method.handleMode is HandleMode.Panicable
             val call = if (method.isAsync || method.ret is XrossType.Result || isPanicable) {
                 CodeBlock.of(
-                    "$handleName.invokeExact(this.autoArena as %T, %L)",
-                    SegmentAllocator::class,
+                    "$handleName.invokeExact(this.autoArena, %L)",
                     callArgs.joinToCode(", "),
                 )
             } else {
