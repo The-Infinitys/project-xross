@@ -20,7 +20,24 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="f975a9a1-e29b-4a10-834b-aa32ce0e2a24" name="変更" comment="" />
+    <list default="true" id="f975a9a1-e29b-4a10-834b-aa32ce0e2a24" name="変更" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/modules/xross-example.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules/xross-example.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/app/src/main/kotlin/org/example/App.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-example/app/src/main/kotlin/org/example/App.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/app/src/main/resource" beforeDir="false" afterPath="$PROJECT_DIR$/xross-example/app/src/main/resource" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/app/src/main/resources/libxross_example.so" beforeDir="false" afterPath="$PROJECT_DIR$/xross-example/app/src/main/resources/libxross_example.so" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/rust/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-example/rust/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/rust/src/lib.rs.tmp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-macros/src/types/mapping.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-macros/src/types/mapping.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-metadata/src/metadata/types.rs" beforeDir="false" afterPath="$PROJECT_DIR$/xross-metadata/src/metadata/types.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/EnumVariantGenerator.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/EnumVariantGenerator.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/HandleResolver.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/HandleResolver.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/LayoutGenerator.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/LayoutGenerator.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/PropertyGenerator.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/PropertyGenerator.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/util/FFMConstants.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/util/FFMConstants.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/structures/XrossType.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/structures/XrossType.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/structures/XrossTypeSerializer.kt" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/structures/XrossTypeSerializer.kt" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -189,7 +206,7 @@
       <breakpoints>
         <line-breakpoint enabled="true" type="kotlin-line">
           <url>file://$PROJECT_DIR$/xross-plugin/plugin/src/main/kotlin/org/xross/generator/EnumVariantGenerator.kt</url>
-          <line>177</line>
+          <line>170</line>
           <option name="timeStamp" value="1" />
         </line-breakpoint>
       </breakpoints>

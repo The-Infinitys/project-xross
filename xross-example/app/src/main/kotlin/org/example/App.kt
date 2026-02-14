@@ -40,6 +40,7 @@ fun main() {
         println("\n--- Starting Repetitive Stability Test ($repeatCount cycles) ---")
 
         for (i in 1..repeatCount) {
+            executePrimitiveTypeTest() // 先に実行
             executeReferenceAndOwnershipTest()
             executeConcurrencyTest()
             executeEnumTest()
@@ -149,6 +150,33 @@ fun executeAsyncTest() = runBlocking {
     println("✅ Async tests passed.")
 }
 
+fun executePrimitiveTypeTest() {
+    println("\n--- [11] Primitive Unsigned Types Test (u8, u32, u64) ---")
+
+    // 1. Standalone function test (Unsigned)
+    val u8Val: Byte = 10
+    val u32Val: Int = 1000
+    val u64Val: Long = 1000000L
+    val sum = org.example.standalone.TestUnsigned.testUnsigned(u8Val, u32Val, u64Val)
+    println("testUnsigned(10, 1000, 1000000) = $sum")
+    if (sum != 1001010L) throw RuntimeException("Unsigned sum failed: $sum")
+
+    // 2. Struct field test
+    val pt = PrimitiveTest(5.toByte(), 500, 5000L)
+    println("PrimitiveTest initial: u8=${pt.u8Val}, u32=${pt.u32Val}, u64=${pt.u64Val}")
+
+    if (pt.u8Val != 5.toByte() || pt.u32Val != 500 || pt.u64Val != 5000L) {
+        throw RuntimeException("PrimitiveTest field mismatch")
+    }
+
+    pt.addU32(500)
+    println("PrimitiveTest after addU32(500): u32=${pt.u32Val}")
+    if (pt.u32Val != 1000) throw RuntimeException("PrimitiveTest update failed")
+
+    pt.close()
+    println("✅ Primitive type tests passed.")
+}
+
 fun executeComplexStructPropertyTest() {
     println("\n--- [7] ComplexStruct Property (Option/Result) Test ---")
     val cs = ComplexStruct(42, Result.success(100))
@@ -235,6 +263,7 @@ fun executeEnumTest() {
     println("Modified Variant B value: ${enum2.i}")
 
     val unknownStruct = myService.unknownStruct
+    println("UnknownStruct segment: ${unknownStruct.segment}, alive: ${unknownStruct.aliveFlag.isValid}")
     val enum3 = XrossTestEnum.C(unknownStruct.clone())
     println("Static Variant C value (i): ${enum3.j}")
 

@@ -378,6 +378,34 @@ pub fn global_greet(name: String) -> String {
     format!("Hello, {}!", name)
 }
 
+#[xross_function(package = "standalone")]
+pub fn test_unsigned(a: u8, b: u32, c: u64) -> u64 {
+    (a as u64) + (b as u64) + c
+}
+
+#[derive(XrossClass)]
+pub struct PrimitiveTest {
+    #[xross_field]
+    pub u8_val: u8,
+    #[xross_field]
+    pub u32_val: u32,
+    #[xross_field]
+    pub u64_val: u64,
+}
+
+#[xross_methods]
+impl PrimitiveTest {
+    #[xross_new]
+    pub fn new(u8_val: u8, u32_val: u32, u64_val: u64) -> Self {
+        Self { u8_val, u32_val, u64_val }
+    }
+
+    #[xross_method]
+    pub fn add_u32(&mut self, val: u32) {
+        self.u32_val += val;
+    }
+}
+
 xross_function_dsl! {
     package standalone;
     safety Atomic;

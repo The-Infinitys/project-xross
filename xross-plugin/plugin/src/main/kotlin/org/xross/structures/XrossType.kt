@@ -12,11 +12,14 @@ sealed class XrossType {
     object Void : XrossType()
     object Bool : XrossType()
     object I8 : XrossType()
+    object U8 : XrossType()
     object I16 : XrossType()
-    object I32 : XrossType()
-    object I64 : XrossType()
-    object ISize : XrossType()
     object U16 : XrossType()
+    object I32 : XrossType()
+    object U32 : XrossType()
+    object I64 : XrossType()
+    object U64 : XrossType()
+    object ISize : XrossType()
     object USize : XrossType()
     object F32 : XrossType()
     object F64 : XrossType()
@@ -53,13 +56,13 @@ sealed class XrossType {
      */
     val kotlinType: TypeName
         get() = when (this) {
-            I32 -> INT
-            I64 -> LONG
+            I32, U32 -> INT
+            I64, U64 -> LONG
             ISize, USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
             F32 -> FLOAT
             F64 -> DOUBLE
             Bool -> BOOLEAN
-            I8 -> BYTE
+            I8, U8 -> BYTE
             I16 -> SHORT
             U16 -> CHAR
             Void -> UNIT
@@ -75,17 +78,23 @@ sealed class XrossType {
      */
     val layoutMember: MemberName
         get() = when (this) {
-            I32 -> FFMConstants.JAVA_INT
-            I64 -> FFMConstants.JAVA_LONG
+            I32, U32 -> FFMConstants.JAVA_INT
+            I64, U64 -> FFMConstants.JAVA_LONG
             ISize, USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) FFMConstants.JAVA_INT else FFMConstants.JAVA_LONG
             F32 -> FFMConstants.JAVA_FLOAT
             F64 -> FFMConstants.JAVA_DOUBLE
             Bool -> FFMConstants.JAVA_BYTE
-            I8 -> FFMConstants.JAVA_BYTE
+            I8, U8 -> FFMConstants.JAVA_BYTE
             I16 -> FFMConstants.JAVA_SHORT
             U16 -> FFMConstants.JAVA_CHAR
             Void -> throw IllegalStateException("Void has no layout")
             else -> FFMConstants.ADDRESS
+        }
+
+    val layoutCode: com.squareup.kotlinpoet.CodeBlock
+        get() = when (this) {
+            is Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
+            else -> com.squareup.kotlinpoet.CodeBlock.of("%M", layoutMember)
         }
 
     /**
@@ -103,9 +112,9 @@ sealed class XrossType {
      */
     val kotlinSize
         get() = when (this) {
-            is I32, is F32 -> 4L
-            is I64, is F64, is Pointer, is RustString -> 8L
-            is Bool, is I8 -> 1L
+            is I32, is U32, is F32 -> 4L
+            is I64, is U64, is F64, is Pointer, is RustString -> 8L
+            is Bool, is I8, is U8 -> 1L
             is I16, is U16 -> 2L
             else -> 8L
         }

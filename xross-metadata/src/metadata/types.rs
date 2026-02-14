@@ -22,16 +22,22 @@ pub enum XrossType {
     Bool,
     /// 8-bit signed integer.
     I8,
+    /// 8-bit unsigned integer.
+    U8,
     /// 16-bit signed integer.
     I16,
-    /// 32-bit signed integer.
-    I32,
-    /// 64-bit signed integer.
-    I64,
-    /// Pointer-sized signed integer.
-    ISize,
     /// 16-bit unsigned integer.
     U16,
+    /// 32-bit signed integer.
+    I32,
+    /// 32-bit unsigned integer.
+    U32,
+    /// 64-bit signed integer.
+    I64,
+    /// 64-bit unsigned integer.
+    U64,
+    /// Pointer-sized signed integer.
+    ISize,
     /// Pointer-sized unsigned integer.
     USize,
     /// 32-bit floating point number.

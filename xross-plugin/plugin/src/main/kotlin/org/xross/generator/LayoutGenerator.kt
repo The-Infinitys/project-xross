@@ -30,20 +30,22 @@ object LayoutGenerator {
         meta.fields.forEach { field ->
             init.beginControlFlow("%S ->", field.name)
             val kotlinSize = field.ty.kotlinSize
-            val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
+            val isCustomLayout = field.ty is XrossType.Optional || field.ty is XrossType.Result || (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned)
+            val alignmentCode = if (field.safety == XrossThreadSafety.Atomic || isCustomLayout) "" else ".withByteAlignment(1)"
 
             if (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned) {
                 init.addStatement("layouts.add(%T.paddingLayout(fSize).withName(%S))", MEMORY_LAYOUT, field.name)
             } else {
-                init.addStatement("layouts.add(%M.withName(%S)%L)", field.ty.layoutMember, field.name, alignmentCode)
+                init.addStatement("layouts.add(%L.withName(%S)%L)", field.ty.layoutCode, field.name, alignmentCode)
                 init.beginControlFlow("if (fSize > $kotlinSize)")
                     .addStatement("layouts.add(%T.paddingLayout(fSize - $kotlinSize))", MEMORY_LAYOUT)
                     .endControlFlow()
             }
 
             init.addStatement("this.OFFSET_${field.name.toCamelCase()} = fOffset")
-            if (!(field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned)) {
-                init.addStatement("this.VH_${field.name.toCamelCase()} = %M.varHandle()", field.ty.layoutMember)
+            val isPrimitive = field.ty !is XrossType.Object && field.ty !is XrossType.Optional && field.ty !is XrossType.Result
+            if (isPrimitive) {
+                init.addStatement("this.VH_${field.name.toCamelCase()} = %L.varHandle()", field.ty.layoutCode)
             }
             init.addStatement("currentOffsetPos = fOffset + fSize")
             init.addStatement("matchedFields.add(fName)")
@@ -97,8 +99,9 @@ object LayoutGenerator {
                     if (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned) {
                         init.addStatement("vLayouts.add(%T.paddingLayout(fSizeL).withName(fName))", MEMORY_LAYOUT)
                     } else {
-                        val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
-                        init.addStatement("vLayouts.add(%M.withName(fName)%L)", field.ty.layoutMember, alignmentCode)
+                        val isCustomLayout = field.ty is XrossType.Optional || field.ty is XrossType.Result
+                        val alignmentCode = if (field.safety == XrossThreadSafety.Atomic || isCustomLayout) "" else ".withByteAlignment(1)"
+                        init.addStatement("vLayouts.add(%L.withName(fName)%L)", field.ty.layoutCode, alignmentCode)
                         init.beginControlFlow("if (fSizeL > $kotlinSize)")
                             .addStatement("vLayouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
                             .endControlFlow()
@@ -109,8 +112,9 @@ object LayoutGenerator {
                         .addStatement("val vLayout = %T.structLayout(*vLayouts.toTypedArray())", MEMORY_LAYOUT)
                         .addStatement("this.OFFSET_${variant.name}_${field.name.toCamelCase()} = fOffsetL")
 
-                    if (!(field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned)) {
-                        init.addStatement("this.VH_${variant.name}_${field.name.toCamelCase()} = %M.varHandle()", field.ty.layoutMember)
+                    val isPrimitive = field.ty !is XrossType.Object && field.ty !is XrossType.Optional && field.ty !is XrossType.Result
+                    if (isPrimitive) {
+                        init.addStatement("this.VH_${variant.name}_${field.name.toCamelCase()} = %L.varHandle()", field.ty.layoutCode)
                     }
                     init.endControlFlow()
                 }

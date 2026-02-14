@@ -89,10 +89,17 @@ project.tasks.withType(Test::class.java).configureEach {
 }
 
 project.tasks.withType(JavaExec::class.java).configureEach {
+
     jvmArgs("--enable-native-access=ALL-UNNAMED")
+
 }
+
 group = "org.xross"
-version = "1.0.0"
+
+version = "2.0.0"
+
 kotlin {
+
     jvmToolchain(25)
+
 }

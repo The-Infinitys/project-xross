@@ -52,7 +52,7 @@ object HandleResolver {
 
     private fun resolveStructHandles(init: CodeBlock.Builder, meta: XrossDefinition.Struct) {
         val constructor = meta.methods.find { it.isConstructor && it.name == "new" }
-        val argLayouts = constructor?.args?.map { if (it.ty is XrossType.Result) FFMConstants.XROSS_RESULT_LAYOUT_CODE else CodeBlock.of("%M", it.ty.layoutMember) } ?: emptyList()
+        val argLayouts = constructor?.args?.map { it.ty.layoutCode } ?: emptyList()
         val desc = if (argLayouts.isEmpty()) {
             CodeBlock.of("%T.of(%M)", FUNCTION_DESCRIPTOR, ADDRESS)
         } else {
@@ -80,7 +80,7 @@ object HandleResolver {
         )
 
         meta.variants.forEach { v ->
-            val argLayouts = v.fields.map { if (it.ty is XrossType.Result) FFMConstants.XROSS_RESULT_LAYOUT_CODE else CodeBlock.of("%M", it.ty.layoutMember) }
+            val argLayouts = v.fields.map { it.ty.layoutCode }
             val desc = if (argLayouts.isEmpty()) {
                 CodeBlock.of("%T.of(%M)", FUNCTION_DESCRIPTOR, ADDRESS)
             } else {
@@ -127,18 +127,18 @@ object HandleResolver {
                         val getSymbol = "${prefix}_property_${field.name}_get"
                         val setSymbol = "${prefix}_property_${field.name}_set"
                         init.addStatement(
-                            "this.${baseCamel}GetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%M, %M))",
+                            "this.${baseCamel}GetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%L, %M))",
                             getSymbol,
                             FUNCTION_DESCRIPTOR,
-                            field.ty.layoutMember,
+                            field.ty.layoutCode,
                             ADDRESS,
                         )
                         init.addStatement(
-                            "this.${baseCamel}SetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %M))",
+                            "this.${baseCamel}SetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %L))",
                             setSymbol,
                             FUNCTION_DESCRIPTOR,
                             ADDRESS,
-                            field.ty.layoutMember,
+                            field.ty.layoutCode,
                         )
                     }
                 }
@@ -184,11 +184,7 @@ object HandleResolver {
             val args = mutableListOf<CodeBlock>()
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
             method.args.forEach {
-                if (it.ty is XrossType.Result) {
-                    args.add(FFMConstants.XROSS_RESULT_LAYOUT_CODE)
-                } else {
-                    args.add(CodeBlock.of("%M", it.ty.layoutMember))
-                }
+                args.add(it.ty.layoutCode)
             }
 
             val desc = if (method.ret is XrossType.Void && !method.isAsync) {
@@ -198,8 +194,7 @@ object HandleResolver {
                 val retLayout = when {
                     method.isAsync -> FFMConstants.XROSS_TASK_LAYOUT_CODE
                     method.handleMode is HandleMode.Panicable -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
-                    method.ret is XrossType.Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
-                    else -> CodeBlock.of("%M", method.ret.layoutMember)
+                    else -> method.ret.layoutCode
                 }
                 CodeBlock.of("%T.of(%L%L)", FUNCTION_DESCRIPTOR, retLayout, argsPart)
             }

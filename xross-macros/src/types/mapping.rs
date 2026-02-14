@@ -11,11 +11,14 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
 
             match last_ident.as_str() {
                 "i8" => XrossType::I8,
+                "u8" => XrossType::U8,
                 "i16" => XrossType::I16,
-                "i32" => XrossType::I32,
-                "i64" => XrossType::I64,
-                "isize" => XrossType::ISize,
                 "u16" => XrossType::U16,
+                "i32" => XrossType::I32,
+                "u32" => XrossType::U32,
+                "i64" => XrossType::I64,
+                "u64" => XrossType::U64,
+                "isize" => XrossType::ISize,
                 "usize" => XrossType::USize,
                 "f32" => XrossType::F32,
                 "f64" => XrossType::F64,

@@ -109,10 +109,13 @@ object CompanionGenerator {
                     handles.add("new${v.name}Handle")
                     v.fields.forEach { f ->
                         val baseCamel = f.name.toCamelCase()
+                        val combinedName = "${v.name}_$baseCamel"
+                        addPropertyHandles(handles, f, combinedName)
+
                         if (!(f.ty is XrossType.Object && f.ty.ownership == XrossType.Ownership.Owned)) {
-                            builder.addProperty(PropertySpec.builder("VH_${v.name}_$baseCamel", VH_TYPE, KModifier.INTERNAL, KModifier.LATEINIT).mutable().build())
+                            builder.addProperty(PropertySpec.builder("VH_$combinedName", VH_TYPE, KModifier.INTERNAL, KModifier.LATEINIT).mutable().build())
                         }
-                        builder.addProperty(PropertySpec.builder("OFFSET_${v.name}_$baseCamel", Long::class.asTypeName(), KModifier.INTERNAL).mutable().initializer("0L").build())
+                        builder.addProperty(PropertySpec.builder("OFFSET_$combinedName", Long::class.asTypeName(), KModifier.INTERNAL).mutable().initializer("0L").build())
                     }
                 }
             }
