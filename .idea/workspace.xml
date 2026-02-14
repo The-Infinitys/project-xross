@@ -20,7 +20,17 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="f975a9a1-e29b-4a10-834b-aa32ce0e2a24" name="変更" comment="" />
+    <list default="true" id="f975a9a1-e29b-4a10-834b-aa32ce0e2a24" name="変更" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ARCHITECTURE.md" beforeDir="false" afterPath="$PROJECT_DIR$/ARCHITECTURE.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-core/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-core/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-example/rust/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-example/rust/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-macros/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-macros/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-metadata/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/xross-metadata/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xross-plugin/plugin/build.gradle.kts" beforeDir="false" afterPath="$PROJECT_DIR$/xross-plugin/plugin/build.gradle.kts" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -179,7 +189,7 @@
       <workItem from="1770944913311" duration="18437000" />
       <workItem from="1771032545441" duration="4179000" />
       <workItem from="1771064831570" duration="669000" />
-      <workItem from="1771065561644" duration="4515000" />
+      <workItem from="1771065561644" duration="5173000" />
     </task>
     <servers />
   </component>

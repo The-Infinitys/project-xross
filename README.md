@@ -1,7 +1,7 @@
-# Project Xross (2.0.0)
+# Project Xross (2.0.1)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/the-infinitys/xross)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/the-infinitys/xross)
 
 **Xross** (クロス) は、Rust と JVM (Kotlin/Java) の境界を消滅させるために設計された、高性能・メモリ安全なクロス言語フレームワークです。
 
@@ -63,7 +63,7 @@ pluginManagement {
 // build.gradle.kts
 buildscript {
     repositories { maven { url = uri("https://jitpack.io") } }
-    dependencies { classpath("com.github.the-infinitys:xross:2.0.0") }
+    dependencies { classpath("com.github.the-infinitys:xross:2.0.1") }
 }
 apply(plugin = "org.xross")
 ```
@@ -72,7 +72,7 @@ apply(plugin = "org.xross")
 
 ```toml
 [dependencies]
-xross-core = "2.0.0"
+xross-core = "2.0.1"
 ```
 
 ## 🛠️ Rust と Kotlin の対応関係

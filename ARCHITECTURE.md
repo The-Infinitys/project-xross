@@ -1,4 +1,4 @@
-# Xross Architecture Specification (v2.0.0)
+# Xross Architecture Specification (v2.0.1)
 
 Xross は、Rust と JVM 間の究極の相互運用性を目指したフレームワークです。Java 25 で導入された **Foreign Function & Memory (FFM) API** を基盤とし、Rust の所有権セマンティクスを Java/Kotlin へ安全に持ち込むための高度な抽象化を提供します。
 

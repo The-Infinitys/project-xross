@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "xross-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "futures",
  "tokio",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "xross-example"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "rand",
  "tokio",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "xross-macros"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "xross-metadata"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde",
 ]
