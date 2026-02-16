@@ -7,7 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::thread;
 use std::time::Instant;
 use tcmalloc::TCMalloc;
-use xross_alloc::XrossAllocator;
+use xross_alloc::XrossAlloc;
 
 const THREADS: usize = 32;
 const OPS_PER_THREAD: usize = 200_000;
@@ -16,14 +16,7 @@ const ITERS: usize = 100; // 試行回数
 
 type Scenario = (&'static str, for<'a> fn(&'a dyn GlobalAlloc));
 fn main() {
-    XrossAllocator::setup(&[
-        (64, 8192),  // 小さな構造体、エンティティのフラグ、座標など
-        (128, 4096), // 中くらいの構造体、アイテムスタック、NBTの一部
-        (256, 2048), // チャンクセクションの一部、ブロック状態、大きなNBT
-        (512, 1024), // 比較的大きなオブジェクト（稀）
-        (1024, 512), // とても大きなもの（ほとんど使わないかも）
-    ]);
-    let xross = Box::leak(Box::new(XrossAllocator));
+    let xross = Box::leak(Box::new(XrossAlloc));
     let mi = Box::leak(Box::new(MiMalloc));
     let sys = Box::leak(Box::new(System));
     let je = Box::leak(Box::new(Jemalloc));
