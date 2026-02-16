@@ -61,6 +61,8 @@ pub fn write_ffi_function(
     let c_args = &ffi_data.c_args;
     let conv_logic = &ffi_data.conversion_logic;
 
+    let is_complex_ret = matches!(ret_ty, XrossType::String);
+
     if handle_mode == HandleMode::Panicable {
         let is_already_result = matches!(ret_ty, XrossType::Result { .. });
 
@@ -71,8 +73,8 @@ pub fn write_ffi_function(
             // We need to cast it to *mut c_void for XrossResult.ptr
             let ptr_val = match ret_ty {
                 XrossType::Void => quote! { std::ptr::null_mut() },
-                XrossType::F32 => quote! { val as usize as *mut std::ffi::c_void },
-                XrossType::F64 => quote! { val as usize as *mut std::ffi::c_void },
+                XrossType::F32 => quote! { val.to_bits() as usize as *mut std::ffi::c_void },
+                XrossType::F64 => quote! { val.to_bits() as usize as *mut std::ffi::c_void },
                 XrossType::I8
                 | XrossType::I16
                 | XrossType::I32
@@ -125,7 +127,16 @@ pub fn write_ffi_function(
             pub unsafe extern "C" fn #export_ident(out: *mut xross_core::XrossResult, #(#c_args),*) {
                 #(#conv_logic)*
                 let res = { #panic_handling };
-                std::ptr::write(out, res);
+                unsafe { std::ptr::write(out, res) };
+            }
+        });
+    } else if is_complex_ret {
+        toks.push(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_ident(out: *mut #c_ret_type, #(#c_args),*) {
+                #(#conv_logic)*
+                let val = #wrapper_body;
+                unsafe { std::ptr::write_unaligned(out, val) };
             }
         });
     } else {
@@ -250,9 +261,10 @@ pub fn write_async_ffi_function(
 
     toks.push(quote! {
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #export_ident(#(#c_args),*) -> xross_core::XrossTask {
+        pub unsafe extern "C" fn #export_ident(out: *mut xross_core::XrossTask, #(#c_args),*) {
             #(#conv_logic)*
-            xross_core::xross_spawn_task(#inner_call, #res_mapper)
+            let task = xross_core::xross_spawn_task(#inner_call, #res_mapper);
+            unsafe { std::ptr::write(out, task) };
         }
     });
 }

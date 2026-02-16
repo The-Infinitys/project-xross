@@ -36,7 +36,7 @@ object HandleResolver {
                     } else {
                         CodeBlock.of("%T.ofVoid(%M)", FUNCTION_DESCRIPTOR, ADDRESS)
                     }
-                    "layout" -> CodeBlock.of("%T.of(%L)", FUNCTION_DESCRIPTOR, FFMConstants.XROSS_STRING_LAYOUT_CODE)
+                    "layout" -> CodeBlock.of("%T.ofVoid(%M)", FUNCTION_DESCRIPTOR, ADDRESS)
                     else -> CodeBlock.of("%T.of(%M, %M)", FUNCTION_DESCRIPTOR, ADDRESS, ADDRESS)
                 }
                 val options = when (handleMode) {
@@ -110,10 +110,10 @@ object HandleResolver {
             ADDRESS,
         )
         init.addStatement(
-            "this.getVariantNameHandle = linker.downcallHandle(lookup.find(%S).get(), %T.of(%L, %M))",
+            "this.getVariantNameHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %M))",
             "${meta.symbolPrefix}_get_variant_name",
             FUNCTION_DESCRIPTOR,
-            FFMConstants.XROSS_STRING_LAYOUT_CODE,
+            ADDRESS,
             ADDRESS,
         )
 
@@ -215,16 +215,20 @@ object HandleResolver {
         )
     }
 
+    private fun matches(ty: XrossType, vararg kinds: kotlin.reflect.KClass<*>): Boolean = kinds.any { it.isInstance(ty) }
+
     private fun resolveMethodHandles(init: CodeBlock.Builder, meta: XrossDefinition) {
         meta.methods.filter { !it.isConstructor && it.name != "drop" && it.name != "layout" }.forEach { method ->
             val args = mutableListOf<CodeBlock>()
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
             args.addAll(getArgLayouts(method.args))
 
+            val isComplexRet = method.ret is XrossType.RustString || method.isAsync
+
             val isPanicable = method.handleMode is HandleMode.Panicable
             val desc = if (method.ret is XrossType.Void && !method.isAsync && !isPanicable) {
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, args.joinToCode(", "))
-            } else if (isPanicable) {
+            } else if (isPanicable || isComplexRet) {
                 val allArgs = mutableListOf(CodeBlock.of("%M", ADDRESS))
                 allArgs.addAll(args)
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, allArgs.joinToCode(", "))

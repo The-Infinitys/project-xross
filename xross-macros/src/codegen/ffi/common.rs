@@ -90,9 +90,9 @@ pub fn generate_common_ffi(
 
     toks.push(quote! {
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #layout_id() -> xross_core::XrossString {
+        pub unsafe extern "C" fn #layout_id(out: *mut xross_core::XrossString) {
             let s = <#name as #trait_name>::xross_layout();
-            xross_core::XrossString::from(s)
+            unsafe { std::ptr::write_unaligned(out, xross_core::XrossString::from(s)) };
         }
     });
 }
@@ -110,15 +110,18 @@ pub fn generate_enum_aux_ffi(
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #tag_fn_id(ptr: *const #type_ident) -> i32 {
             if ptr.is_null() { return -1; }
-            *(ptr as *const i32)
+            unsafe { *(ptr as *const i32) }
         }
 
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #variant_name_fn_id(ptr: *const #type_ident) -> xross_core::XrossString {
-            if ptr.is_null() { return xross_core::XrossString::from(String::new()); }
-            let val = &*ptr;
+        pub unsafe extern "C" fn #variant_name_fn_id(out: *mut xross_core::XrossString, ptr: *const #type_ident) {
+            if ptr.is_null() {
+                unsafe { std::ptr::write_unaligned(out, xross_core::XrossString::from(String::new())) };
+                return;
+            }
+            let val = unsafe { &*ptr };
             let name = match val { #(#variant_name_arms),* };
-            xross_core::XrossString::from(name.to_string())
+            unsafe { std::ptr::write_unaligned(out, xross_core::XrossString::from(name.to_string())) };
         }
     });
 }

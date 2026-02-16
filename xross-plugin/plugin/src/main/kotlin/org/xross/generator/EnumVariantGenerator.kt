@@ -81,7 +81,9 @@ object EnumVariantGenerator {
             CodeBlock.builder()
                 .beginControlFlow("val name = run")
                 .addStatement("if (ptr == %T.NULL) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Pointer is NULL")
-                .addRustStringResolution("getVariantNameHandle.invokeExact(this.arena as java.lang.foreign.SegmentAllocator, ptr)", "n", basePackage = basePackage)
+                .addStatement("val outBuf = (this.arena as %T).allocate(%L)", java.lang.foreign.SegmentAllocator::class.asTypeName(), FFMConstants.XROSS_STRING_LAYOUT_CODE)
+                .addStatement("getVariantNameHandle.invokeExact(outBuf, ptr)")
+                .addRustStringResolution("outBuf", "n", basePackage = basePackage)
                 .addStatement("n")
                 .endControlFlow()
                 .build(),

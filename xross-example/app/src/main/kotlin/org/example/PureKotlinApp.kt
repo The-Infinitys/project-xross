@@ -129,6 +129,65 @@ class PKPrimitiveTest(var u8Val: Byte, var u32Val: Int, var u64Val: Long) : Auto
     override fun close() {}
 }
 
+class PKFastStruct(var data: Int, var name: String) : AutoCloseable {
+    fun countChars(s: String): Int = s.length
+    override fun close() {}
+}
+
+class PKComprehensiveNode(var id: Int, var data: String) : AutoCloseable {
+    fun clone() = PKComprehensiveNode(id, data)
+    override fun close() {}
+}
+
+class PKAllTypesTest : AutoCloseable {
+    var b: Boolean = true
+    var i8: Byte = -8
+    var u8: Byte = 8
+    var i16: Short = -16
+    var u16: Char = 16.toChar()
+    var i32: Int = -32
+    var u32: Int = 32
+    var i64: Long = -64
+    var u64: Long = 64
+    var f32: Float = 32.0f
+    var f64: Double = 64.0
+    var isize: Long = -1
+    var usize: Long = 1
+    var s: String = "Initial"
+    var node: PKComprehensiveNode = PKComprehensiveNode(1, "Node")
+    var optI: Int? = 42
+    var optS: String? = "Opt"
+    var optNode: PKComprehensiveNode? = null
+    var resI: Result<Int> = Result.success(100)
+
+    fun takeOwnedNode(node: PKComprehensiveNode) {
+        this.node = node
+    }
+    fun takeRefNode(node: PKComprehensiveNode): Int = node.id
+    fun takeMutRefNode(node: PKComprehensiveNode, newId: Int) {
+        node.id = newId
+    }
+    fun returnOwnedNode(): PKComprehensiveNode = node.clone()
+    fun returnRefNode(): PKComprehensiveNode = node
+    fun returnMutRefNode(): PKComprehensiveNode = node
+    fun multiplyI32(a: Int, b: Int): Long = a.toLong() * b.toLong()
+    fun testOptions(i: Int?, s: String?, node: PKComprehensiveNode?) {
+        this.optI = i
+        this.optS = s
+        this.optNode = node
+    }
+    fun getResI(shouldOk: Boolean): Result<Int> = if (shouldOk) Result.success(i32) else Result.failure(Exception("Error"))
+    fun consumeSelf(): String {
+        val res = s
+        close()
+        return res
+    }
+    override fun close() {
+        node.close()
+        optNode?.close()
+    }
+}
+
 class PKMyService : AutoCloseable {
     private val state = PKAliveState()
     private val instanceClosed = AtomicBoolean(false)
@@ -311,6 +370,35 @@ fun executePKStandaloneFunctionTest(silent: Boolean = false) {
     if (!silent) println("PK Global add: $res")
     PKStandalone.globalGreet("Xross")
     PKStandalone.globalMultiply(5, 6)
+}
+
+fun executePKHelloEnumTest(silent: Boolean = false) {
+    val e = PKHelloEnum.C(PKHelloEnum.B(42))
+    if (!silent) println("PK HelloEnum: $e")
+    e.close()
+}
+
+fun executePKFastStructTest(silent: Boolean = false) {
+    val fs = PKFastStruct(10, "Fast")
+    fs.data = 20
+    val count = fs.countChars("Zero Copy")
+    if (!silent) println("PK FastStruct count: $count")
+    fs.close()
+}
+
+fun executePKAllTypesTest(silent: Boolean = false) {
+    val t = PKAllTypesTest()
+    t.b = false
+    t.i32 = 100
+    t.s = "Modified"
+    t.takeOwnedNode(PKComprehensiveNode(2, "New"))
+    val id = t.takeRefNode(t.node)
+    t.takeMutRefNode(t.node, 3)
+    val node = t.returnRefNode()
+    val res = t.getResI(true)
+    t.testOptions(null, null, null)
+    if (!silent) println("PK AllTypesTest id: $id, res: $res")
+    t.close()
 }
 
 fun executePKAsyncTest(silent: Boolean = false) = runBlocking {

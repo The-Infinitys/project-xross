@@ -1,6 +1,7 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
+import org.xross.generator.util.FFMConstants
 import org.xross.generator.util.GeneratorUtils
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
@@ -29,7 +30,8 @@ object CompanionGenerator {
             init.addStatement("var layoutStr = %S", "")
 
             init.beginControlFlow("try")
-                .addStatement("layoutRaw = layoutHandle.invokeExact(this.arena as %T) as %T", java.lang.foreign.SegmentAllocator::class.asTypeName(), MEMORY_SEGMENT)
+                .addStatement("layoutRaw = (this.arena as %T).allocate(%L)", java.lang.foreign.SegmentAllocator::class.asTypeName(), FFMConstants.XROSS_STRING_LAYOUT_CODE)
+                .addStatement("layoutHandle.invokeExact(layoutRaw)")
                 .beginControlFlow("if (layoutRaw != %T.NULL)", MEMORY_SEGMENT)
                 .addStatement("val xs = %T(layoutRaw)", ClassName("$basePackage.xross.runtime", "XrossString"))
                 .addStatement("layoutStr = xs.toString()")

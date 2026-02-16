@@ -141,41 +141,10 @@ object RuntimeGenerator {
                     .initializer("java.lang.ref.Cleaner.create()")
                     .build(),
             )
-            .addProperty(
-                PropertySpec.builder("STRING_VALUE_FIELD", java.lang.reflect.Field::class.asTypeName().copy(nullable = true), KModifier.PRIVATE)
-                    .initializer("runCatching { String::class.java.getDeclaredField(\"value\").apply { isAccessible = true } }.getOrNull()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("STRING_CODER_FIELD", java.lang.reflect.Field::class.asTypeName().copy(nullable = true), KModifier.PRIVATE)
-                    .initializer("runCatching { String::class.java.getDeclaredField(\"coder\").apply { isAccessible = true } }.getOrNull()")
-                    .build(),
-            )
-            .addInitializerBlock(
-                CodeBlock.builder()
-                    .add("// --- Xross Runtime Initialization ---\n")
-                    .beginControlFlow("try")
-                    .addStatement("val runtime = Runtime.getRuntime()")
-                    .addStatement("val initialHeap = runtime.totalMemory()")
-                    .addStatement("val dedicatedSize = initialHeap / 2")
-                    .addStatement("val arena = %T.global()", Arena::class.asTypeName())
-                    .addStatement("val heap = arena.allocate(dedicatedSize, 4096)")
-                    .addStatement("val linker = %T.nativeLinker()", java.lang.foreign.Linker::class.asTypeName())
-                    .addStatement("val lookup = %T.loaderLookup()", java.lang.foreign.SymbolLookup::class.asTypeName())
-                    .addStatement("val initSym = lookup.find(\"xross_runtime_init\")")
-                    .beginControlFlow("if (initSym.isPresent)")
-                    .addStatement("val initHandle = linker.downcallHandle(initSym.get(), %T.ofVoid(ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))", java.lang.foreign.FunctionDescriptor::class.asTypeName())
-                    .addStatement("initHandle.invokeExact(heap as %T, dedicatedSize)", MEMORY_SEGMENT)
-                    .endControlFlow()
-                    .nextControlFlow("catch (e: %T)", Throwable::class.asTypeName())
-                    .addStatement("System.err.println(\"[Xross] Failed to initialize runtime: \" + e.message)")
-                    .endControlFlow()
-                    .build(),
-            )
             .addFunction(
                 FunSpec.builder("ofSmart")
                     .returns(Arena::class)
-                    .addKdoc("Returns an Arena that can be safely closed by a Cleaner thread.")
+                    .addKdoc("Returns an Arena managed by GC.")
                     .addCode("return %T.ofShared()", Arena::class)
                     .build(),
             )
@@ -186,13 +155,11 @@ object RuntimeGenerator {
                     .addParameter("flag", ClassName(pkg, "AliveFlag"))
                     .returns(CLEANABLE)
                     .addCode(
-                        """
-                        return CLEANER.register(target) {
-                            if (flag.tryInvalidate()) {
-                                try { arena.close() } catch (e: Throwable) {}
-                            }
-                        }
-                        """.trimIndent(),
+                        "return CLEANER.register(target) {\n" +
+                            "    if (flag.tryInvalidate()) {\n" +
+                            "        try { arena.close() } catch (e: Throwable) {}\n" +
+                            "    }\n" +
+                            "}\n",
                     )
                     .build(),
             )
@@ -200,42 +167,14 @@ object RuntimeGenerator {
                 FunSpec.builder("getStringValue")
                     .addParameter("s", String::class)
                     .returns(ByteArray::class.asTypeName().copy(nullable = true))
-                    .addCode("return STRING_VALUE_FIELD?.get(s) as? ByteArray")
+                    .addCode("return try { val field = String::class.java.getDeclaredField(\"value\"); field.setAccessible(true); field.get(s) as? ByteArray } catch (e: Throwable) { null }")
                     .build(),
             )
             .addFunction(
                 FunSpec.builder("getStringCoder")
                     .addParameter("s", String::class)
                     .returns(Byte::class)
-                    .addCode("return STRING_CODER_FIELD?.get(s) as? Byte ?: 0.toByte()")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("createStringView")
-                    .addParameter("s", String::class)
-                    .addParameter("arena", Arena::class)
-                    .returns(MEMORY_SEGMENT)
-                    .addKdoc("Deprecated: Use getStringValue/Coder for zero-copy.")
-                    .addCode(
-                        """
-                        val view = arena.allocate(24) // XrossStringView size
-                        val value = getStringValue(s)
-                        val coder = getStringCoder(s)
-
-                        if (value != null) {
-                            val buf = arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, *value)
-                            view.set(java.lang.foreign.ValueLayout.ADDRESS, 0L, buf)
-                            view.set(java.lang.foreign.ValueLayout.JAVA_LONG, 8L, s.length.toLong())
-                            view.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 16L, coder)
-                        } else {
-                            val buf = arena.allocateFrom(s)
-                            view.set(java.lang.foreign.ValueLayout.ADDRESS, 0L, buf)
-                            view.set(java.lang.foreign.ValueLayout.JAVA_LONG, 8L, buf.byteSize())
-                            view.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 16L, 0.toByte())
-                        }
-                        return view
-                        """.trimIndent(),
-                    )
+                    .addCode("return try { val field = String::class.java.getDeclaredField(\"coder\"); field.setAccessible(true); field.get(s) as? Byte ?: 0.toByte() } catch (e: Throwable) { 0.toByte() }")
                     .build(),
             )
             .addFunction(
@@ -243,43 +182,16 @@ object RuntimeGenerator {
                     .addParameter("handle", MethodHandle::class)
                     .addParameter("segment", MEMORY_SEGMENT)
                     .addCode(
-                        """
-                        try {
-                            if (handle.type().returnType() == java.lang.Void.TYPE && handle.type().parameterCount() == 2) {
-                                java.lang.foreign.Arena.ofConfined().use { arena ->
-                                    val outPanic = arena.allocate(16) // XrossResult size
-                                    handle.invoke(outPanic, segment)
-                                    val isOk = outPanic.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L) != (0).toByte()
-                                    if (!isOk) {
-                                        val ptr = outPanic.get(java.lang.foreign.ValueLayout.ADDRESS, 8L)
-                                        val msg = if (ptr == %T.NULL) "Unknown" else %T(ptr.reinterpret(24)).toString()
-                                        System.err.println("[Xross] Panic during drop: " + msg)
-                                    }
-                                }
-                            } else if (handle.type().returnType() == %T::class.java) {
-                                // Fallback for old layout-based direct return if any
-                                java.lang.foreign.Arena.ofConfined().use { arena ->
-                                    val resRaw = handle.invoke(arena as java.lang.foreign.SegmentAllocator, segment) as %T
-                                    val isOk = resRaw.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L) != (0).toByte()
-                                    if (!isOk) {
-                                        val ptr = resRaw.get(java.lang.foreign.ValueLayout.ADDRESS, 8L)
-                                        val msg = if (ptr == %T.NULL) "Unknown" else %T(ptr.reinterpret(24)).toString()
-                                        System.err.println("[Xross] Panic during drop: " + msg)
-                                    }
-                                }
-                            } else {
-                                handle.invoke(segment)
-                            }
-                        } catch (e: Throwable) {
-                            e.printStackTrace()
-                        }
-                        """.trimIndent(),
-                        MEMORY_SEGMENT,
-                        ClassName(pkg, "XrossString"),
-                        MEMORY_SEGMENT,
-                        MEMORY_SEGMENT,
-                        MEMORY_SEGMENT,
-                        ClassName(pkg, "XrossString"),
+                        "try {\n" +
+                            "    if (handle.type().returnType() == java.lang.Void.TYPE && handle.type().parameterCount() == 2) {\n" +
+                            "        java.lang.foreign.Arena.ofConfined().use { arena ->\n" +
+                            "            val outPanic = arena.allocate(16)\n" +
+                            "            handle.invoke(outPanic, segment)\n" +
+                            "        }\n" +
+                            "    } else {\n" +
+                            "        handle.invoke(segment)\n" +
+                            "    }\n" +
+                            "} catch (e: Throwable) { e.printStackTrace() }\n",
                     )
                     .build(),
             )
@@ -292,16 +204,14 @@ object RuntimeGenerator {
                     .addParameter("isOwned", Boolean::class)
                     .returns(MEMORY_SEGMENT)
                     .addCode(
-                        """
-                        if (parent == %T.NULL) return %T.NULL
-                        return if (isOwned) {
-                            parent.asSlice(offset, size)
-                        } else {
-                            if (vh == null) return %T.NULL
-                            val ptr = vh.get(parent, offset) as %T
-                            if (ptr == %T.NULL) %T.NULL else ptr.reinterpret(size)
-                        }
-                        """.trimIndent(),
+                        "if (parent == %T.NULL) return %T.NULL\n" +
+                            "return if (isOwned) {\n" +
+                            "    parent.asSlice(offset, size)\n" +
+                            "} else {\n" +
+                            "    if (vh == null) return %T.NULL\n" +
+                            "    val ptr = vh.get(parent, offset) as %T\n" +
+                            "    if (ptr == %T.NULL) %T.NULL else ptr.reinterpret(size)\n" +
+                            "}\n",
                         MEMORY_SEGMENT,
                         MEMORY_SEGMENT,
                         MEMORY_SEGMENT,
@@ -328,28 +238,25 @@ object RuntimeGenerator {
                     )
                     .returns(TypeVariableName("T"))
                     .addCode(
-                        """
-                    try {
-                        java.lang.foreign.Arena.ofConfined().use { arena ->
-                            while (true) {
-                                val resultRaw = pollFn.invokeExact(arena as java.lang.foreign.SegmentAllocator, taskPtr) as MemorySegment
-                                val isOk = resultRaw.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L) != (0).toByte()
-                                val ptr = resultRaw.get(java.lang.foreign.ValueLayout.ADDRESS, 8L)
-
-                                if (ptr != MemorySegment.NULL) {
-                                    if (!isOk) {
-                                        val errXs = XrossString(ptr.reinterpret(24))
-                                        throw XrossException(errXs.toString())
-                                    }
-                                    return mapper(ptr)
-                                }
-                                kotlinx.coroutines.delay(1)
-                            }
-                        }
-                    } finally {
-                        dropFn.invoke(taskPtr)
-                    }
-                        """.trimIndent(),
+                        "try {\n" +
+                            "    java.lang.foreign.Arena.ofConfined().use { arena ->\n" +
+                            "        while (true) {\n" +
+                            "            val resultRaw = pollFn.invokeExact(arena as java.lang.foreign.SegmentAllocator, taskPtr) as MemorySegment\n" +
+                            "            val isOk = resultRaw.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L) != (0).toByte()\n" +
+                            "            val ptr = resultRaw.get(java.lang.foreign.ValueLayout.ADDRESS, 8L)\n" +
+                            "            if (ptr != MemorySegment.NULL) {\n" +
+                            "                if (!isOk) {\n" +
+                            "                    val errXs = XrossString(ptr.reinterpret(24))\n" +
+                            "                    throw XrossException(errXs.toString())\n" +
+                            "                }\n" +
+                            "                return mapper(ptr)\n" +
+                            "            }\n" +
+                            "            kotlinx.coroutines.delay(1)\n" +
+                            "        }\n" +
+                            "    }\n" +
+                            "} finally {\n" +
+                            "    dropFn.invoke(taskPtr)\n" +
+                            "}\n",
                     )
                     .build(),
             )
@@ -384,11 +291,9 @@ object RuntimeGenerator {
 
         val toStringBody = CodeBlock.builder()
             .add(
-                """
-                if (ptr == %T.NULL || len == 0L) return ""
-                val bytes = ptr.reinterpret(len).toArray(ValueLayout.JAVA_BYTE)
-                return String(bytes, java.nio.charset.StandardCharsets.UTF_8)
-                """.trimIndent(),
+                "if (ptr == %T.NULL || len == 0L) return \"\"\n" +
+                    "val bytes = ptr.reinterpret(len).toArray(ValueLayout.JAVA_BYTE)\n" +
+                    "return String(bytes, java.nio.charset.StandardCharsets.UTF_8)\n",
                 MEMORY_SEGMENT,
             ).build()
 

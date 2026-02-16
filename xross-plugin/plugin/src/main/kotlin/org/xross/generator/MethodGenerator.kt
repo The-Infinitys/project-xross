@@ -103,21 +103,24 @@ object MethodGenerator {
 
             val handleName = "${method.name.toCamelCase()}Handle"
             val isPanicable = method.handleMode is HandleMode.Panicable
-            val call = if (method.isAsync || method.ret is XrossType.Result || method.ret is XrossType.RustString || isPanicable) {
-                if (isPanicable) {
-                    val alloc = if (needsArena) "arena" else "this.arena"
-                    argPrep.addStatement("val outPanic = ($alloc as %T).allocate(%L)", java.lang.foreign.SegmentAllocator::class.asTypeName(), FFMConstants.XROSS_RESULT_LAYOUT_CODE)
-                    val pArgs = mutableListOf(CodeBlock.of("outPanic"))
-                    pArgs.addAll(callArgs)
-                    argPrep.addStatement("$handleName.invokeExact(%L)", pArgs.joinToCode(", "))
-                    CodeBlock.of("outPanic")
+            val isComplexRet = method.ret is XrossType.RustString || method.isAsync
+
+            val call = if (isComplexRet || isPanicable) {
+                val alloc = if (needsArena) "arena" else "this.arena"
+                val layout = if (isPanicable) {
+                    FFMConstants.XROSS_RESULT_LAYOUT_CODE
+                } else if (method.isAsync) {
+                    FFMConstants.XROSS_TASK_LAYOUT_CODE
+                } else if (method.ret is XrossType.RustString) {
+                    FFMConstants.XROSS_STRING_LAYOUT_CODE
                 } else {
-                    CodeBlock.of(
-                        "$handleName.invokeExact(this.arena as %T, %L)",
-                        java.lang.foreign.SegmentAllocator::class.asTypeName(),
-                        callArgs.joinToCode(", "),
-                    )
+                    method.ret.layoutCode
                 }
+                argPrep.addStatement("val outBuf = ($alloc as %T).allocate(%L)", java.lang.foreign.SegmentAllocator::class.asTypeName(), layout)
+                val pArgs = mutableListOf(CodeBlock.of("outBuf"))
+                pArgs.addAll(callArgs)
+                argPrep.addStatement("$handleName.invokeExact(%L)", pArgs.joinToCode(", "))
+                CodeBlock.of("outBuf")
             } else {
                 if (method.ret is XrossType.Void) {
                     // Use invoke for Void to avoid Descriptor mismatch in Kotlin

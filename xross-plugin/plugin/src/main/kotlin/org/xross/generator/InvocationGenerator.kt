@@ -167,7 +167,8 @@ object InvocationGenerator {
 
         if (isPanicable) {
             body.beginControlFlow("run")
-            body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+            val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+            body.addStatement("val resRaw = %L", callExpr)
             body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
             body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)
             body.beginControlFlow("if (!isOk)")
@@ -209,14 +210,15 @@ object InvocationGenerator {
 
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
-                body.addRustStringResolution(call)
+                body.addRustStringResolution(call, basePackage = basePackage)
                 body.addStatement("str")
                 body.endControlFlow()
             }
 
             is XrossType.Object -> {
                 body.beginControlFlow("run")
-                body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                body.addStatement("val resRaw = %L", callExpr)
                 body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
                     .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
                 body.nextControlFlow("else")
@@ -227,7 +229,8 @@ object InvocationGenerator {
 
             is XrossType.Optional -> {
                 body.beginControlFlow("run")
-                body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                body.addStatement("val resRaw = %L", callExpr)
                 body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
                     .addStatement("null")
                 body.nextControlFlow("else")
@@ -239,7 +242,8 @@ object InvocationGenerator {
 
             is XrossType.Result -> {
                 body.beginControlFlow("run")
-                body.addStatement("val resRaw = %L as %T", call, MEMORY_SEGMENT)
+                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                body.addStatement("val resRaw = %L", callExpr)
                 // Resultのレイアウト: [1 byte: isOk, 7 bytes: padding, 8 bytes: pointer]
                 body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
                 body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)

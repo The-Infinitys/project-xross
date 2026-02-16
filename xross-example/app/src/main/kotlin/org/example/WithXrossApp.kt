@@ -34,6 +34,9 @@ fun main() {
         executePropertyTest()
         executeComplexFieldTest()
         executeComplexStructPropertyTest()
+        executeHelloEnumTest()
+        executeFastStructTest()
+        executeAllTypesTest()
         executePanicAndTrivialTest()
         executeStandaloneFunctionTest()
         executeAsyncTest()
@@ -85,7 +88,8 @@ fun executeStandaloneFunctionTest(silent: Boolean = false) {
 fun executeAsyncTest(silent: Boolean = false) = runBlocking {
     val res = org.example.standalone.AsyncAdd.asyncAdd(100, 200)
     if (!silent) println("Async add: $res")
-    org.example.standalone.AsyncGreet.asyncGreet("Coroutines")
+    val msg = org.example.standalone.AsyncGreet.asyncGreet("Coroutines")
+    if (!silent) println("Async greet: $msg")
 }
 
 fun executePrimitiveTypeTest(silent: Boolean = false) {
@@ -117,6 +121,79 @@ fun executePropertyTest(silent: Boolean = false) {
     unknownStruct.s = "Modified"
     if (!silent) println("Struct string: ${unknownStruct.s}")
     unknownStruct.close()
+}
+
+fun executeHelloEnumTest(silent: Boolean = false) {
+    val e = org.example.some.HelloEnum.C(org.example.some.HelloEnum.B(42))
+    if (!silent) println("HelloEnum result: $e")
+    e.close()
+}
+
+fun executeFastStructTest(silent: Boolean = false) {
+    val fs = org.example.fast.FastStruct(10, "Fast")
+    fs.data = 20
+    val count = fs.countChars("Zero Copy")
+    if (!silent) println("FastStruct count: $count")
+    fs.close()
+}
+
+fun executeAllTypesTest(silent: Boolean = false) {
+    val t = AllTypesTest()
+
+    // 1. Primitive Get/Set
+    t.b = false
+    t.i8 = 10
+    t.u8 = 20
+    t.i16 = 30
+    t.u16 = 'A'
+    t.i32 = 40
+    t.u32 = 50
+    t.i64 = 60
+    t.u64 = 70
+    t.f32 = 80.0f
+    t.f64 = 90.0
+    t.isize = 100
+    t.usize = 110
+    t.s = "Modified String"
+
+    // 2. Complex Type Operations
+    val newNode = ComprehensiveNode(argOfid = 2, argOfdata = "New Node")
+    t.takeOwnedNode(newNode) // Consumes newNode
+
+    val currentNode = t.node
+    val id = t.takeRefNode(currentNode)
+    t.takeMutRefNode(currentNode, 3)
+
+    val refNode = t.returnRefNode()
+    val mutRefNode = t.returnMutRefNode()
+    mutRefNode.id = 500
+
+    // 3. Option / Result
+    t.testOptions(42, "Some", ComprehensiveNode(argOfid = 4, argOfdata = "Opt"))
+    val res = t.getResI(true)
+
+    if (!silent) {
+        println("AllTypesTest - i32: ${t.i32}, s: ${t.s}, node.id (after &mut): ${t.node.id}, opt_i: ${t.optI}, res: $res")
+        assert(t.node.id == 500) { "Mutable reference modification failed!" }
+        assert(t.optI == 42) { "Option passing failed!" }
+
+        println("Primitives - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8}, i16: ${t.i16}, u16: ${t.u16.code}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
+
+        t.b = true
+        t.i8 = 127
+        t.u8 = 255.toByte()
+        t.i16 = 32767
+        t.u16 = '\uFFFF'
+        t.i64 = Long.MAX_VALUE
+        t.f32 = 3.14f
+        t.f64 = 2.71828
+        t.isize = -123
+        t.usize = 456
+
+        println("After Update - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8.toInt() and 0xFF}, i16: ${t.i16}, u16: ${t.u16.code}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
+    }
+
+    t.close()
 }
 
 fun executeEnumTest(silent: Boolean = false) {

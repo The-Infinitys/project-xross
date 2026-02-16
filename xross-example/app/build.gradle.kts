@@ -58,7 +58,7 @@ java {
 
 application {
     // Define the main class for the application.
-    mainClass = "org.example.BenchmarkKt"
+    mainClass = project.findProperty("mainClass") as? String ?: "org.example.BenchmarkKt"
     applicationDefaultJvmArgs = listOf(
         "--add-opens", "java.base/java.lang=ALL-UNNAMED"
     )

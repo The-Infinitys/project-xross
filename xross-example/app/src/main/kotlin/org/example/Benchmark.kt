@@ -28,6 +28,12 @@ fun main() {
     // 5. Direct Mode
     results.addAll(runDirectModeBenchmarks())
 
+    // 6. Complex Patterns
+    results.addAll(runComplexPatternBenchmarks())
+
+    // 7. Ownership/Reference
+    results.addAll(runOwnershipBenchmarks())
+
     // Final Report
     printFinalReport(results)
 
@@ -62,7 +68,7 @@ fun runHeavyBenchmarks(): List<BenchmarkResult> {
 }
 
 fun runLifecycleBenchmarks(): List<BenchmarkResult> {
-    val iterations = 100000
+    val iterations = 500000
 
     val timeXrossLifecycle = measureTimeMillis {
         val service = org.example.test.test2.MyService2(0)
@@ -105,6 +111,9 @@ fun runIntegrationSuiteBenchmarks(): List<BenchmarkResult> {
                 executePropertyTest(silent = true)
                 executeComplexFieldTest(silent = true)
                 executeComplexStructPropertyTest(silent = true)
+                executeHelloEnumTest(silent = true)
+                executeFastStructTest(silent = true)
+                executeAllTypesTest(silent = true)
                 executePanicAndTrivialTest(silent = true)
                 executeStandaloneFunctionTest(silent = true)
             } catch (e: Throwable) {
@@ -123,6 +132,9 @@ fun runIntegrationSuiteBenchmarks(): List<BenchmarkResult> {
             executePKPropertyTest(silent = true)
             executePKComplexFieldTest(silent = true)
             executePKComplexStructPropertyTest(silent = true)
+            executePKHelloEnumTest(silent = true)
+            executePKFastStructTest(silent = true)
+            executePKAllTypesTest(silent = true)
             executePKPanicAndTrivialTest(silent = true)
             executePKStandaloneFunctionTest(silent = true)
         }
@@ -134,11 +146,11 @@ fun runIntegrationSuiteBenchmarks(): List<BenchmarkResult> {
 }
 
 fun runStringBenchmarks(): List<BenchmarkResult> {
-    val iterations = 50000
+    val iterations = 1000000
     val testString = "Hello Xross".repeat(10)
 
     val timeXrossString = measureTimeMillis {
-        val unknown = UnknownStruct(1, "", 1.0f)
+        val unknown = UnknownStruct(argOfi = 1, argOfs = "", argOff = 1.0f)
         repeat(iterations) {
             unknown.s = testString
             val s = unknown.s
@@ -161,7 +173,7 @@ fun runStringBenchmarks(): List<BenchmarkResult> {
 }
 
 fun runDirectModeBenchmarks(): List<BenchmarkResult> {
-    val iterations = 1000000
+    val iterations = 50000000
 
     val timeXrossLock = measureTimeMillis {
         val unknown = UnknownStruct(argOfi = 1, argOfs = "Test", argOff = 1.0f)
@@ -177,14 +189,80 @@ fun runDirectModeBenchmarks(): List<BenchmarkResult> {
         repeat(iterations) {
             fast.data = it
             val x = fast.data
-            val c = fast.countChars("Zero Copy String")
         }
         fast.close()
     }
 
+    val timePK = measureTimeMillis {
+        val unknown = PKUnknownStruct(1, "Test", 1.0f)
+        repeat(iterations) {
+            unknown.i = it
+            val x = unknown.i
+        }
+        unknown.close()
+    }
+
     return listOf(
-        BenchmarkResult("Direct", "Field Access (Lock) ($iterations)", timeXrossLock, 0), // Compare Xross vs Xross
-        BenchmarkResult("Direct", "Field Access (Direct) ($iterations)", timeXrossDirect, 0),
+        BenchmarkResult("Direct", "Field Access (Lock) ($iterations)", timeXrossLock, timePK),
+        BenchmarkResult("Direct", "Field Access (Direct) ($iterations)", timeXrossDirect, timePK),
+    )
+}
+
+fun runComplexPatternBenchmarks(): List<BenchmarkResult> {
+    val iterations = 100000
+
+    val timeXrossRecursive = measureTimeMillis {
+        repeat(iterations) {
+            val e = org.example.some.HelloEnum.C(org.example.some.HelloEnum.C(org.example.some.HelloEnum.B(it)))
+            e.close()
+        }
+    }
+
+    val timePKRecursive = measureTimeMillis {
+        repeat(iterations) {
+            val e = PKHelloEnum.C(PKHelloEnum.C(PKHelloEnum.B(it)))
+            e.close()
+        }
+    }
+
+    return listOf(
+        BenchmarkResult("Complex", "Recursive Enum ($iterations)", timeXrossRecursive, timePKRecursive),
+    )
+}
+
+fun runOwnershipBenchmarks(): List<BenchmarkResult> {
+    val iterations = 1000000
+    val test = AllTypesTest()
+    val node = ComprehensiveNode(argOfid = 1, argOfdata = "Benchmark")
+
+    val timeOwned = measureTimeMillis {
+        repeat(iterations) {
+            test.takeOwnedNode(node.clone())
+        }
+    }
+
+    val timeRef = measureTimeMillis {
+        repeat(iterations) {
+            test.takeRefNode(node)
+        }
+    }
+
+    val pkTest = PKAllTypesTest()
+    val pkNode = PKComprehensiveNode(1, "Benchmark")
+    val timePK = measureTimeMillis {
+        repeat(iterations) {
+            pkTest.takeRefNode(pkNode)
+        }
+    }
+
+    test.close()
+    node.close()
+    pkTest.close()
+    pkNode.close()
+
+    return listOf(
+        BenchmarkResult("Ownership", "Pass by Value (Clone) ($iterations)", timeOwned, timePK),
+        BenchmarkResult("Ownership", "Pass by Reference ($iterations)", timeRef, timePK),
     )
 }
 

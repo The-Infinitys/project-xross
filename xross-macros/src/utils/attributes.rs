@@ -207,6 +207,7 @@ pub fn extract_safety_attr(attrs: &[Attribute], default: ThreadSafety) -> Thread
 }
 
 pub fn extract_inner_type(ty: &syn::Type) -> &syn::Type {
+    let ty = if let syn::Type::Reference(r) = ty { &*r.elem } else { ty };
     if let syn::Type::Path(tp) = ty
         && let Some(last_segment) = tp.path.segments.last()
         && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
@@ -215,4 +216,21 @@ pub fn extract_inner_type(ty: &syn::Type) -> &syn::Type {
         return inner;
     }
     ty
+}
+
+pub fn extract_base_type(ty: &syn::Type) -> &syn::Type {
+    match ty {
+        syn::Type::Reference(r) => extract_base_type(&r.elem),
+        syn::Type::Path(tp) => {
+            if let Some(last_segment) = tp.path.segments.last()
+                && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+            {
+                extract_base_type(inner)
+            } else {
+                ty
+            }
+        }
+        _ => ty,
+    }
 }

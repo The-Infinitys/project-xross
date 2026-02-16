@@ -1,5 +1,5 @@
 use crate::types::resolver::resolve_type_with_attr;
-use crate::utils::extract_inner_type;
+use crate::utils::{extract_base_type, extract_inner_type};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Attribute, Receiver, ReturnType, Type};
@@ -89,24 +89,27 @@ pub fn gen_arg_conversion(
             quote! { #arg_id: *mut std::ffi::c_void },
             match ownership {
                 Ownership::Ref => {
-                    quote! { let #arg_id = unsafe { &*(#arg_id as *const #arg_ty) }; }
+                    let base = extract_base_type(arg_ty);
+                    quote! { let #arg_id = unsafe { &*(#arg_id as *const #base) }; }
                 }
                 Ownership::MutRef => {
-                    quote! { let #arg_id = unsafe { &mut *(#arg_id as *mut #arg_ty) }; }
+                    let base = extract_base_type(arg_ty);
+                    quote! { let #arg_id = unsafe { &mut *(#arg_id as *mut #base) }; }
                 }
                 Ownership::Boxed => {
                     let inner = extract_inner_type(arg_ty);
                     quote! { let #arg_id = unsafe { Box::from_raw(#arg_id as *mut #inner) }; }
                 }
                 Ownership::Owned => {
+                    let base = extract_base_type(arg_ty);
                     // Use ptr::read instead of Box::from_raw to avoid freeing memory that might be owned by Kotlin (e.g. Pure Enums).
-                    quote! { let #arg_id = unsafe { std::ptr::read(#arg_id as *const #arg_ty) }; }
+                    quote! { let #arg_id = unsafe { std::ptr::read(#arg_id as *const #base) }; }
                 }
             },
             quote! { #arg_id },
         ),
         XrossType::Option(inner) => {
-            let inner_rust_ty = extract_inner_type(arg_ty);
+            let inner_rust_ty = extract_base_type(arg_ty);
             (
                 quote! { #arg_id: *mut std::ffi::c_void },
                 match &**inner {
@@ -137,7 +140,7 @@ pub fn gen_arg_conversion(
             )
         }
         XrossType::Result { ok, err: _ } => {
-            let ok_inner = extract_inner_type(arg_ty);
+            let ok_inner = extract_base_type(arg_ty);
             let gen_read = |ty: &XrossType, ptr: TokenStream, rust_ty: TokenStream| match ty {
                 XrossType::String => {
                     quote! { std::ffi::CStr::from_ptr(#ptr as *const _).to_string_lossy().into_owned() }
@@ -171,8 +174,7 @@ pub fn gen_arg_conversion(
 pub fn gen_single_value_to_ptr(ty: &XrossType, val_ident: TokenStream) -> TokenStream {
     match ty {
         XrossType::String => {
-            // val_ident is already XrossString, box it to put in XrossResult.ptr
-            quote! { Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void }
+            quote! { Box::into_raw(Box::new(xross_core::XrossString::from(#val_ident))) as *mut std::ffi::c_void }
         }
         XrossType::Object { .. } => {
             quote! { Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void }

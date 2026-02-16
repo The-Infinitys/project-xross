@@ -34,10 +34,10 @@ fun CodeBlock.Builder.addResourceConstruction(
         addStatement("resObj")
     } else {
         // 借用
+        addStatement("val reinterpreted = %L.reinterpret(%L)", resRaw, sizeExpr)
         addStatement(
-            "%L(%L, %T.ofAuto(), sharedFlag = %T(true, this.aliveFlag))",
+            "%L(reinterpreted, %T.ofAuto(), sharedFlag = %T(true, this.aliveFlag))",
             fromPointerExpr,
-            resRaw,
             java.lang.foreign.Arena::class,
             flagType,
         )
@@ -135,10 +135,11 @@ fun CodeBlock.Builder.addRustStringResolution(
 ): CodeBlock.Builder {
     val resRawName = if (call is String && call.endsWith("RawInternal")) call else "${resultVar}RawInternal"
     if (!(call is String && call == resRawName)) {
-        if (call == "it") {
-            addStatement("val $resRawName = %L", call)
-        } else {
-            addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
+        when {
+            call == "it" -> addStatement("val $resRawName = %L", call)
+            call is String && (call.endsWith("Raw") || call.endsWith("Segment") || call == "resRaw") ->
+                addStatement("val $resRawName = %L", call)
+            else -> addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
         }
     }
 

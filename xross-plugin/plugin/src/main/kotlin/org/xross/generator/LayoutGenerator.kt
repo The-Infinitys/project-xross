@@ -30,12 +30,12 @@ object LayoutGenerator {
         meta.fields.forEach { field ->
             init.beginControlFlow("%S ->", field.name)
             val kotlinSize = field.ty.kotlinSize
-            val isCustomLayout = field.ty is XrossType.Optional || field.ty is XrossType.Result || (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned)
-            val alignmentCode = if (field.safety == XrossThreadSafety.Atomic || isCustomLayout) "" else ".withByteAlignment(1)"
+            val isComplex = field.ty is XrossType.Optional || field.ty is XrossType.Result || field.ty is XrossType.Object
 
-            if (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned) {
+            if (isComplex) {
                 init.addStatement("layouts.add(%T.paddingLayout(fSize).withName(%S))", MEMORY_LAYOUT, field.name)
             } else {
+                val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
                 init.addStatement("layouts.add(%L.withName(%S)%L)", field.ty.layoutCode, field.name, alignmentCode)
                 init.beginControlFlow("if (fSize > $kotlinSize)")
                     .addStatement("layouts.add(%T.paddingLayout(fSize - $kotlinSize))", MEMORY_LAYOUT)
@@ -96,11 +96,11 @@ object LayoutGenerator {
                         .addStatement("if (fOffsetL > 0) vLayouts.add(%T.paddingLayout(fOffsetL))", MEMORY_LAYOUT)
 
                     val kotlinSize = field.ty.kotlinSize
-                    if (field.ty is XrossType.Object && field.ty.ownership == XrossType.Ownership.Owned) {
+                    val isComplex = field.ty is XrossType.Optional || field.ty is XrossType.Result || field.ty is XrossType.Object
+                    if (isComplex) {
                         init.addStatement("vLayouts.add(%T.paddingLayout(fSizeL).withName(fName))", MEMORY_LAYOUT)
                     } else {
-                        val isCustomLayout = field.ty is XrossType.Optional || field.ty is XrossType.Result
-                        val alignmentCode = if (field.safety == XrossThreadSafety.Atomic || isCustomLayout) "" else ".withByteAlignment(1)"
+                        val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
                         init.addStatement("vLayouts.add(%L.withName(fName)%L)", field.ty.layoutCode, alignmentCode)
                         init.beginControlFlow("if (fSizeL > $kotlinSize)")
                             .addStatement("vLayouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)

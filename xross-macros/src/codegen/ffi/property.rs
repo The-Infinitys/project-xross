@@ -126,7 +126,7 @@ pub fn generate_property_accessors(
     extra_functions.push(quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #getter_ident(ptr: *mut std::ffi::c_void) -> #ret_type {
-            let _self = &*(ptr as *mut #struct_name);
+            let _self = unsafe { &*(ptr as *mut #struct_name) };
             #get_body
         }
     });
@@ -134,7 +134,7 @@ pub fn generate_property_accessors(
     extra_functions.push(quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #setter_ident(#(#setter_args),*) {
-            let _self = &mut *(ptr as *mut #struct_name);
+            let _self = unsafe { &mut *(ptr as *mut #struct_name) };
             #set_body
         }
     });
