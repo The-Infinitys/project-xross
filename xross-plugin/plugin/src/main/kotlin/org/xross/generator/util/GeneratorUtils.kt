@@ -294,9 +294,6 @@ object GeneratorUtils {
         return null
     }
 
-    /**
-     * Builds the internal constructor for enum variants or inherited structures.
-     */
     fun buildRawInitializer(
         builder: TypeSpec.Builder,
         aliveFlagType: ClassName,
@@ -304,7 +301,9 @@ object GeneratorUtils {
         builder.primaryConstructor(
             FunSpec.constructorBuilder()
                 .addModifiers(KModifier.INTERNAL)
-                .addInternalParameters(aliveFlagType, "raw")
+                .addParameter("raw", MEMORY_SEGMENT)
+                .addParameter("arena", ARENA)
+                .addParameter("sharedFlag", aliveFlagType)
                 .build(),
         )
         builder.addSuperclassConstructorParameter("raw")

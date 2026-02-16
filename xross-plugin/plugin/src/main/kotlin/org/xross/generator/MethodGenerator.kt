@@ -1,22 +1,20 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
+import org.xross.generator.util.FFMConstants
 import org.xross.generator.util.GeneratorUtils
 import org.xross.generator.util.addArgumentPreparation
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
 import java.lang.foreign.Arena
-import java.lang.foreign.MemorySegment
 import java.lang.foreign.SegmentAllocator
 
 /**
  * Generates Kotlin methods that wrap native Rust functions using Java FFM.
  */
 object MethodGenerator {
-    private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
-    private val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
-    private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
+    private val MEMORY_SEGMENT = FFMConstants.MEMORY_SEGMENT
 
     /**
      * Generates Kotlin methods for all methods defined in the metadata.

@@ -8,9 +8,9 @@ import org.xross.structures.*
 import java.lang.foreign.MemorySegment
 
 object InvocationGenerator {
-    private val VAL_LAYOUT = ClassName("java.lang.foreign", "ValueLayout")
-    private val ADDRESS = MemberName(VAL_LAYOUT, "ADDRESS")
-    private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
+    private val VAL_LAYOUT = FFMConstants.VAL_LAYOUT
+    private val ADDRESS = FFMConstants.ADDRESS
+    private val MEMORY_SEGMENT = FFMConstants.MEMORY_SEGMENT
 
     fun applyMethodCall(
         method: XrossMethod,

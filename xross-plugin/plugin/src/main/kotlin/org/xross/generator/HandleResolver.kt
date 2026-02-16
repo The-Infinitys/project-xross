@@ -57,18 +57,23 @@ object HandleResolver {
         resolveMethodHandles(init, meta)
     }
 
+    private fun getArgLayouts(fields: List<XrossField>): List<CodeBlock> {
+        val layouts = mutableListOf<CodeBlock>()
+        fields.forEach {
+            if (it.ty is XrossType.RustString) {
+                layouts.add(CodeBlock.of("%M", ADDRESS))
+                layouts.add(CodeBlock.of("%M", JAVA_LONG))
+                layouts.add(CodeBlock.of("%M", JAVA_BYTE))
+            } else {
+                layouts.add(it.ty.layoutCode)
+            }
+        }
+        return layouts
+    }
+
     private fun resolveStructHandles(init: CodeBlock.Builder, meta: XrossDefinition.Struct) {
         meta.methods.filter { it.isConstructor }.forEach { method ->
-            val argLayouts = mutableListOf<CodeBlock>()
-            method.args.forEach {
-                if (it.ty is XrossType.RustString) {
-                    argLayouts.add(CodeBlock.of("%M", ADDRESS))
-                    argLayouts.add(CodeBlock.of("%M", JAVA_LONG))
-                    argLayouts.add(CodeBlock.of("%M", JAVA_BYTE))
-                } else {
-                    argLayouts.add(it.ty.layoutCode)
-                }
-            }
+            val argLayouts = getArgLayouts(method.args)
             val retLayout = if (method.handleMode is HandleMode.Panicable) {
                 FFMConstants.XROSS_RESULT_LAYOUT_CODE
             } else {
@@ -109,16 +114,7 @@ object HandleResolver {
         )
 
         meta.variants.forEach { v ->
-            val argLayouts = mutableListOf<CodeBlock>()
-            v.fields.forEach {
-                if (it.ty is XrossType.RustString) {
-                    argLayouts.add(CodeBlock.of("%M", ADDRESS))
-                    argLayouts.add(CodeBlock.of("%M", JAVA_LONG))
-                    argLayouts.add(CodeBlock.of("%M", JAVA_BYTE))
-                } else {
-                    argLayouts.add(it.ty.layoutCode)
-                }
-            }
+            val argLayouts = getArgLayouts(v.fields)
             val desc = if (argLayouts.isEmpty()) {
                 CodeBlock.of("%T.of(%M)", FUNCTION_DESCRIPTOR, ADDRESS)
             } else {
@@ -219,15 +215,7 @@ object HandleResolver {
         meta.methods.filter { !it.isConstructor && it.name != "drop" && it.name != "layout" }.forEach { method ->
             val args = mutableListOf<CodeBlock>()
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
-            method.args.forEach {
-                if (it.ty is XrossType.RustString) {
-                    args.add(CodeBlock.of("%M", ADDRESS))
-                    args.add(CodeBlock.of("%M", JAVA_LONG))
-                    args.add(CodeBlock.of("%M", JAVA_BYTE))
-                } else {
-                    args.add(it.ty.layoutCode)
-                }
-            }
+            args.addAll(getArgLayouts(method.args))
 
             val isPanicable = method.handleMode is HandleMode.Panicable
             val desc = if (method.ret is XrossType.Void && !method.isAsync && !isPanicable) {

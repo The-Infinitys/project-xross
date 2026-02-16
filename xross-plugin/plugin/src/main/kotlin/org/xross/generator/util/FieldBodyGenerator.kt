@@ -9,6 +9,10 @@ import java.lang.ref.WeakReference
 object FieldBodyGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
 
+    private fun CodeBlock.Builder.addAliveCheck(message: String) {
+        addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class, message)
+    }
+
     fun buildGetterBody(
         field: XrossField,
         vhName: String,
@@ -20,7 +24,7 @@ object FieldBodyGenerator {
         handleNameProvider: (XrossType) -> String = { "" },
     ): CodeBlock {
         val body = CodeBlock.builder()
-        body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class, "Access error")
+        body.addAliveCheck("Access error")
 
         val flagType = ClassName("$basePackage.xross.runtime", "AliveFlag")
         val xrossRuntime = ClassName("$basePackage.xross.runtime", "XrossRuntime")
@@ -163,7 +167,7 @@ object FieldBodyGenerator {
         handleNameProvider: (XrossType) -> String = { "" },
     ): CodeBlock {
         val body = CodeBlock.builder()
-        body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class, "Invalid Access")
+        body.addAliveCheck("Invalid Access")
 
         when (val ty = field.ty) {
             is XrossType.Object -> {

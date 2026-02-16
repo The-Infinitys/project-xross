@@ -1,30 +1,19 @@
 package org.xross.generator
 
 import com.squareup.kotlinpoet.*
-import org.xross.generator.util.FFMConstants
-import org.xross.generator.util.GeneratorUtils
+import org.xross.generator.util.*
+import org.xross.generator.util.addArgumentPreparation
 import org.xross.generator.util.addRustStringResolution
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
 import org.xross.structures.XrossField
 import org.xross.structures.XrossType
-import java.io.File
 import java.lang.foreign.MemorySegment
 
 object OpaqueGenerator {
 
-    fun generateSingle(meta: XrossDefinition.Opaque, outputDir: File, targetPackage: String, basePackage: String) {
-        val className = meta.name
-        val classBuilder = TypeSpec.classBuilder(className)
-            .addSuperinterface(AutoCloseable::class)
-            .addKdoc(meta.docs.joinToString("\n"))
-
-        val companionBuilder = TypeSpec.companionObjectBuilder()
-        StructureGenerator.buildBase(classBuilder, companionBuilder, meta, basePackage)
-        CompanionGenerator.generateCompanions(companionBuilder, meta, basePackage)
-        MethodGenerator.generateMethods(classBuilder, companionBuilder, meta, basePackage)
-
+    fun generateFields(classBuilder: TypeSpec.Builder, meta: XrossDefinition.Opaque, basePackage: String) {
         // Add fields for Opaque
         meta.fields.forEach { field ->
             val baseName = field.name.toCamelCase()
@@ -38,21 +27,9 @@ object OpaqueGenerator {
             val propBuilder = PropertySpec.builder(escapedName, kType)
                 .mutable(true) // External fields are assumed mutable
                 .getter(buildOpaqueGetter(field, kType, basePackage))
-                .setter(GeneratorUtils.buildFullSetter(field.safety, kType, buildOpaqueSetterBody(field), useAsyncLock = false))
+                .setter(GeneratorUtils.buildFullSetter(field.safety, kType, buildOpaqueSetterBody(field, basePackage), useAsyncLock = false))
             classBuilder.addProperty(propBuilder.build())
         }
-
-        classBuilder.addType(companionBuilder.build())
-        StructureGenerator.addFinalBlocks(classBuilder, meta)
-
-        val runtimePkg = "$basePackage.xross.runtime"
-        val fileSpec = FileSpec.builder(targetPackage, className)
-            .addImport(runtimePkg, "AliveFlag", "XrossException", "XrossObject", "XrossNativeObject", "XrossRuntime")
-            .addType(classBuilder.build())
-            .indent("    ")
-            .build()
-
-        GeneratorUtils.writeToDisk(fileSpec, outputDir)
     }
 
     private fun buildOpaqueGetter(field: XrossField, kType: TypeName, basePackage: String): FunSpec {
@@ -61,26 +38,14 @@ object OpaqueGenerator {
         body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Access error")
 
         val getHandle = when (field.ty) {
-            is XrossType.RustString -> {
-                "${baseName}StrGetHandle"
-            }
-
-            is XrossType.Optional -> {
-                "${baseName}OptGetHandle"
-            }
-
-            is XrossType.Result -> {
-                "${baseName}ResGetHandle"
-            }
-
-            else -> {
-                "${baseName}GetHandle"
-            }
+            is XrossType.RustString -> "${baseName}StrGetHandle"
+            is XrossType.Optional -> "${baseName}OptGetHandle"
+            is XrossType.Result -> "${baseName}ResGetHandle"
+            else -> "${baseName}GetHandle"
         }
 
         when (field.ty) {
             is XrossType.Result -> {
-                // Handle Result similarly to PropertyGenerator but using FFI handle
                 body.addStatement("val resRaw = $getHandle.invokeExact(this.segment) as %T", MemorySegment::class)
                 body.addStatement(
                     "val isOk = resRaw.get(%M, 0L) != (0).toByte()",
@@ -88,7 +53,6 @@ object OpaqueGenerator {
                 )
                 body.addStatement("val ptr = resRaw.get(%M, 8L)", MemberName("java.lang.foreign.ValueLayout", "ADDRESS"))
                 body.beginControlFlow("val res = if (isOk)")
-                // Simplified for Opaque
                 body.addStatement("Result.success(ptr) // TODO: Full resolution if needed")
                 body.nextControlFlow("else")
                 body.addStatement("Result.failure(%T(ptr))", ClassName("$basePackage.xross.runtime", "XrossException"))
@@ -109,25 +73,21 @@ object OpaqueGenerator {
         return FunSpec.getterBuilder().addCode(body.build()).build()
     }
 
-    private fun buildOpaqueSetterBody(field: XrossField): CodeBlock {
-        val baseName = field.name.toCamelCase()
+    private fun buildOpaqueSetterBody(field: XrossField, basePackage: String): CodeBlock {
         val body = CodeBlock.builder()
         body.addStatement("if (this.segment == %T.NULL || !this.aliveFlag.isValid) throw %T(%S)", MemorySegment::class, NullPointerException::class, "Object invalid")
 
         val setHandle = when (field.ty) {
-            is XrossType.RustString -> "${baseName}StrSetHandle"
-            is XrossType.Optional -> "${baseName}OptSetHandle"
-            else -> "${baseName}SetHandle"
+            is XrossType.RustString -> "${field.name.toCamelCase()}StrSetHandle"
+            is XrossType.Optional -> "${field.name.toCamelCase()}OptSetHandle"
+            else -> "${field.name.toCamelCase()}SetHandle"
         }
 
-        if (field.ty is XrossType.RustString) {
-            body.beginControlFlow("%T.ofConfined().use { arena ->", FFMConstants.ARENA)
-            body.addStatement("val allocated = arena.allocateFrom(v)")
-            body.addStatement("$setHandle.invokeExact(this.segment, allocated)")
-            body.endControlFlow()
-        } else {
-            body.addStatement("$setHandle.invokeExact(this.segment, v)")
-        }
+        body.beginControlFlow("%T.ofConfined().use { arena ->", java.lang.foreign.Arena::class)
+        val callArgs = mutableListOf<CodeBlock>()
+        body.addArgumentPreparation(field.ty, "v", callArgs, basePackage = basePackage)
+        body.addStatement("$setHandle.invoke(this.segment, ${callArgs.joinToString(", ")})")
+        body.endControlFlow()
 
         return body.build()
     }

@@ -22,8 +22,8 @@ object XrossGenerator {
         RuntimeGenerator.generate(outputDir, basePackage)
 
         when (val resolvedMeta = resolveAllTypes(meta, resolver)) {
-            is XrossDefinition.Opaque -> OpaqueGenerator.generateSingle(resolvedMeta, outputDir, targetPackage, basePackage)
-            is XrossDefinition.Struct, is XrossDefinition.Enum -> generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)
+            is XrossDefinition.Struct, is XrossDefinition.Enum, is XrossDefinition.Opaque -> 
+                generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)
             is XrossDefinition.Function -> generateFunction(resolvedMeta, outputDir, targetPackage, basePackage)
         }
     }
@@ -61,15 +61,17 @@ object XrossGenerator {
         StructureGenerator.buildBase(classBuilder, companionBuilder, meta, basePackage)
 
         // 呼び出し順序を変更: Variant/Field 生成を先に行う
-        when {
-            meta is XrossDefinition.Struct -> PropertyGenerator.generateFields(classBuilder, meta, basePackage)
-            isEnum -> EnumVariantGenerator.generateVariants(
+        when (meta) {
+            is XrossDefinition.Struct -> PropertyGenerator.generateFields(classBuilder, meta, basePackage)
+            is XrossDefinition.Enum -> EnumVariantGenerator.generateVariants(
                 classBuilder,
                 companionBuilder,
                 meta,
                 targetPackage,
                 basePackage,
             )
+            is XrossDefinition.Opaque -> OpaqueGenerator.generateFields(classBuilder, meta, basePackage)
+            else -> {}
         }
 
         CompanionGenerator.generateCompanions(companionBuilder, meta, basePackage)

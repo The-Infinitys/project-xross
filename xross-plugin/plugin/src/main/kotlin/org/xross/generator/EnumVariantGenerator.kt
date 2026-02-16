@@ -104,9 +104,6 @@ object EnumVariantGenerator {
 
             val variantTypeBuilder = TypeSpec.classBuilder(variant.name)
                 .superclass(baseClassName)
-                .addSuperclassConstructorParameter("raw")
-                .addSuperclassConstructorParameter("arena")
-                .addSuperclassConstructorParameter("sharedFlag")
                 .addProperty(
                     PropertySpec.builder("variantType", variantTypeEnum)
                         .addModifiers(KModifier.OVERRIDE)
@@ -114,25 +111,8 @@ object EnumVariantGenerator {
                         .build(),
                 )
 
-            val primaryConstructor = FunSpec.constructorBuilder()
-                .addModifiers(KModifier.INTERNAL)
-                .addParameter("raw", MEMORY_SEGMENT)
-                .addParameter("arena", ClassName("java.lang.foreign", "Arena"))
-                .addParameter("sharedFlag", aliveFlagType)
-
-            variantTypeBuilder.primaryConstructor(primaryConstructor.build())
-
-            variantTypeBuilder.addFunction(
-                FunSpec.constructorBuilder()
-                    .addModifiers(KModifier.PRIVATE)
-                    .addParameter("p", tripleType)
-                    .callThisConstructor(
-                        CodeBlock.of("p.first"),
-                        CodeBlock.of("p.second"),
-                        CodeBlock.of("p.third"),
-                    )
-                    .build(),
-            )
+            GeneratorUtils.buildRawInitializer(variantTypeBuilder, aliveFlagType)
+            GeneratorUtils.addInternalConstructor(variantTypeBuilder, tripleType)
 
             if (isPureVariant) {
                 val factoryMethodName = "xrossNew${variant.name}Internal"
