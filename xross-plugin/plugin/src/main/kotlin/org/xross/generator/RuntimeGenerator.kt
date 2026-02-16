@@ -14,24 +14,22 @@ object RuntimeGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
     private val CLEANABLE = ClassName("java.lang.ref.Cleaner", "Cleanable")
 
-    private fun TypeSpec.Builder.addStringBase(memorySegment: TypeName): TypeSpec.Builder {
-        return this.primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("segment", memorySegment)
+    private fun TypeSpec.Builder.addStringBase(memorySegment: TypeName): TypeSpec.Builder = this.primaryConstructor(
+        FunSpec.constructorBuilder()
+            .addParameter("segment", memorySegment)
+            .build(),
+    )
+        .addProperty(PropertySpec.builder("segment", memorySegment).initializer("segment").build())
+        .addProperty(
+            PropertySpec.builder("ptr", memorySegment)
+                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 0L)").build())
                 .build(),
         )
-            .addProperty(PropertySpec.builder("segment", memorySegment).initializer("segment").build())
-            .addProperty(
-                PropertySpec.builder("ptr", memorySegment)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 0L)").build())
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("len", Long::class)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
-                    .build(),
-            )
-    }
+        .addProperty(
+            PropertySpec.builder("len", Long::class)
+                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
+                .build(),
+        )
 
     fun generate(outputDir: File, basePackage: String) {
         val pkg = "$basePackage.xross.runtime"

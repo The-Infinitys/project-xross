@@ -5,7 +5,6 @@ import org.xross.generator.util.*
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
-import java.lang.foreign.MemorySegment
 
 object InvocationGenerator {
     private val VAL_LAYOUT = FFMConstants.VAL_LAYOUT

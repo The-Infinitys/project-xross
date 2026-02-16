@@ -22,7 +22,7 @@ object XrossGenerator {
         RuntimeGenerator.generate(outputDir, basePackage)
 
         when (val resolvedMeta = resolveAllTypes(meta, resolver)) {
-            is XrossDefinition.Struct, is XrossDefinition.Enum, is XrossDefinition.Opaque -> 
+            is XrossDefinition.Struct, is XrossDefinition.Enum, is XrossDefinition.Opaque ->
                 generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)
             is XrossDefinition.Function -> generateFunction(resolvedMeta, outputDir, targetPackage, basePackage)
         }
