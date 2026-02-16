@@ -44,6 +44,25 @@ fun CodeBlock.Builder.addResourceConstruction(
     }
 }
 
+fun CodeBlock.Builder.addArenaAndFlag(
+    basePackage: String,
+    isPersistent: Boolean = false,
+    externalArena: CodeBlock? = null,
+): CodeBlock.Builder {
+    val runtimePkg = "$basePackage.xross.runtime"
+    val aliveFlagType = ClassName(runtimePkg, "AliveFlag")
+    val xrossRuntime = ClassName(runtimePkg, "XrossRuntime")
+
+    if (externalArena != null) {
+        addStatement("val newOwnerArena = %L ?: %T.ofSmart()", externalArena, xrossRuntime)
+        addStatement("val flag = %T(initial = true, isPersistent = %L || %L != null)", aliveFlagType, isPersistent, externalArena)
+    } else {
+        addStatement("val newOwnerArena = %T.ofSmart()", xrossRuntime)
+        addStatement("val flag = %T(initial = true, isPersistent = %L)", aliveFlagType, isPersistent)
+    }
+    return this
+}
+
 fun CodeBlock.Builder.addFactoryBody(
     basePackage: String,
     handleCall: CodeBlock,
@@ -52,18 +71,14 @@ fun CodeBlock.Builder.addFactoryBody(
     isPersistent: Boolean = false,
     handleMode: org.xross.structures.HandleMode = org.xross.structures.HandleMode.Normal,
     externalArena: CodeBlock? = null,
+    defineArenaAndFlag: Boolean = true,
 ): CodeBlock.Builder {
     val runtimePkg = "$basePackage.xross.runtime"
-    val aliveFlagType = ClassName(runtimePkg, "AliveFlag")
     val xrossRuntime = ClassName(runtimePkg, "XrossRuntime")
     val memorySegment = ClassName("java.lang.foreign", "MemorySegment")
 
-    if (externalArena != null) {
-        addStatement("val newOwnerArena = %L ?: %T.ofSmart()", externalArena, xrossRuntime)
-        addStatement("val flag = %T(initial = true, isPersistent = %L || %L != null)", aliveFlagType, isPersistent, externalArena)
-    } else {
-        addStatement("val newOwnerArena = %T.ofSmart()", xrossRuntime)
-        addStatement("val flag = %T(initial = true, isPersistent = %L)", aliveFlagType, isPersistent)
+    if (defineArenaAndFlag) {
+        addArenaAndFlag(basePackage, isPersistent, externalArena)
     }
 
     if (handleMode is org.xross.structures.HandleMode.Panicable) {

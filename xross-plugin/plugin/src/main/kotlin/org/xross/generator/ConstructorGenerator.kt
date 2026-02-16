@@ -2,6 +2,7 @@ package org.xross.generator
 
 import com.squareup.kotlinpoet.*
 import org.xross.generator.util.GeneratorUtils
+import org.xross.generator.util.addArenaAndFlag
 import org.xross.generator.util.addArgumentPreparation
 import org.xross.generator.util.addFactoryBody
 import org.xross.helper.StringHelper.toCamelCase
@@ -50,6 +51,8 @@ object ConstructorGenerator {
             .returns(tripleType)
 
         val body = CodeBlock.builder()
+        body.addArenaAndFlag(basePackage, externalArena = CodeBlock.of("externalArena"))
+
         val callArgs = mutableListOf<CodeBlock>()
         val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
 
@@ -84,6 +87,7 @@ object ConstructorGenerator {
             CodeBlock.of("dropHandle"),
             handleMode = method.handleMode,
             externalArena = CodeBlock.of("externalArena"),
+            defineArenaAndFlag = false,
         )
 
         // Triple(MemorySegment, Arena, AliveFlag)

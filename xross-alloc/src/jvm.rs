@@ -10,6 +10,9 @@ pub static EXTERNAL_HEAP: OnceLock<(RawPtr, usize)> = OnceLock::new();
 
 #[cfg(feature = "jvmalloc")]
 #[unsafe(no_mangle)]
+/// Initialize XrossRuntime's JvmAllocator
+/// # Safety
+/// Please call once and call from jvm
 pub unsafe extern "C" fn xross_runtime_init(ptr: *mut u8, size: usize) {
     let _ = EXTERNAL_HEAP.set((RawPtr(ptr), size));
     // アロケーターの初期化をトリガー
