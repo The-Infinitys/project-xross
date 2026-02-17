@@ -4,6 +4,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 pub struct ParentAlloc;
 
 unsafe impl GlobalAlloc for ParentAlloc {
+    #[allow(unreachable_code)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         #[cfg(feature = "jemalloc")]
         return unsafe { jemallocator::Jemalloc.alloc(layout) };
@@ -18,14 +19,12 @@ unsafe impl GlobalAlloc for ParentAlloc {
         return unsafe { snmalloc_rs::SnMalloc.alloc(layout) };
 
         #[cfg(feature = "tcmalloc")]
-        return unsafe { tcmalloc::TcMalloc.alloc(layout) };
+        return unsafe { tcmalloc::TCMalloc.alloc(layout) };
 
-        #[allow(unreachable_code)]
-        unsafe {
-            System.alloc(layout)
-        }
+        unsafe { System.alloc(layout) }
     }
 
+    #[allow(unreachable_code)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         #[cfg(feature = "jemalloc")]
         return unsafe { jemallocator::Jemalloc.dealloc(ptr, layout) };
@@ -40,10 +39,8 @@ unsafe impl GlobalAlloc for ParentAlloc {
         return unsafe { snmalloc_rs::SnMalloc.dealloc(ptr, layout) };
 
         #[cfg(feature = "tcmalloc")]
-        return unsafe { tcmalloc::TcMalloc.dealloc(ptr, layout) };
-        #[allow(unreachable_code)]
-        unsafe {
-            System.dealloc(ptr, layout)
-        };
+        return unsafe { tcmalloc::TCMalloc.dealloc(ptr, layout) };
+
+        unsafe { System.dealloc(ptr, layout) };
     }
 }
