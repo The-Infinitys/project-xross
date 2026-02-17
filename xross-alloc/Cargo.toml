@@ -4,12 +4,12 @@ version = "3.0.1"
 edition = "2024"
 
 [dependencies]
-# すべて optional にし、必要なときだけコンパイルに含める
-jemallocator = { version = "0.5.4" }
-mimalloc = { version = "0.1.48" }
-rpmalloc = { version = "0.2.2" }
-snmalloc-rs = { version = "0.3.8" }
-tcmalloc = { version = "0.3.0" }
+# 外部アロケータはデフォルトでは含めないように修正
+jemallocator = { version = "0.5.4", optional = true }
+mimalloc = { version = "0.1.48", optional = true }
+rpmalloc = { version = "0.2.2", optional = true }
+snmalloc-rs = { version = "0.3.8", optional = true }
+tcmalloc = { version = "0.3.0", optional = true }
 rand = "0.10.0"
 rlsf = { version = "0.2", optional = true }
 spin = "0.10"
@@ -17,9 +17,9 @@ spin = "0.10"
 [features]
 default = ["multi-thread"]
 multi-thread = []
-jemalloc = []
-mimalloc = []
-rpmalloc = []
-snmalloc = []
-tcmalloc = []
+jemalloc = ["dep:jemallocator"]
+mimalloc = ["dep:mimalloc"]
+rpmalloc = ["dep:rpmalloc"]
+snmalloc = ["dep:snmalloc-rs"]
+tcmalloc = ["dep:tcmalloc"]
 jvmalloc = ["dep:rlsf"]
