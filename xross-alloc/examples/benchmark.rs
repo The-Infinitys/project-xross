@@ -218,7 +218,9 @@ fn producer_consumer_bench(alloc: &'static (dyn GlobalAlloc + Sync)) {
     let handle = thread::spawn(move || {
         for _ in 0..OPS_PER_THREAD {
             if let Ok(ptr) = rx.recv() {
-                unsafe { alloc.dealloc(ptr.0, layout); }
+                unsafe {
+                    alloc.dealloc(ptr.0, layout);
+                }
             }
         }
     });
@@ -229,21 +231,23 @@ fn producer_consumer_bench(alloc: &'static (dyn GlobalAlloc + Sync)) {
             tx.send(SendPtr(ptr)).unwrap();
         }
     }
-    
+
     handle.join().unwrap();
 }
 
 fn large_alloc_bench(alloc: &'static (dyn GlobalAlloc + Sync)) {
-    let iterations = 100; 
+    let iterations = 100;
     let scale = OPS_PER_THREAD / iterations;
-    
+
     for _ in 0..iterations {
         let size = 1024 * 1024 * 2; // 2MB
         let layout = Layout::from_size_align(size, 4096).unwrap();
         unsafe {
             let ptr = alloc.alloc(layout);
             ptr.write(0xFF);
-            for _ in 0..scale { std::hint::black_box(()); } 
+            for _ in 0..scale {
+                std::hint::black_box(());
+            }
             alloc.dealloc(ptr, layout);
         }
     }
@@ -282,5 +286,3 @@ fn tiny_alloc_bench(alloc: &'static (dyn GlobalAlloc + Sync)) {
         }
     }
 }
-
-
