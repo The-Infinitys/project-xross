@@ -14,15 +14,10 @@ pub struct Path2D {
     buffer: Vec<f32>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SegmentData {
     points: Vec<PointData>,
     is_closed: bool,
-}
-impl Default for SegmentData {
-    fn default() -> Self {
-        Self { points: Vec::new(), is_closed: false }
-    }
 }
 
 #[derive(XrossClass, Clone, Copy, Default, Debug)]
@@ -61,9 +56,10 @@ impl Default for Color {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, XrossClass)]
+#[derive(Copy, Clone, Debug, PartialEq, XrossClass, Default)]
 #[xross_package("graphics")]
 pub enum XrossLineCap {
+    #[default]
     Butt,
     Square,
     Round,
@@ -89,15 +85,10 @@ impl From<XrossLineCap> for LineCap {
     }
 }
 
-impl Default for XrossLineCap {
-    fn default() -> Self {
-        Self::Butt
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, XrossClass)]
+#[derive(Copy, Clone, Debug, PartialEq, XrossClass, Default)]
 #[xross_package("graphics")]
 pub enum XrossLineJoin {
+    #[default]
     Miter,
     MiterClip,
     Round,
@@ -123,12 +114,6 @@ impl From<XrossLineJoin> for LineJoin {
             XrossLineJoin::Round => Self::Round,
             XrossLineJoin::Bevel => Self::Bevel,
         }
-    }
-}
-
-impl Default for XrossLineJoin {
-    fn default() -> Self {
-        Self::Miter
     }
 }
 
@@ -253,10 +238,8 @@ impl Path2D {
 
     #[xross_method(critical)]
     pub fn close_path(&mut self) {
-        if let Some(current_segment) = self.segments.last_mut() {
-            if !current_segment.points.is_empty() {
-                current_segment.is_closed = true;
-            }
+        if let Some(current_segment) = self.segments.last_mut().filter(|s| !s.points.is_empty()) {
+            current_segment.is_closed = true;
         }
     }
 
@@ -431,6 +414,7 @@ impl Path2D {
         self.arc(center.0, center.1, radius, start_angle, end_angle, cross_product > 0.0);
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[xross_method(panicable)]
     pub fn ellipse(
         &mut self,

@@ -1,5 +1,13 @@
 use std::ptr;
 
+/// チャンクの先頭に配置するヘッダーのサイズ (バイト)
+pub const CHUNK_HEADER_SIZE: usize = 256;
+
+/// 各スラブクラスが占有するメモリサイズ (32KB)
+pub const SLAB_CLASS_SIZE: usize = 32768;
+/// 32KB を特定するためのビットシフト量
+pub const SLAB_CLASS_SHIFT: usize = 15;
+
 pub struct SlabConfig {
     pub size: usize,
     pub len: usize,
@@ -25,6 +33,7 @@ impl SlabLayout {
     /// 各スラブクラスの開始オフセット
     pub const OFFSETS: [usize; LAYOUT_LEN + 1] = {
         let mut offsets = [0; LAYOUT_LEN + 1];
+        offsets[0] = CHUNK_HEADER_SIZE; // ヘッダー分を確保
         let mut i = 0;
         while i < LAYOUT_LEN {
             offsets[i + 1] = offsets[i] + (SLAB_LAYOUTS[i].size * SLAB_LAYOUTS[i].len);
@@ -64,10 +73,17 @@ pub struct LocalSlab {
 }
 
 impl LocalSlab {
+    /// # Safety
+    ///
+    /// `base` must point to a valid memory region of at least the size required
+    /// for this slab class.
     pub unsafe fn new(base: *mut u8) -> Self {
         Self { base, bump_idx: 0, free_list: ptr::null_mut() }
     }
 
+    /// # Safety
+    ///
+    /// `idx` must be a valid slab class index for this instance.
     #[inline(always)]
     pub unsafe fn alloc(&mut self, idx: usize) -> *mut u8 {
         if !self.free_list.is_null() {
@@ -87,6 +103,10 @@ impl LocalSlab {
         ptr::null_mut()
     }
 
+    /// # Safety
+    ///
+    /// `ptr` must be a valid pointer to a memory block previously allocated
+    /// from this slab instance.
     #[inline(always)]
     pub unsafe fn dealloc(&mut self, ptr: *mut u8) {
         let node = ptr as *mut FreeNode;

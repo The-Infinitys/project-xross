@@ -3,16 +3,18 @@ pub mod heap;
 pub mod local;
 pub mod slab;
 
-use crate::global::{CHUNK_SIZE, XrossGlobalAllocator};
+use crate::global::{CHUNK_SIZE, ChunkHeader, FreeNode, XrossGlobalAllocator};
 use crate::heap::heap;
-use crate::local::XrossLocalAllocator;
+use crate::local::{XrossLocalAllocator, current_thread_token};
 use crate::slab::{SLAB_TOTAL_CAPACITY, SlabLayout};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::UnsafeCell;
 use std::ptr::{self, NonNull};
 use std::sync::OnceLock;
+use std::sync::atomic::Ordering;
 
 const LARGE_THRESHOLD: usize = CHUNK_SIZE / 2;
+const REMOTE_FREE_BATCH_THRESHOLD: usize = 16;
 
 pub struct XrossAlloc;
 
@@ -26,8 +28,77 @@ fn xross_global_alloc() -> &'static XrossGlobalAllocator {
     })
 }
 
+struct RemoteFreeBatch {
+    chunk: *mut ChunkHeader,
+    head: *mut FreeNode,
+    tail: *mut FreeNode,
+    count: usize,
+}
+
+impl RemoteFreeBatch {
+    const fn new() -> Self {
+        Self { chunk: ptr::null_mut(), head: ptr::null_mut(), tail: ptr::null_mut(), count: 0 }
+    }
+
+    #[inline(always)]
+    unsafe fn flush(&mut self) {
+        if self.count == 0 {
+            return;
+        }
+        unsafe {
+            let queue = &(*self.chunk).remote_free_list;
+            let mut old_head = queue.load(Ordering::Relaxed);
+            loop {
+                (*self.tail).next = old_head;
+                match queue.compare_exchange_weak(
+                    old_head,
+                    self.head,
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(h) => old_head = h,
+                }
+            }
+        }
+        *self = Self::new();
+    }
+
+    #[inline(always)]
+    unsafe fn add(&mut self, ptr: *mut u8, chunk: *mut ChunkHeader) {
+        if self.chunk != chunk || self.count >= REMOTE_FREE_BATCH_THRESHOLD {
+            unsafe {
+                self.flush();
+            }
+            self.chunk = chunk;
+        }
+
+        let node = ptr as *mut FreeNode;
+        unsafe {
+            if self.count == 0 {
+                self.head = node;
+                self.tail = node;
+            } else {
+                (*node).next = self.head;
+                self.head = node;
+            }
+        }
+        self.count += 1;
+    }
+}
+
+struct RemoteFreeBatchWrapper(UnsafeCell<RemoteFreeBatch>);
+impl Drop for RemoteFreeBatchWrapper {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.0.get()).flush();
+        }
+    }
+}
+
 thread_local! {
     static LOCAL_ALLOC: UnsafeCell<Option<XrossLocalAllocator>> = const { UnsafeCell::new(None) };
+    static REMOTE_BATCH: RemoteFreeBatchWrapper = const { RemoteFreeBatchWrapper(UnsafeCell::new(RemoteFreeBatch::new())) };
 }
 
 #[inline(always)]
@@ -57,12 +128,18 @@ unsafe impl GlobalAlloc for XrossAlloc {
                     let local = (*local_ptr).as_mut().unwrap_unchecked();
 
                     local.alloc_count = local.alloc_count.wrapping_add(1);
-                    if local.alloc_count & 63 == 0 {
+                    if local.alloc_count & 127 == 0 {
                         local.process_remote_frees();
                     }
 
                     let idx = get_slab_idx(size);
-                    let p = local.slabs[idx].alloc(idx);
+                    let mut p = local.slabs[idx].alloc(idx);
+
+                    if p.is_null() {
+                        local.process_remote_frees();
+                        p = local.slabs[idx].alloc(idx);
+                    }
+
                     if !p.is_null() {
                         p
                     } else {
@@ -98,6 +175,8 @@ unsafe impl GlobalAlloc for XrossAlloc {
         if ptr.is_null() {
             return;
         }
+
+        let addr = ptr as usize;
         let g = xross_global_alloc();
 
         if !g.is_own(ptr) {
@@ -107,26 +186,29 @@ unsafe impl GlobalAlloc for XrossAlloc {
             return;
         }
 
-        LOCAL_ALLOC.with(|cell| {
-            let local_ptr = cell.get();
-            unsafe {
-                if let Some(local) = (*local_ptr).as_mut() {
-                    let addr = ptr as usize;
-                    let base = local.chunk_ptr as usize;
-                    let off = addr.wrapping_sub(base);
-                    if off < CHUNK_SIZE {
+        let chunk_base = addr & !(CHUNK_SIZE - 1);
+        let header = chunk_base as *mut ChunkHeader;
+
+        if unsafe { (*header).owner_id.load(Ordering::Relaxed) } == current_thread_token() {
+            LOCAL_ALLOC.with(|cell| {
+                let local_ptr = cell.get();
+                unsafe {
+                    if let Some(local) = (*local_ptr).as_mut() {
+                        let off = addr - chunk_base;
                         if off < SLAB_TOTAL_CAPACITY {
                             local.slabs[XrossLocalAllocator::get_slab_idx_from_offset(off)]
                                 .dealloc(ptr);
                         } else {
                             local.tlsf.deallocate(NonNull::new_unchecked(ptr), layout.align());
                         }
-                        return;
                     }
                 }
-                g.push_remote_free(ptr);
-            }
-        });
+            });
+        } else {
+            REMOTE_BATCH.with(|batch_cell| {
+                unsafe { (*batch_cell.0.get()).add(ptr, header) };
+            });
+        }
     }
 
     #[inline]
@@ -154,7 +236,6 @@ unsafe impl GlobalAlloc for XrossAlloc {
         if old_size <= 2048 && new_size <= 2048 {
             let old_idx = get_slab_idx(old_size);
             let new_idx = get_slab_idx(new_size);
-
             if old_idx == new_idx {
                 return ptr;
             }

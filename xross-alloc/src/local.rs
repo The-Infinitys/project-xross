@@ -1,5 +1,7 @@
-use crate::global::{CHUNK_SIZE, XrossGlobalAllocator};
-use crate::slab::{LAYOUT_LEN, LocalSlab, SLAB_OFFSETS, SLAB_TOTAL_CAPACITY};
+use crate::global::{CHUNK_SIZE, ChunkHeader, XrossGlobalAllocator};
+use crate::slab::{
+    CHUNK_HEADER_SIZE, LAYOUT_LEN, LocalSlab, SLAB_CLASS_SHIFT, SLAB_OFFSETS, SLAB_TOTAL_CAPACITY,
+};
 use rlsf::Tlsf;
 use std::mem::MaybeUninit;
 use std::ptr::{self, NonNull};
@@ -7,8 +9,17 @@ use std::sync::atomic::Ordering;
 
 const TLSF_CAPACITY: usize = CHUNK_SIZE - SLAB_TOTAL_CAPACITY;
 
+thread_local! {
+    /// このスレッドのユニークなトークン（アドレス）
+    pub static THREAD_TOKEN: u8 = const { 0 };
+}
+
+#[inline(always)]
+pub fn current_thread_token() -> usize {
+    THREAD_TOKEN.with(|t| t as *const u8 as usize)
+}
+
 pub struct XrossLocalAllocator {
-    // ハードコードの [LocalSlab; 9] から LAYOUT_LEN に変更
     pub slabs: [LocalSlab; LAYOUT_LEN],
     pub tlsf: Tlsf<'static, usize, usize, 12, 16>,
     pub chunk_ptr: *mut u8,
@@ -17,10 +28,19 @@ pub struct XrossLocalAllocator {
 }
 
 impl XrossLocalAllocator {
+    /// # Safety
+    ///
+    /// `chunk` must be a valid, 2MB-aligned pointer to a memory region of at least `CHUNK_SIZE`.
+    /// `global` must outlive the created allocator.
     #[inline(always)]
     pub unsafe fn new(chunk: *mut u8, global: &'static XrossGlobalAllocator) -> Self {
         unsafe {
-            // slabs 配列をループまたは unsafe な初期化で生成
+            // 所有権をセット
+            let header = chunk as *mut ChunkHeader;
+            (*header).owner_id.store(current_thread_token(), Ordering::Release);
+            // ... (rest of the implementation)
+
+            // slabs 配列を初期化
             let mut slabs: [MaybeUninit<LocalSlab>; LAYOUT_LEN] =
                 MaybeUninit::uninit().assume_init();
 
@@ -42,29 +62,25 @@ impl XrossLocalAllocator {
         }
     }
 
-    /// オフセットからどのスラブクラスに属するかを判定
-    /// SLAB_OFFSETS を走査して適切なインデックスを返します
+    /// オフセットからどのスラブクラスに属するかを判定 (O(1))
     #[inline(always)]
     pub fn get_slab_idx_from_offset(offset: usize) -> usize {
-        // 二分探索、またはサイズが小さければ線形走査
-        for i in 0..LAYOUT_LEN {
-            if offset < SLAB_OFFSETS[i + 1] {
-                return i;
-            }
-        }
-        0 // unreachable if offset < SLAB_TOTAL_CAPACITY
+        // 全スラブが32KB固定なので、引き算とシフトで一発で計算可能
+        (offset - CHUNK_HEADER_SIZE) >> SLAB_CLASS_SHIFT
     }
 
+    /// # Safety
+    ///
+    /// This function must be called only by the owner thread of the chunk.
     #[inline(never)]
     pub unsafe fn process_remote_frees(&mut self) {
         unsafe {
-            let chunk_idx = (self.chunk_ptr as usize - self.global.base_ptr as usize) / CHUNK_SIZE;
-            let mut node = self.global.remote_free_queues[chunk_idx]
-                .head
-                .swap(ptr::null_mut(), Ordering::Acquire);
+            let header = self.chunk_ptr as *mut ChunkHeader;
+            // メッセージパッシング: リモートからの解放リストをアトミックに取得
+            let mut node = (*header).remote_free_list.swap(ptr::null_mut(), Ordering::Acquire);
 
             while !node.is_null() {
-                let next = (*(node as *mut crate::global::FreeNode)).next;
+                let next = (*node).next;
                 let ptr = node as *mut u8;
                 let offset = ptr as usize - self.chunk_ptr as usize;
 
@@ -72,11 +88,9 @@ impl XrossLocalAllocator {
                     let slab_idx = Self::get_slab_idx_from_offset(offset);
                     self.slabs[slab_idx].dealloc(ptr);
                 } else {
-                    // TLSFのdeallocateにはサイズ情報が必要な場合があります。
-                    // 簡易的に最小アライメント(16)を指定していますが、実装に応じて調整してください。
                     self.tlsf.deallocate(NonNull::new_unchecked(ptr), 16);
                 }
-                node = next as *mut crate::global::FreeNode;
+                node = next;
             }
         }
     }
@@ -86,6 +100,9 @@ impl Drop for XrossLocalAllocator {
     fn drop(&mut self) {
         unsafe {
             self.process_remote_frees();
+            // 所有権をクリアしてから返却
+            let header = self.chunk_ptr as *mut ChunkHeader;
+            (*header).owner_id.store(0, Ordering::Release);
             self.global.push_free_chunk(self.chunk_ptr);
         }
     }

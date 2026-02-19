@@ -4,9 +4,14 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 pub const CHUNK_SIZE: usize = 2 * 1024 * 1024;
 pub const MAX_CHUNKS: usize = 256;
 
-#[repr(align(64))]
-pub struct RemoteFreeQueue {
-    pub head: AtomicPtr<FreeNode>,
+#[repr(C, align(64))]
+pub struct ChunkHeader {
+    /// 所有者スレッドの識別子 (TLS変数のアドレス)
+    pub owner_id: AtomicUsize,
+    /// 他のスレッドからの解放リクエスト（メッセージパッシング用）
+    pub remote_free_list: AtomicPtr<FreeNode>,
+    /// 次のチャン（スレッド内でのリスト用、オプション）
+    pub next_in_thread: AtomicPtr<ChunkHeader>,
 }
 
 pub struct FreeNode {
@@ -19,7 +24,6 @@ pub struct XrossGlobalAllocator {
     pub end_ptr: usize,
     pub next: AtomicUsize,
     pub free_chunks: AtomicPtr<FreeNode>,
-    pub remote_free_queues: [RemoteFreeQueue; MAX_CHUNKS],
 }
 
 unsafe impl Send for XrossGlobalAllocator {}
@@ -27,18 +31,19 @@ unsafe impl Sync for XrossGlobalAllocator {}
 
 impl XrossGlobalAllocator {
     pub fn new(ptr: *mut u8, size: usize) -> Self {
-        const EMPTY_PTR: RemoteFreeQueue =
-            RemoteFreeQueue { head: AtomicPtr::new(ptr::null_mut()) };
         Self {
             base_ptr: ptr,
             size,
             end_ptr: ptr as usize + size,
             next: AtomicUsize::new(0),
             free_chunks: AtomicPtr::new(ptr::null_mut()),
-            remote_free_queues: [EMPTY_PTR; MAX_CHUNKS],
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the allocator has been properly initialized
+    /// and has enough free memory or can request it.
     #[inline(always)]
     pub unsafe fn alloc_chunk(&self) -> *mut u8 {
         let reused = unsafe { self.pop_free_chunk() };
@@ -48,14 +53,33 @@ impl XrossGlobalAllocator {
 
         let offset = self.next.fetch_add(CHUNK_SIZE, Ordering::Relaxed);
         if offset + CHUNK_SIZE <= self.size {
-            unsafe { self.base_ptr.add(offset) }
+            let chunk_ptr = unsafe { self.base_ptr.add(offset) };
+            // チャンクヘッダーの初期化
+            let header = chunk_ptr as *mut ChunkHeader;
+            unsafe {
+                (*header).owner_id.store(0, Ordering::Relaxed);
+                (*header).remote_free_list.store(ptr::null_mut(), Ordering::Relaxed);
+                (*header).next_in_thread.store(ptr::null_mut(), Ordering::Relaxed);
+            }
+            chunk_ptr
         } else {
             ptr::null_mut()
         }
     }
 
+    /// # Safety
+    ///
+    /// `chunk_ptr` must be a valid pointer to a 2MB chunk previously allocated
+    /// from this or an equivalent allocator.
     #[inline(always)]
     pub unsafe fn push_free_chunk(&self, chunk_ptr: *mut u8) {
+        // ヘッダーをクリア
+        let header = chunk_ptr as *mut ChunkHeader;
+        unsafe {
+            (*header).owner_id.store(0, Ordering::Relaxed);
+            (*header).remote_free_list.store(ptr::null_mut(), Ordering::Relaxed);
+        }
+
         let node_ptr = chunk_ptr as *mut FreeNode;
         let mut head = self.free_chunks.load(Ordering::Acquire);
         loop {
@@ -97,28 +121,5 @@ impl XrossGlobalAllocator {
     pub fn is_own(&self, ptr: *mut u8) -> bool {
         let addr = ptr as usize;
         addr >= self.base_ptr as usize && addr < self.end_ptr
-    }
-
-    #[inline(always)]
-    pub unsafe fn push_remote_free(&self, ptr: *mut u8) {
-        let offset = ptr as usize - (self.base_ptr as usize);
-        let chunk_idx = offset / CHUNK_SIZE;
-        if chunk_idx >= MAX_CHUNKS {
-            return;
-        }
-
-        let node_ptr = ptr as *mut FreeNode;
-        let queue = &self.remote_free_queues[chunk_idx].head;
-        let mut head = queue.load(Ordering::Relaxed);
-        loop {
-            unsafe {
-                (*node_ptr).next = head;
-            }
-            match queue.compare_exchange_weak(head, node_ptr, Ordering::Release, Ordering::Relaxed)
-            {
-                Ok(_) => break,
-                Err(new_head) => head = new_head,
-            }
-        }
     }
 }

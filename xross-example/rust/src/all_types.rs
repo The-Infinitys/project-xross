@@ -64,6 +64,12 @@ pub struct AllTypesTest {
     pub res_i: Result<i32, String>,
 }
 
+impl Default for AllTypesTest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[xross_methods]
 impl AllTypesTest {
     #[xross_new]

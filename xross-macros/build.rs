@@ -47,10 +47,10 @@ fn main() {
         root.join("target").join("xross")
     });
 
-    if !xross_dir.exists() {
-        if let Err(e) = fs::create_dir_all(&xross_dir) {
-            eprintln!("cargo:warning=Failed to create directory {:?}: {}", xross_dir, e);
-        }
+    if !xross_dir.exists()
+        && let Err(e) = fs::create_dir_all(&xross_dir)
+    {
+        eprintln!("cargo:warning=Failed to create directory {:?}: {}", xross_dir, e);
     }
 
     println!("cargo:rerun-if-env-changed=XROSS_METADATA_DIR");

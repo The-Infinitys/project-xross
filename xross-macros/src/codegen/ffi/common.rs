@@ -54,6 +54,7 @@ pub fn generate_common_ffi(
             if ptr.is_null() { return std::ptr::null_mut(); }
             let val_on_stack: #name = std::ptr::read_unaligned(ptr);
             let cloned_val = val_on_stack.clone();
+            #[allow(clippy::forget_non_drop)]
             std::mem::forget(val_on_stack);
             Box::into_raw(Box::new(cloned_val))
         };

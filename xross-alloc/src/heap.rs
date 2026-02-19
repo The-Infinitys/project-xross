@@ -10,6 +10,10 @@ pub struct RawMemory {
     pub align: usize,
 }
 impl RawMemory {
+    /// # Safety
+    ///
+    /// The caller must ensure that `size` and `align` are valid and that the
+    /// memory can be safely allocated from the system.
     pub unsafe fn new(size: usize, align: usize) -> Self {
         let ptr = unsafe { System.alloc(Layout::from_size_align(size, align).unwrap()) };
         Self { ptr, size, align }
@@ -36,6 +40,11 @@ static HEAP_SOURCE: OnceLock<RawMemory> = OnceLock::new();
 
 /// JVMからメモリを要求します。
 /// JVM側で Arena.global() などを使用して割り当てられたメモリを返します。
+///
+/// # Safety
+///
+/// The caller must ensure that the allocator is properly initialized
+/// and that the size and align requests are valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xross_alloc(size: usize, align: usize) -> *mut u8 {
     if let Some(upcall) = ALLOCATOR_UPCALL.get() {

@@ -40,22 +40,22 @@ pub fn global_multiply(a: i32, b: i32) -> i32 {
 #[xross_function(package = "standalone")]
 pub fn heavy_prime_factorization(mut n: u64) -> u32 {
     let mut count = 0;
-    while n % 2 == 0 {
+    while n.is_multiple_of(2) {
         count += 1;
         n /= 2;
     }
-    while n % 3 == 0 {
+    while n.is_multiple_of(3) {
         count += 1;
         n /= 3;
     }
     let mut d = 5;
     while d * d <= n {
-        while n % d == 0 {
+        while n.is_multiple_of(d) {
             count += 1;
             n /= d;
         }
         d += 2;
-        while n % d == 0 {
+        while n.is_multiple_of(d) {
             count += 1;
             n /= d;
         }
