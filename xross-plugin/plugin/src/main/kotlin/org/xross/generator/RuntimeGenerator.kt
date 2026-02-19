@@ -153,6 +153,18 @@ object RuntimeGenerator {
                     .build(),
             )
             .addFunction(
+                FunSpec.builder("xross_alloc")
+                    .addParameter("size", Long::class)
+                    .addParameter("align", Long::class)
+                    .returns(MEMORY_SEGMENT)
+                    .addAnnotation(AnnotationSpec.builder(ClassName("kotlin.jvm", "JvmStatic")).build())
+                    .addCode(
+                        "return try { java.lang.foreign.Arena.global().allocate(size, align) } catch (e: Throwable) { %T.NULL }",
+                        MEMORY_SEGMENT,
+                    )
+                    .build(),
+            )
+            .addFunction(
                 FunSpec.builder("initializeHeap")
                     .addParameter("lookup", ClassName("java.lang.foreign", "SymbolLookup"))
                     .addParameter("linker", ClassName("java.lang.foreign", "Linker"))
@@ -164,27 +176,22 @@ object RuntimeGenerator {
                             "        val symbol = lookup.find(\"xross_alloc_init\").orElseGet { \n" +
                             "            java.lang.foreign.Linker.nativeLinker().defaultLookup().find(\"xross_alloc_init\").orElse(null) \n" +
                             "        } ?: return\n" +
-                            "        val rt = Runtime.getRuntime()\n" +
-                            "        val maxHeap = rt.maxMemory()\n" +
-                            "        val initialHeap = rt.totalMemory()\n" +
-                            "        val limit512 = 512L * 1024 * 1024\n" +
-                            "        val halfMax = if (maxHeap == Long.MAX_VALUE) limit512 else maxHeap / 2\n" +
-                            "        val targetSize = minOf(limit512, halfMax, initialHeap)\n" +
-                            "        val size = (targetSize / 4096) * 4096\n" +
-                            "        if (size > 0) {\n" +
-                            "            val arena = java.lang.foreign.Arena.global()\n" +
-                            "            val segment = arena.allocate(size, 4096)\n" +
-                            "            val descriptor = java.lang.foreign.FunctionDescriptor.ofVoid(java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.JAVA_LONG, java.lang.foreign.ValueLayout.JAVA_LONG)\n" +
-                            "            val handle = linker.downcallHandle(symbol, descriptor)\n" +
-                            "            handle.invoke(segment, size, 4096L)\n" +
-                            "        }\n" +
+                            "        \n" +
+                            "        val allocMethod = XrossRuntime::class.java.getDeclaredMethod(\"xross_alloc\", Long::class.java, Long::class.java)\n" +
+                            "        val allocHandle = java.lang.invoke.MethodHandles.lookup().unreflect(allocMethod)\n" +
+                            "        val allocDescriptor = java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.JAVA_LONG, java.lang.foreign.ValueLayout.JAVA_LONG)\n" +
+                            "        val upcallStub = linker.upcallStub(allocHandle, allocDescriptor, java.lang.foreign.Arena.global())\n" +
+                            "        \n" +
+                            "        val descriptor = java.lang.foreign.FunctionDescriptor.ofVoid(java.lang.foreign.ValueLayout.ADDRESS)\n" +
+                            "        val handle = linker.downcallHandle(symbol, descriptor)\n" +
+                            "        handle.invoke(upcallStub)\n" +
                             "    } catch (e: Throwable) {\n" +
                             "        System.err.println(\"[Xross] Global heap init failed: \" + e.message)\n" +
+                            "        e.printStackTrace()\n" +
                             "    } finally {\n" +
                             "        System.setProperty(\"xross.heap.initialized\", \"true\")\n" +
                             "    }\n" +
                             "}\n",
-                        Long::class.asTypeName(),
                     )
                     .build(),
             )

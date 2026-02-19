@@ -1,3 +1,4 @@
+use crate::global::{CHUNK_SIZE, MAX_CHUNKS};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::OnceLock;
 
@@ -24,21 +25,39 @@ impl RawMemory {
 unsafe impl Send for RawMemory {}
 unsafe impl Sync for RawMemory {}
 
+/// JVMから提供されるメモリアロケータの型定義
+type XrossAllocUpcall = unsafe extern "C" fn(usize, usize) -> *mut u8;
+
+/// JVMから提供されるアロケータへのアップコール
+static ALLOCATOR_UPCALL: OnceLock<XrossAllocUpcall> = OnceLock::new();
+
 /// JVMまたはシステムから提供される固定メモリ領域
 static HEAP_SOURCE: OnceLock<RawMemory> = OnceLock::new();
 
-/// ヒープ領域を取得します。JVM機能が有効な場合は初期化を待機し、
-/// そうでない場合は OS (mmap) から直接、他のアロケータと隔離された領域を確保します。
+/// JVMからメモリを要求します。
+/// JVM側で Arena.global() などを使用して割り当てられたメモリを返します。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xross_alloc(size: usize, align: usize) -> *mut u8 {
+    if let Some(upcall) = ALLOCATOR_UPCALL.get() {
+        unsafe { upcall(size, align) }
+    } else {
+        // フォールバック: システムアロケータを使用
+        unsafe { std::alloc::alloc(Layout::from_size_align(size, align).unwrap()) }
+    }
+}
+
+/// ヒープ領域を取得します。
 pub fn heap() -> RawMemory {
     *HEAP_SOURCE.get_or_init(|| {
-        let size = 512 * 1024 * 1024; // 512 MB
-        let align = 4096;
-        unsafe { RawMemory::new(size, align) }
+        let size = CHUNK_SIZE * MAX_CHUNKS;
+        let align = CHUNK_SIZE;
+        let ptr = unsafe { xross_alloc(size, align) };
+        RawMemory { ptr, size, align }
     })
 }
 
 #[cfg(feature = "jvm")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn xross_alloc_init(ptr: *mut u8, size: usize, align: usize) {
-    let _ = HEAP_SOURCE.set(RawMemory { ptr, size, align });
+pub unsafe extern "C" fn xross_alloc_init(upcall: XrossAllocUpcall) {
+    let _ = ALLOCATOR_UPCALL.set(upcall);
 }

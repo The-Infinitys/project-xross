@@ -6,7 +6,7 @@ pub mod slab;
 use crate::global::{CHUNK_SIZE, XrossGlobalAllocator};
 use crate::heap::heap;
 use crate::local::XrossLocalAllocator;
-use crate::slab::SLAB_TOTAL_CAPACITY;
+use crate::slab::{SLAB_TOTAL_CAPACITY, SlabLayout};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::UnsafeCell;
 use std::ptr::{self, NonNull};
@@ -42,8 +42,7 @@ unsafe impl GlobalAlloc for XrossAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let size = layout.size();
-
-        if size <= 2048 {
+        if size <= SlabLayout::CHUNK_THRESHOLD {
             return LOCAL_ALLOC.with(|cell| {
                 let local_ptr = cell.get();
                 unsafe {
