@@ -1,7 +1,7 @@
-# Project Xross (2.0.1)
+# Project Xross (3.1.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/the-infinitys/xross)
+[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/the-infinitys/xross)
 
 **Xross** (クロス) は、Rust と JVM (Kotlin/Java) の境界を消滅させるために設計された、高性能・メモリ安全なクロス言語フレームワークです。
 
@@ -14,7 +14,7 @@ Java 25 で標準化された **Project Panama (Foreign Function & Memory API)**
 *   **🛠️ 完全自動バインディング**: Rust のコードにアノテーションを付けるだけで、スレッドセーフで慣習的な Kotlin コードが自動生成されます。
 *   **🔒 強固なスレッド安全性**: データの性質に合わせて `StampedLock`, `VarHandle`, `Atomic` 等の同期機構を自動選択し、データ競合を防ぎます。
 *   **🌐 非同期処理の統合 (Async/Await)**: Rust の `Future` と Kotlin の `Coroutines` をシームレスにブリッジ。ネイティブの非同期ロジックを `suspend` 関数として呼び出せます。
-*   **💎 高度な型サポート**: 構造体はもちろん、Rust 特有の列挙型 (Algebraic Data Types) や不透明型 (Opaque Types) もシームレスに扱えます。
+*   **💎 高度な型サポート**: 構造体はもちろん、Rust 特有の列挙型 (Algebraic Data Types) や不透明型 (Opaque Types) 、そしてスライス（`&[T]`、`&mut [T]`）もシームレスに扱えます。
 
 ## 🏗️ アーキテクチャ
 
@@ -63,7 +63,7 @@ pluginManagement {
 // build.gradle.kts
 buildscript {
     repositories { maven { url = uri("https://jitpack.io") } }
-    dependencies { classpath("com.github.the-infinitys:xross:2.0.1") }
+    dependencies { classpath("com.github.the-infinitys:xross:3.1.0") }
 }
 apply(plugin = "org.xross")
 ```
@@ -72,7 +72,7 @@ apply(plugin = "org.xross")
 
 ```toml
 [dependencies]
-xross-core = "2.0.1"
+xross-core = "3.1.0"
 ```
 
 ## 🛠️ Rust と Kotlin の対応関係

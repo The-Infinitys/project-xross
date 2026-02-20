@@ -1,7 +1,7 @@
-# Project Xross (2.0.1)
+# Project Xross (3.1.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/the-infinitys/xross)
+[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/the-infinitys/xross)
 
 **Xross** (Cross) is a high-performance, memory-safe cross-language framework designed to dissolve the boundary between Rust and JVM (Kotlin/Java).
 
@@ -14,7 +14,7 @@ By leveraging **Project Panama (Foreign Function & Memory API)**, which is stand
 *   **🛠️ Fully Automated Bindings**: Simply annotate your Rust code, and thread-safe, idiomatic Kotlin code is automatically generated.
 *   **🔒 Robust Thread Safety**: Automatically selects synchronization mechanisms such as `StampedLock`, `VarHandle`, or `Atomic` based on data nature to prevent data races.
 *   **🌐 Async/Await Integration**: Seamlessly bridges Rust's `Future` and Kotlin's `Coroutines`. Native async logic can be called as `suspend` functions.
-*   **💎 Advanced Type Support**: Handles structs, Rust-specific enums (Algebraic Data Types), and opaque types seamlessly.
+*   **💎 Advanced Type Support**: Handles structs, Rust-specific enums (Algebraic Data Types), opaque types, and slices (`&[T]`, `&mut [T]`) seamlessly.
 
 ## 🏗️ Architecture
 
@@ -63,7 +63,7 @@ pluginManagement {
 // build.gradle.kts
 buildscript {
     repositories { maven { url = uri("https://jitpack.io") } }
-    dependencies { classpath("com.github.the-infinitys:xross:2.0.1") }
+    dependencies { classpath("com.github.the-infinitys:xross:3.1.0") }
 }
 apply(plugin = "org.xross")
 ```
@@ -72,7 +72,7 @@ apply(plugin = "org.xross")
 
 ```toml
 [dependencies]
-xross-core = "2.0.1"
+xross-core = "3.1.0"
 ```
 
 ## 🛠️ Rust and Kotlin Mapping
