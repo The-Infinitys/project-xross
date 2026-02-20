@@ -55,6 +55,8 @@ object XrossTypeSerializer : KSerializer<XrossType> {
                         XrossType.Object(signature, ownership)
                     }
                     "Option" -> XrossType.Optional(deserializeRecursive(body))
+                    "Slice" -> XrossType.Slice(deserializeRecursive(body))
+                    "Vec" -> XrossType.Vec(deserializeRecursive(body))
                     "Result" -> {
                         val obj = body.jsonObject
                         XrossType.Result(
@@ -83,6 +85,8 @@ object XrossTypeSerializer : KSerializer<XrossType> {
                 }
             }
             is XrossType.Optional -> buildJsonObject { put("Option", serializeRecursive(value.inner)) }
+            is XrossType.Slice -> buildJsonObject { put("Slice", serializeRecursive(value.inner)) }
+            is XrossType.Vec -> buildJsonObject { put("Vec", serializeRecursive(value.inner)) }
             is XrossType.Result -> buildJsonObject {
                 putJsonObject("Result") {
                     put("ok", serializeRecursive(value.ok))

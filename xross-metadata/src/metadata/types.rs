@@ -48,6 +48,10 @@ pub enum XrossType {
     Pointer,
     /// UTF-8 string.
     String,
+    /// A slice of values (&[T]).
+    Slice(Box<XrossType>),
+    /// An owned vector of values (Vec<T>).
+    Vec(Box<XrossType>),
     /// A user-defined object type.
     Object {
         /// Unique signature of the object type.

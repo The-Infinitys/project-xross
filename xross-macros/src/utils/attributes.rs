@@ -222,14 +222,16 @@ pub fn extract_base_type(ty: &syn::Type) -> &syn::Type {
     match ty {
         syn::Type::Reference(r) => extract_base_type(&r.elem),
         syn::Type::Path(tp) => {
-            if let Some(last_segment) = tp.path.segments.last()
-                && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
-                && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
-            {
-                extract_base_type(inner)
-            } else {
-                ty
+            if let Some(last_segment) = tp.path.segments.last() {
+                let name = last_segment.ident.to_string();
+                if (name == "Box" || name == "Option" || name == "Result")
+                    && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+                {
+                    return extract_base_type(inner);
+                }
             }
+            ty
         }
         _ => ty,
     }

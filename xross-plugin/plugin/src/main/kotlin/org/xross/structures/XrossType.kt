@@ -1,6 +1,7 @@
 package org.xross.structures
 
 import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import kotlinx.serialization.Serializable
 import org.xross.generator.util.FFMConstants
 
@@ -25,6 +26,16 @@ sealed class XrossType {
     object F64 : XrossType()
     object Pointer : XrossType()
     object RustString : XrossType()
+
+    /**
+     * A slice of values (&[*]).
+     */
+    data class Slice(val inner: XrossType) : XrossType()
+
+    /**
+     * An owned vector of values (Vec<T>).
+     */
+    data class Vec(val inner: XrossType) : XrossType()
 
     /**
      * Ownership model for bridged types.
@@ -67,6 +78,26 @@ sealed class XrossType {
             U16 -> CHAR
             Void -> UNIT
             RustString -> String::class.asTypeName()
+            is Slice -> when (inner) {
+                I32 -> IntArray::class.asTypeName()
+                I64 -> LongArray::class.asTypeName()
+                F32 -> FloatArray::class.asTypeName()
+                F64 -> DoubleArray::class.asTypeName()
+                I8 -> ByteArray::class.asTypeName()
+                I16 -> ShortArray::class.asTypeName()
+                Bool -> BooleanArray::class.asTypeName()
+                else -> List::class.asClassName().parameterizedBy(inner.kotlinType)
+            }
+            is Vec -> when (inner) {
+                I32 -> IntArray::class.asTypeName()
+                I64 -> LongArray::class.asTypeName()
+                F32 -> FloatArray::class.asTypeName()
+                F64 -> DoubleArray::class.asTypeName()
+                I8 -> ByteArray::class.asTypeName()
+                I16 -> ShortArray::class.asTypeName()
+                Bool -> BooleanArray::class.asTypeName()
+                else -> List::class.asClassName().parameterizedBy(inner.kotlinType)
+            }
             is Optional -> inner.kotlinType.copy(nullable = true)
             is Result -> ok.kotlinType
             is Async -> inner.kotlinType
@@ -88,15 +119,16 @@ sealed class XrossType {
             I16 -> FFMConstants.JAVA_SHORT
             U16 -> FFMConstants.JAVA_CHAR
             Void -> throw IllegalStateException("Void has no layout")
+            is Slice, is Vec -> FFMConstants.ADDRESS
             else -> FFMConstants.ADDRESS
         }
 
-    val layoutCode: com.squareup.kotlinpoet.CodeBlock
+    val layoutCode: CodeBlock
         get() = when (this) {
             is Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
             is RustString -> FFMConstants.XROSS_STRING_LAYOUT_CODE
             is Async -> FFMConstants.XROSS_TASK_LAYOUT_CODE
-            else -> com.squareup.kotlinpoet.CodeBlock.of("%M", layoutMember)
+            else -> CodeBlock.of("%M", layoutMember)
         }
 
     /**
@@ -105,11 +137,11 @@ sealed class XrossType {
     val isOwned: Boolean
         get() = when (this) {
             is Object -> ownership == Ownership.Owned || ownership == Ownership.Boxed
-            is Result, is Async -> true
+            is Result, is Async, is Vec -> true
             else -> false
         }
 
-    val isComplex: Boolean get() = this is Object || this is Optional || this is Result || this is RustString || this is Async
+    val isComplex: Boolean get() = this is Object || this is Optional || this is Result || this is RustString || this is Async || this is Slice || this is Vec
     val isPrimitive: Boolean get() = !isComplex
 
     /**
@@ -122,6 +154,7 @@ sealed class XrossType {
             is ISize, is USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) 4L else 8L
             is Result -> 16L
             is Async -> 24L
+            is Slice, is Vec -> 16L
             is Object -> 8L
             is Bool, is I8, is U8 -> 1L
             is I16, is U16 -> 2L

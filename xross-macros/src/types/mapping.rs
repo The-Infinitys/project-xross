@@ -5,6 +5,8 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
     match ty {
         Type::Reference(r) => map_type(&r.elem),
 
+        Type::Slice(s) => XrossType::Slice(Box::new(map_type(&s.elem))),
+
         Type::Path(TypePath { path, .. }) => {
             let last_segment = path.segments.last().unwrap();
             let last_ident = last_segment.ident.to_string();
@@ -26,7 +28,7 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
                 "String" => XrossType::String,
 
                 // ジェネリック型の処理
-                "Box" | "Option" | "Result" => {
+                "Box" | "Option" | "Result" | "Vec" => {
                     if let PathArguments::AngleBracketed(args) = &last_segment.arguments {
                         let generic_types: Vec<XrossType> = args
                             .args
@@ -49,6 +51,7 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
                                 inner
                             }
                             "Option" => XrossType::Option(Box::new(generic_types[0].clone())),
+                            "Vec" => XrossType::Vec(Box::new(generic_types[0].clone())),
                             "Result" => XrossType::Result {
                                 ok: Box::new(generic_types[0].clone()),
                                 err: Box::new(generic_types[1].clone()),

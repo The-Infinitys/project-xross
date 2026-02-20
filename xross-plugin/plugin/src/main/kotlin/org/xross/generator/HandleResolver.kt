@@ -65,6 +65,9 @@ object HandleResolver {
                 layouts.add(CodeBlock.of("%M", ADDRESS))
                 layouts.add(CodeBlock.of("%M", JAVA_LONG))
                 layouts.add(CodeBlock.of("%M", JAVA_BYTE))
+            } else if (it.ty is XrossType.Slice || it.ty is XrossType.Vec) {
+                layouts.add(CodeBlock.of("%M", ADDRESS))
+                layouts.add(CodeBlock.of("%M", JAVA_LONG))
             } else {
                 layouts.add(it.ty.layoutCode)
             }

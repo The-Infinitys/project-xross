@@ -318,6 +318,19 @@ fun CodeBlock.Builder.addArgumentPreparation(
             callArgs.add(CodeBlock.of("${name}Memory"))
         }
 
+        is XrossType.Slice, is XrossType.Vec -> {
+            val isNullable = type is XrossType.Optional // This might need refinement depending on how nullability is tracked
+            // Actually, we can check if the type name is nullable
+            val kotlinType = GeneratorUtils.resolveReturnType(type, basePackage)
+            if (kotlinType.isNullable) {
+                addStatement("val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)", MEMORY_SEGMENT, MEMORY_SEGMENT)
+            } else {
+                addStatement("val ${name}Seg = %T.ofArray($name)", MEMORY_SEGMENT)
+            }
+            callArgs.add(CodeBlock.of("${name}Seg"))
+            callArgs.add(CodeBlock.of("$name.size.toLong()"))
+        }
+
         else -> callArgs.add(CodeBlock.of("%L", name))
     }
 }

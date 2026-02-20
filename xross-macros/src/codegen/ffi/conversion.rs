@@ -85,6 +85,60 @@ pub fn gen_arg_conversion(
                 quote!(#arg_id),
             )
         }
+        XrossType::Slice(inner) => {
+            let ptr_id = format_ident!("{}_ptr", arg_id);
+            let len_id = format_ident!("{}_len", arg_id);
+            let inner_rust_ty = match &**inner {
+                XrossType::I8 => quote!(i8),
+                XrossType::U8 => quote!(u8),
+                XrossType::I16 => quote!(i16),
+                XrossType::U16 => quote!(u16),
+                XrossType::I32 => quote!(i32),
+                XrossType::U32 => quote!(u32),
+                XrossType::I64 => quote!(i64),
+                XrossType::U64 => quote!(u64),
+                XrossType::ISize => quote!(isize),
+                XrossType::USize => quote!(usize),
+                XrossType::F32 => quote!(f32),
+                XrossType::F64 => quote!(f64),
+                XrossType::Bool => quote!(bool),
+                _ => quote!(std::ffi::c_void),
+            };
+            (
+                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
+                quote! {
+                    let #arg_id = if #ptr_id.is_null() { &[] } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id) } };
+                },
+                quote!(#arg_id),
+            )
+        }
+        XrossType::Vec(inner) => {
+            let ptr_id = format_ident!("{}_ptr", arg_id);
+            let len_id = format_ident!("{}_len", arg_id);
+            let inner_rust_ty = match &**inner {
+                XrossType::I8 => quote!(i8),
+                XrossType::U8 => quote!(u8),
+                XrossType::I16 => quote!(i16),
+                XrossType::U16 => quote!(u16),
+                XrossType::I32 => quote!(i32),
+                XrossType::U32 => quote!(u32),
+                XrossType::I64 => quote!(i64),
+                XrossType::U64 => quote!(u64),
+                XrossType::ISize => quote!(isize),
+                XrossType::USize => quote!(usize),
+                XrossType::F32 => quote!(f32),
+                XrossType::F64 => quote!(f64),
+                XrossType::Bool => quote!(bool),
+                _ => quote!(std::ffi::c_void),
+            };
+            (
+                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
+                quote! {
+                    let #arg_id = if #ptr_id.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id).to_vec() } };
+                },
+                quote!(#arg_id),
+            )
+        }
         XrossType::Object { ownership, .. } => (
             quote! { #arg_id: *mut std::ffi::c_void },
             match ownership {
