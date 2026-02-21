@@ -361,7 +361,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
         is XrossType.Slice, is XrossType.Vec -> {
             val inner = if (type is XrossType.Slice) type.inner else (type as XrossType.Vec).inner
             val isObject = inner is XrossType.Object
-            
+
             if (isObject) {
                 // Create a buffer of pointers for Object lists
                 addStatement("val ${name}Seg = if ($name == null) %T.NULL else run {", MEMORY_SEGMENT)

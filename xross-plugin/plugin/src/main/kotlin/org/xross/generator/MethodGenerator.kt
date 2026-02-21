@@ -91,7 +91,7 @@ object MethodGenerator {
             val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
             val isPanicable = method.handleMode is HandleMode.Panicable
             val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
-            
+
             val forceConfined = isComplexRet || isPanicable
             val arenaForArg = if (forceConfined && !needsArena) {
                 argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")

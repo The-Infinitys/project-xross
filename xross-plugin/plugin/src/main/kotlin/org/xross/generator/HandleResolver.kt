@@ -169,7 +169,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     getRetLayout,
                     ADDRESS,
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
                 init.addStatement(
                     "this.${camelName}StrSetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %L)%L)",
@@ -177,7 +177,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     ADDRESS,
                     CodeBlock.of("%M, %M, %M", ADDRESS, JAVA_LONG, JAVA_BYTE),
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
             }
             is XrossType.Optional -> {
@@ -190,7 +190,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     getLayout,
                     ADDRESS,
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
                 init.addStatement(
                     "this.${camelName}OptSetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %L)%L)",
@@ -198,7 +198,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     ADDRESS,
                     setLayout,
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
             }
             is XrossType.Result -> {
@@ -212,7 +212,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     getRetLayout,
                     ADDRESS,
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
                 init.addStatement(
                     "this.${camelName}ResSetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %L)%L)",
@@ -220,7 +220,7 @@ object HandleResolver {
                     FUNCTION_DESCRIPTOR,
                     ADDRESS,
                     FFMConstants.XROSS_RESULT_LAYOUT_CODE,
-                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                    if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                 )
             }
             else -> {
@@ -233,7 +233,7 @@ object HandleResolver {
                         FUNCTION_DESCRIPTOR,
                         getLayout,
                         ADDRESS,
-                        if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                        if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                     )
                     init.addStatement(
                         "this.${camelName}SetHandle = linker.downcallHandle(lookup.find(%S).get(), %T.ofVoid(%M, %L)%L)",
@@ -241,7 +241,7 @@ object HandleResolver {
                         FUNCTION_DESCRIPTOR,
                         ADDRESS,
                         setLayout,
-                        if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of("")
+                        if (isCritical) CodeBlock.of(", %T.critical(%L)", java.lang.foreign.Linker.Option::class.asTypeName(), handleMode.allowHeapAccess) else CodeBlock.of(""),
                     )
                 }
             }

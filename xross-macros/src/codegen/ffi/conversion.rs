@@ -116,11 +116,7 @@ pub fn gen_arg_conversion(
                 }
             };
 
-            (
-                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
-                conversion,
-                quote!(#arg_id),
-            )
+            (quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize }, conversion, quote!(#arg_id))
         }
         XrossType::Object { ownership, .. } => (
             quote! { #arg_id: *mut std::ffi::c_void },
