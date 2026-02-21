@@ -93,7 +93,7 @@ sealed class XrossType {
                 I64 -> LongArray::class.asTypeName()
                 F32 -> FloatArray::class.asTypeName()
                 F64 -> DoubleArray::class.asTypeName()
-                I8 -> ByteArray::class.asTypeName()
+                I8, U8 -> ByteArray::class.asTypeName()
                 I16 -> ShortArray::class.asTypeName()
                 Bool -> BooleanArray::class.asTypeName()
                 else -> List::class.asClassName().parameterizedBy(inner.kotlinType)
@@ -128,6 +128,7 @@ sealed class XrossType {
             is Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE
             is RustString -> FFMConstants.XROSS_STRING_LAYOUT_CODE
             is Async -> FFMConstants.XROSS_TASK_LAYOUT_CODE
+            is Vec, is Slice -> CodeBlock.of("%M", FFMConstants.ADDRESS)
             else -> CodeBlock.of("%M", layoutMember)
         }
 

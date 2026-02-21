@@ -6,7 +6,7 @@ import org.xross.structures.XrossType
 
 fun CodeBlock.Builder.addResourceConstruction(
     inner: XrossType,
-    resRaw: String,
+    resRaw: Any,
     sizeExpr: CodeBlock,
     fromPointerExpr: CodeBlock,
     dropExpr: CodeBlock,
@@ -14,7 +14,7 @@ fun CodeBlock.Builder.addResourceConstruction(
 ) {
     if (inner.isOwned) {
         // オブジェクトごとに Arena を作らず、Cleaner/close() で直接 drop を呼ぶ
-        addStatement("val res = %L.reinterpret(%L)", resRaw, sizeExpr)
+        addStatement("val res = (%L).reinterpret(%L)", resRaw, sizeExpr)
 
         // 所有権を持つオブジェクトは parent = null
         addStatement("val resObj = %L(res, parent = null, isPersistent = false)", fromPointerExpr)
@@ -23,7 +23,7 @@ fun CodeBlock.Builder.addResourceConstruction(
         addStatement("resObj")
     } else {
         // 借用: this を parent として渡す
-        addStatement("val reinterpreted = %L.reinterpret(%L)", resRaw, sizeExpr)
+        addStatement("val reinterpreted = (%L).reinterpret(%L)", resRaw, sizeExpr)
         addStatement(
             "%L(reinterpreted, parent = this, isPersistent = false)",
             fromPointerExpr,
@@ -152,7 +152,7 @@ fun CodeBlock.Builder.addRustStringResolution(
 
 fun CodeBlock.Builder.addResultVariantResolution(
     type: XrossType,
-    ptrName: String,
+    ptrName: Any,
     targetTypeName: TypeName,
     selfType: ClassName,
     basePackage: String,
@@ -180,6 +180,29 @@ fun CodeBlock.Builder.addResultVariantResolution(
         is XrossType.Bool -> {
             add("%L.address() != 0L", ptrName)
         }
+        is XrossType.Vec, is XrossType.Slice -> {
+            val innerType = if (type is XrossType.Vec) type.inner else (type as XrossType.Slice).inner
+            beginControlFlow("run")
+            addStatement("val dataPtr = (%L).get(java.lang.foreign.ValueLayout.ADDRESS, 0L)", ptrName)
+            addStatement("val dataLen = (%L).get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)", ptrName)
+            beginControlFlow("if (dataPtr == %T.NULL || dataLen == 0L)", MEMORY_SEGMENT)
+            val emptyValue = when (innerType) {
+                is XrossType.I32 -> "intArrayOf()"
+                is XrossType.I64 -> "longArrayOf()"
+                is XrossType.F32 -> "floatArrayOf()"
+                is XrossType.F64 -> "doubleArrayOf()"
+                is XrossType.I8, is XrossType.U8 -> "byteArrayOf()"
+                is XrossType.I16 -> "shortArrayOf()"
+                is XrossType.Bool -> "booleanArrayOf()"
+                else -> "emptyList()"
+            }
+            addStatement(emptyValue)
+            nextControlFlow("else")
+            val layout = innerType.layoutMember
+            addStatement("dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)", java.lang.foreign.ValueLayout::class, layout.simpleName, java.lang.foreign.ValueLayout::class, layout.simpleName)
+            endControlFlow()
+            endControlFlow()
+        }
         else -> {
             val kType = type.kotlinType
             if (type.kotlinSize <= 4) {
@@ -202,13 +225,13 @@ fun CodeBlock.Builder.addResultVariantResolution(
 
 fun CodeBlock.Builder.addOptionalResolution(
     inner: XrossType,
-    resRaw: String,
+    resRaw: Any,
     selfType: ClassName,
     basePackage: String,
     dropHandleName: String = "dropHandle",
 ) {
     beginControlFlow("run")
-    beginControlFlow("if ($resRaw == %T.NULL)", MEMORY_SEGMENT)
+    beginControlFlow("if ((%L) == %T.NULL)", resRaw, MEMORY_SEGMENT)
         .addStatement("null")
     nextControlFlow("else")
     val innerType = GeneratorUtils.resolveReturnType(inner, basePackage)
@@ -219,14 +242,14 @@ fun CodeBlock.Builder.addOptionalResolution(
 
 fun CodeBlock.Builder.addResultResolution(
     ty: XrossType.Result,
-    resRaw: String,
+    resRaw: Any,
     selfType: ClassName,
     basePackage: String,
     dropHandleName: String = "dropHandle",
 ) {
     beginControlFlow("run")
     val runtimePkg = "$basePackage.xross.runtime"
-    addStatement("val resRawSeg = $resRaw")
+    addStatement("val resRawSeg = (%L)", resRaw)
     addStatement("val isOk = resRawSeg.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
     addStatement("val ptr = resRawSeg.get(%M, 8L)", FFMConstants.ADDRESS)
 

@@ -63,7 +63,8 @@ pub fn write_ffi_function(
     let c_args = &ffi_data.c_args;
     let conv_logic = &ffi_data.conversion_logic;
 
-    let is_complex_ret = matches!(ret_ty, XrossType::String);
+    let is_complex_ret =
+        matches!(ret_ty, XrossType::String | XrossType::Vec(_) | XrossType::Slice(_));
 
     if handle_mode == HandleMode::Panicable {
         let is_already_result = matches!(ret_ty, XrossType::Result { .. });
@@ -120,12 +121,19 @@ pub fn write_ffi_function(
             }
         });
     } else if is_complex_ret {
+        let is_vec_or_slice = matches!(ret_ty, XrossType::Vec(_) | XrossType::Slice(_));
+        let write_logic = if is_vec_or_slice {
+            quote! {}
+        } else {
+            quote! { unsafe { std::ptr::write_unaligned(out, val) }; }
+        };
+
         toks.push(quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #export_ident(out: *mut #c_ret_type, #(#c_args),*) {
                 #(#conv_logic)*
                 let val = #wrapper_body;
-                unsafe { std::ptr::write_unaligned(out, val) };
+                #write_logic
             }
         });
     } else {

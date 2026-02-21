@@ -221,7 +221,7 @@ object HandleResolver {
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
             args.addAll(getArgLayouts(method.args))
 
-            val isComplexRet = method.ret is XrossType.RustString || method.isAsync
+            val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
 
             val isPanicable = method.handleMode is HandleMode.Panicable
             val desc = if (method.ret is XrossType.Void && !method.isAsync && !isPanicable) {

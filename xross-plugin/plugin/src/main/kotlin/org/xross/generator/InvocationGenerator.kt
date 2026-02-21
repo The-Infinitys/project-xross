@@ -257,6 +257,20 @@ object InvocationGenerator {
                 body.addResultResolution(retTy, "resRaw", selfType, basePackage)
                 body.endControlFlow()
             }
+
+            is XrossType.Vec, is XrossType.Slice -> {
+                body.beginControlFlow("run")
+                val callExpr = if (call.toString() == "outPanic") {
+                    call
+                } else {
+                    CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                }
+                body.add("val res = ")
+                body.addResultVariantResolution(retTy, callExpr, returnType, selfType, basePackage)
+                body.addStatement("res")
+                body.endControlFlow()
+            }
+
             // 数値型やBooleanなどのプリミティブ型
             else -> {
                 body.addStatement("%L as %T", call, returnType)

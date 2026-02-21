@@ -252,6 +252,39 @@ pub fn gen_ret_wrapping(
             quote! { xross_core::XrossString },
             quote! { xross_core::XrossString::from(#inner_call) },
         ),
+        XrossType::Vec(_) => (
+            quote! { *mut std::ffi::c_void },
+            quote! {
+                {
+                    let mut v = #inner_call;
+                    let ptr = v.as_mut_ptr() as *mut std::ffi::c_void;
+                    let len = v.len();
+                    std::mem::forget(v);
+                    let out_ptr = out as *mut *mut std::ffi::c_void;
+                    unsafe {
+                        *out_ptr = ptr;
+                        *(out_ptr.add(1) as *mut usize) = len;
+                    }
+                    ptr // This return value is actually ignored if is_complex_ret is true
+                }
+            },
+        ),
+        XrossType::Slice(_) => (
+            quote! { *mut std::ffi::c_void },
+            quote! {
+                {
+                    let s = #inner_call;
+                    let ptr = s.as_ptr() as *mut std::ffi::c_void;
+                    let len = s.len();
+                    let out_ptr = out as *mut *mut std::ffi::c_void;
+                    unsafe {
+                        *out_ptr = ptr;
+                        *(out_ptr.add(1) as *mut usize) = len;
+                    }
+                    ptr
+                }
+            },
+        ),
         XrossType::Object { ownership, .. } => match ownership {
             Ownership::Ref | Ownership::MutRef => (
                 quote! { *mut std::ffi::c_void },

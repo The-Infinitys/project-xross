@@ -93,14 +93,14 @@ object MethodGenerator {
 
             val handleName = "${method.name.toCamelCase()}Handle"
             val isPanicable = method.handleMode is HandleMode.Panicable
-            val isComplexRet = method.ret is XrossType.RustString || method.isAsync
+            val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
 
             val call = if (isComplexRet || isPanicable) {
                 val layout = if (isPanicable) {
                     FFMConstants.XROSS_RESULT_LAYOUT_CODE
                 } else if (method.isAsync) {
                     FFMConstants.XROSS_TASK_LAYOUT_CODE
-                } else if (method.ret is XrossType.RustString) {
+                } else if (method.ret is XrossType.RustString || method.ret is XrossType.Vec || method.ret is XrossType.Slice) {
                     FFMConstants.XROSS_STRING_LAYOUT_CODE
                 } else {
                     method.ret.layoutCode
