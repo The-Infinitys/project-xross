@@ -21,6 +21,8 @@ object FFMConstants {
     val JAVA_DOUBLE = MemberName(VAL_LAYOUT, "JAVA_DOUBLE")
     val JAVA_CHAR = MemberName(VAL_LAYOUT, "JAVA_CHAR")
 
+    val CRITICAL_MEMORY_SEGMENT = ADDRESS
+
     val XROSS_RESULT_LAYOUT_CODE = com.squareup.kotlinpoet.CodeBlock.of(
         "%T.structLayout(%M.withName(%S), %T.paddingLayout(7), %M.withName(%S))",
         MEMORY_LAYOUT,
@@ -45,12 +47,12 @@ object FFMConstants {
     val XROSS_STRING_LAYOUT_CODE = com.squareup.kotlinpoet.CodeBlock.of(
         "%T.structLayout(%M.withName(%S), %M.withName(%S), %M.withName(%S))",
         MEMORY_LAYOUT,
-        ADDRESS,
-        "ptr",
-        JAVA_LONG,
-        "len",
-        JAVA_LONG,
+        JAVA_LONG, // cap
         "cap",
+        JAVA_LONG, // len
+        "len",
+        ADDRESS, // ptr
+        "ptr",
     )
 
     val XROSS_STRING_VIEW_LAYOUT_CODE = com.squareup.kotlinpoet.CodeBlock.of(

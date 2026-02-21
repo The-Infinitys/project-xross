@@ -89,12 +89,18 @@ object MethodGenerator {
 
             val argPrep = CodeBlock.builder()
             val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
-            val arenaForArg = GeneratorUtils.prepareArgumentsAndArena(method, argPrep, basePackage, callArgs, checkObjectValidity = true)
-
-            val handleName = "${method.name.toCamelCase()}Handle"
             val isPanicable = method.handleMode is HandleMode.Panicable
             val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
+            
+            val forceConfined = isComplexRet || isPanicable
+            val arenaForArg = if (forceConfined && !needsArena) {
+                argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
+                GeneratorUtils.prepareArgumentsAndArena(method.args, method.handleMode, argPrep, basePackage, callArgs, checkObjectValidity = true, arenaName = "arena")
+            } else {
+                GeneratorUtils.prepareArgumentsAndArena(method, argPrep, basePackage, callArgs, checkObjectValidity = true)
+            }
 
+            val handleName = "${method.name.toCamelCase()}Handle"
             val call = if (isComplexRet || isPanicable) {
                 val layout = if (isPanicable) {
                     FFMConstants.XROSS_RESULT_LAYOUT_CODE
@@ -105,24 +111,23 @@ object MethodGenerator {
                 } else {
                     method.ret.layoutCode
                 }
-                argPrep.addStatement("val outBuf = $arenaForArg.allocate(%L)", layout)
+                argPrep.addStatement("val outBuf = %L.allocate(%L)", arenaForArg, layout)
                 val pArgs = mutableListOf(CodeBlock.of("outBuf"))
                 pArgs.addAll(callArgs)
-                argPrep.addStatement("$handleName.invokeExact(%L)", pArgs.joinToCode(", "))
+                argPrep.addStatement("%L.invokeExact(%L)", handleName, pArgs.joinToCode(", "))
                 CodeBlock.of("outBuf")
             } else {
                 if (method.ret is XrossType.Void) {
-                    // Use invoke for Void to avoid Descriptor mismatch in Kotlin
-                    CodeBlock.of("$handleName.invoke(%L)", callArgs.joinToCode(", "))
+                    CodeBlock.of("%L.invoke(%L)", handleName, callArgs.joinToCode(", "))
                 } else {
-                    CodeBlock.of("$handleName.invokeExact(%L)", callArgs.joinToCode(", "))
+                    CodeBlock.of("%L.invokeExact(%L)", handleName, callArgs.joinToCode(", "))
                 }
             }
 
             body.add(argPrep.build())
             body.add(InvocationGenerator.applyMethodCall(method, call, returnType, selfType, basePackage, meta = meta))
 
-            if (needsArena) body.endControlFlow()
+            if (needsArena || forceConfined) body.endControlFlow()
             body.nextControlFlow("catch (e: Throwable)")
             val xrossException = ClassName("$basePackage.xross.runtime", "XrossException")
             body.addStatement("if (e is %T) throw e", xrossException)

@@ -88,7 +88,7 @@ pub fn write_ffi_function(
                 | XrossType::Bool => {
                     quote! { val as usize as *mut std::ffi::c_void }
                 }
-                XrossType::String => {
+                XrossType::String | XrossType::Vec(_) | XrossType::Slice(_) => {
                     quote! { Box::into_raw(Box::new(val)) as *mut std::ffi::c_void }
                 }
                 _ => quote! { val as *mut std::ffi::c_void },
@@ -121,19 +121,12 @@ pub fn write_ffi_function(
             }
         });
     } else if is_complex_ret {
-        let is_vec_or_slice = matches!(ret_ty, XrossType::Vec(_) | XrossType::Slice(_));
-        let write_logic = if is_vec_or_slice {
-            quote! {}
-        } else {
-            quote! { unsafe { std::ptr::write_unaligned(out, val) }; }
-        };
-
         toks.push(quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #export_ident(out: *mut #c_ret_type, #(#c_args),*) {
                 #(#conv_logic)*
                 let val = #wrapper_body;
-                #write_logic
+                unsafe { std::ptr::write_unaligned(out, val) };
             }
         });
     } else {

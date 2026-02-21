@@ -84,15 +84,15 @@ object FieldBodyGenerator {
                     if (handleName.isNotEmpty()) {
                         // Inline String conversion to avoid XrossString object overhead
                         addStatement("val outRaw = java.lang.foreign.Arena.ofAuto().run { $handleName.invokeExact(this as %T, this@${className(ctx.selfType)}.segment) as %T }", SegmentAllocator::class.asTypeName(), MEMORY_SEGMENT)
-                        addStatement("val ptr = outRaw.get(%T.ADDRESS, 0L)", ValueLayout::class)
                         addStatement("val len = outRaw.get(%T.JAVA_LONG, 8L)", ValueLayout::class)
+                        addStatement("val ptr = outRaw.get(%T.ADDRESS, 16L)", ValueLayout::class)
                         beginControlFlow("res = if (ptr == %T.NULL || len == 0L)", MEMORY_SEGMENT)
                         addStatement("%S", "")
                         nextControlFlow("else")
                         addStatement("val bytes = ptr.reinterpret(len).toArray(%T.JAVA_BYTE)", ValueLayout::class)
                         addStatement("String(bytes, java.nio.charset.StandardCharsets.UTF_8)")
                         endControlFlow()
-                        addStatement("if (outRaw != %T.NULL) xrossFreeStringHandle.invoke(outRaw)", MEMORY_SEGMENT)
+                        addStatement("if (outRaw != %T.NULL) xrossFreeBufferHandle.invoke(outRaw)", MEMORY_SEGMENT)
                     } else {
                         addStatement("res = %S", "") // Fallback
                     }

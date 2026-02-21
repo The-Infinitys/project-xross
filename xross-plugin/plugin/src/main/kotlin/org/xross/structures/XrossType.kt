@@ -123,6 +123,12 @@ sealed class XrossType {
             else -> FFMConstants.ADDRESS
         }
 
+    val layoutCodeCritical: CodeBlock
+        get() = when (this) {
+            is Vec, is Slice -> CodeBlock.of("%M", FFMConstants.CRITICAL_MEMORY_SEGMENT)
+            else -> layoutCode
+        }
+
     val layoutCode: CodeBlock
         get() = when (this) {
             is Result -> FFMConstants.XROSS_RESULT_LAYOUT_CODE

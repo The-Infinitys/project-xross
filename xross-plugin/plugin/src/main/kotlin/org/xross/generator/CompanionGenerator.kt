@@ -52,7 +52,7 @@ object CompanionGenerator {
             }
 
             init.beginControlFlow("if (layoutRaw != %T.NULL)", MEMORY_SEGMENT)
-                .addStatement("xrossFreeStringHandle.invokeExact(layoutRaw)")
+                .addStatement("xrossFreeBufferHandle.invokeExact(layoutRaw)")
                 .endControlFlow()
                 .nextControlFlow("else")
                 .addStatement("this.STRUCT_SIZE = 0L")
@@ -84,12 +84,12 @@ object CompanionGenerator {
         )
 
         if (meta !is XrossDefinition.Function) {
-            handles.addAll(listOf("dropHandle", "layoutHandle", "xrossFreeStringHandle"))
+            handles.addAll(listOf("dropHandle", "layoutHandle", "xrossFreeBufferHandle"))
             if (meta.methods.any { it.name == "clone" }) {
                 handles.add("cloneHandle")
             }
         } else {
-            handles.add("xrossFreeStringHandle")
+            handles.add("xrossFreeBufferHandle")
         }
 
         when (meta) {

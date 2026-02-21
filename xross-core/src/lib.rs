@@ -20,37 +20,46 @@ pub struct XrossResult {
 unsafe impl Send for XrossResult {}
 unsafe impl Sync for XrossResult {}
 
-/// Represent a Rust String (Vec<u8>) passed to the JVM.
+/// Represent a Rust Buffer (Vec<u8> or similar) passed to the JVM.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct XrossString {
-    pub ptr: *mut u8,
-    pub len: usize,
+pub struct XrossBuffer {
     pub cap: usize,
+    pub len: usize,
+    pub ptr: *mut c_void,
 }
 
-impl From<String> for XrossString {
+impl From<String> for XrossBuffer {
     fn from(mut s: String) -> Self {
-        let ptr = s.as_mut_ptr();
+        let ptr = s.as_mut_ptr() as *mut c_void;
         let len = s.len();
         let cap = s.capacity();
         std::mem::forget(s);
-        Self { ptr, len, cap }
+        Self { cap, len, ptr }
     }
 }
 
-impl XrossString {
-    /// Converts the `XrossString` back into a Rust `String`.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because it reconstructs a `String` from raw parts.
-    /// The caller must ensure that:
-    /// - The `ptr`, `len`, and `cap` were originally created by a valid `String`.
-    /// - This function is called exactly once for a given set of raw parts to avoid double-free.
-    /// - The memory was allocated by the same allocator Rust expects.
+impl<T> From<Vec<T>> for XrossBuffer {
+    fn from(mut v: Vec<T>) -> Self {
+        let ptr = v.as_mut_ptr() as *mut c_void;
+        let len = v.len();
+        let cap = v.capacity();
+        std::mem::forget(v);
+        Self { cap, len, ptr }
+    }
+}
+
+pub type XrossString = XrossBuffer;
+
+impl XrossBuffer {
+    /// Converts the `XrossBuffer` back into a Rust `String`.
     pub unsafe fn into_string(self) -> String {
-        unsafe { String::from_raw_parts(self.ptr, self.len, self.cap) }
+        unsafe { String::from_raw_parts(self.ptr as *mut u8, self.len, self.cap) }
+    }
+
+    /// Converts the `XrossBuffer` back into a Rust `Vec<T>`.
+    pub unsafe fn into_vec<T>(self) -> Vec<T> {
+        unsafe { Vec::from_raw_parts(self.ptr as *mut T, self.len, self.cap) }
     }
 }
 
@@ -151,17 +160,11 @@ pub trait XrossClass {
     fn xross_layout() -> String;
 }
 
-/// Frees a string allocated by Rust that was passed to the JVM.
-///
-/// # Safety
-///
-/// This function is unsafe because it takes a `XrossString` which contains a raw pointer
-/// and deallocates the memory by reconstructing the `String`.
-/// The caller must ensure that the `XrossString` was originally provided by the Xross bridge
-/// and has not been freed yet.
+/// Frees an array (or string) allocated by Rust that was passed to the JVM.
+/// ptr, len, and cap must correspond to a Vec<u8> or String.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn xross_free_string(xs: XrossString) {
-    if !xs.ptr.is_null() {
-        drop(unsafe { xs.into_string() });
+pub unsafe extern "C" fn xross_free_buffer(xb: XrossBuffer) {
+    if !xb.ptr.is_null() && xb.cap > 0 {
+        drop(unsafe { Vec::from_raw_parts(xb.ptr as *mut u8, xb.len, xb.cap) });
     }
 }

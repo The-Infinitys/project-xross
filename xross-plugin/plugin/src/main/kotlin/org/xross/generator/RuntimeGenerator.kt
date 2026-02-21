@@ -14,15 +14,15 @@ object RuntimeGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
     private val CLEANABLE = ClassName("java.lang.ref.Cleaner", "Cleanable")
 
-    private fun TypeSpec.Builder.addStringBase(memorySegment: TypeName): TypeSpec.Builder = this.primaryConstructor(
+    private fun TypeSpec.Builder.addBufferProperties(memorySegment: TypeName): TypeSpec.Builder = this.primaryConstructor(
         FunSpec.constructorBuilder()
             .addParameter("segment", memorySegment)
             .build(),
     )
         .addProperty(PropertySpec.builder("segment", memorySegment).initializer("segment").build())
         .addProperty(
-            PropertySpec.builder("ptr", memorySegment)
-                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 0L)").build())
+            PropertySpec.builder("cap", Long::class)
+                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 0L)").build())
                 .build(),
         )
         .addProperty(
@@ -30,8 +30,18 @@ object RuntimeGenerator {
                 .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
                 .build(),
         )
+        .addProperty(
+            PropertySpec.builder("ptr", memorySegment)
+                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 16L)").build())
+                .build(),
+        )
 
     fun generate(outputDir: File, basePackage: String) {
+        // ... (rest of the code)
+        // I will replace the whole file generation block for XrossString and XrossStringView below.
+        // ... (rest of the code)
+        // Ensure to update toString() in XrossString as well
+        // I will do it in the next replacement for clarity if needed, or all at once.
         val pkg = if (basePackage.isEmpty()) "xross.runtime" else "$basePackage.xross.runtime"
 
         // --- XrossException ---
@@ -354,12 +364,7 @@ object RuntimeGenerator {
 
         // --- XrossString ---
         val xrossString = TypeSpec.classBuilder("XrossString")
-            .addStringBase(MEMORY_SEGMENT)
-            .addProperty(
-                PropertySpec.builder("cap", Long::class)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 16L)").build())
-                    .build(),
-            )
+            .addBufferProperties(MEMORY_SEGMENT)
             .addFunction(
                 FunSpec.builder("toString")
                     .addModifiers(KModifier.OVERRIDE)
@@ -371,7 +376,22 @@ object RuntimeGenerator {
 
         // --- XrossStringView ---
         val xrossStringView = TypeSpec.classBuilder("XrossStringView")
-            .addStringBase(MEMORY_SEGMENT)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("segment", MEMORY_SEGMENT)
+                    .build(),
+            )
+            .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT).initializer("segment").build())
+            .addProperty(
+                PropertySpec.builder("ptr", MEMORY_SEGMENT)
+                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 0L)").build())
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("len", Long::class)
+                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
+                    .build(),
+            )
             .addProperty(
                 PropertySpec.builder("encoding", Byte::class)
                     .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_BYTE, 16L)").build())

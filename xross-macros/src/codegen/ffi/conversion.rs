@@ -85,7 +85,7 @@ pub fn gen_arg_conversion(
                 quote!(#arg_id),
             )
         }
-        XrossType::Slice(inner) => {
+        XrossType::Slice(inner) | XrossType::Vec(inner) => {
             let ptr_id = format_ident!("{}_ptr", arg_id);
             let len_id = format_ident!("{}_len", arg_id);
             let inner_rust_ty = match &**inner {
@@ -102,40 +102,23 @@ pub fn gen_arg_conversion(
                 XrossType::F32 => quote!(f32),
                 XrossType::F64 => quote!(f64),
                 XrossType::Bool => quote!(bool),
+                XrossType::Object { .. } => quote!(*mut std::ffi::c_void),
                 _ => quote!(std::ffi::c_void),
             };
-            (
-                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
-                quote! {
-                    let #arg_id = if #ptr_id.is_null() { &[] } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id) } };
-                },
-                quote!(#arg_id),
-            )
-        }
-        XrossType::Vec(inner) => {
-            let ptr_id = format_ident!("{}_ptr", arg_id);
-            let len_id = format_ident!("{}_len", arg_id);
-            let inner_rust_ty = match &**inner {
-                XrossType::I8 => quote!(i8),
-                XrossType::U8 => quote!(u8),
-                XrossType::I16 => quote!(i16),
-                XrossType::U16 => quote!(u16),
-                XrossType::I32 => quote!(i32),
-                XrossType::U32 => quote!(u32),
-                XrossType::I64 => quote!(i64),
-                XrossType::U64 => quote!(u64),
-                XrossType::ISize => quote!(isize),
-                XrossType::USize => quote!(usize),
-                XrossType::F32 => quote!(f32),
-                XrossType::F64 => quote!(f64),
-                XrossType::Bool => quote!(bool),
-                _ => quote!(std::ffi::c_void),
-            };
-            (
-                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
+
+            let conversion = if matches!(x_ty, XrossType::Vec(_)) {
                 quote! {
                     let #arg_id = if #ptr_id.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id).to_vec() } };
-                },
+                }
+            } else {
+                quote! {
+                    let #arg_id = if #ptr_id.is_null() { &[] } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id) } };
+                }
+            };
+
+            (
+                quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize },
+                conversion,
                 quote!(#arg_id),
             )
         }
@@ -228,7 +211,7 @@ pub fn gen_arg_conversion(
 pub fn gen_single_value_to_ptr(ty: &XrossType, val_ident: TokenStream) -> TokenStream {
     match ty {
         XrossType::String => {
-            quote! { Box::into_raw(Box::new(xross_core::XrossString::from(#val_ident))) as *mut std::ffi::c_void }
+            quote! { Box::into_raw(Box::new(xross_core::XrossBuffer::from(#val_ident))) as *mut std::ffi::c_void }
         }
         XrossType::Object { .. } => {
             quote! { Box::into_raw(Box::new(#val_ident)) as *mut std::ffi::c_void }
@@ -249,39 +232,24 @@ pub fn gen_ret_wrapping(
     match ret_ty {
         XrossType::Void => (quote! { () }, quote! { #inner_call; }),
         XrossType::String => (
-            quote! { xross_core::XrossString },
-            quote! { xross_core::XrossString::from(#inner_call) },
+            quote! { xross_core::XrossBuffer },
+            quote! { xross_core::XrossBuffer::from(#inner_call) },
         ),
-        XrossType::Vec(_) => (
-            quote! { *mut std::ffi::c_void },
-            quote! {
-                {
-                    let mut v = #inner_call;
-                    let ptr = v.as_mut_ptr() as *mut std::ffi::c_void;
-                    let len = v.len();
-                    std::mem::forget(v);
-                    let out_ptr = out as *mut *mut std::ffi::c_void;
-                    unsafe {
-                        *out_ptr = ptr;
-                        *(out_ptr.add(1) as *mut usize) = len;
+        XrossType::Vec(inner) | XrossType::Slice(inner) => (
+            quote! { xross_core::XrossBuffer },
+            if let XrossType::Object { .. } = &**inner {
+                quote! {
+                    {
+                        let v: Vec<*mut _> = #inner_call.iter().map(|item| Box::into_raw(Box::new(item.clone()))).collect();
+                        xross_core::XrossBuffer::from(v)
                     }
-                    ptr // This return value is actually ignored if is_complex_ret is true
                 }
-            },
-        ),
-        XrossType::Slice(_) => (
-            quote! { *mut std::ffi::c_void },
-            quote! {
-                {
-                    let s = #inner_call;
-                    let ptr = s.as_ptr() as *mut std::ffi::c_void;
-                    let len = s.len();
-                    let out_ptr = out as *mut *mut std::ffi::c_void;
-                    unsafe {
-                        *out_ptr = ptr;
-                        *(out_ptr.add(1) as *mut usize) = len;
+            } else {
+                quote! {
+                    {
+                        let v = #inner_call.to_vec();
+                        xross_core::XrossBuffer::from(v)
                     }
-                    ptr
                 }
             },
         ),

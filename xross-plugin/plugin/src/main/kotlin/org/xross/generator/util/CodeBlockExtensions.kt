@@ -136,8 +136,9 @@ fun CodeBlock.Builder.addRustStringResolution(
 
     // Convert to String helper (Inlined to avoid XrossString object)
     val decl = if (isAssignment) "" else "val "
-    addStatement("val ${resultVar}Ptr = $resRawName.get(java.lang.foreign.ValueLayout.ADDRESS, 0L)")
+    addStatement("val ${resultVar}Cap = $resRawName.get(java.lang.foreign.ValueLayout.JAVA_LONG, 0L)")
     addStatement("val ${resultVar}Len = $resRawName.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)")
+    addStatement("val ${resultVar}Ptr = $resRawName.get(java.lang.foreign.ValueLayout.ADDRESS, 16L)")
     beginControlFlow("%L%L = if (${resultVar}Ptr == %T.NULL || ${resultVar}Len == 0L)", decl, resultVar, MEMORY_SEGMENT)
     addStatement("%S", "")
     nextControlFlow("else")
@@ -145,7 +146,7 @@ fun CodeBlock.Builder.addRustStringResolution(
     endControlFlow()
 
     if (shouldFree) {
-        addStatement("if ($resRawName != %T.NULL) xrossFreeStringHandle.invoke($resRawName)", MEMORY_SEGMENT)
+        addStatement("if ($resRawName != %T.NULL) xrossFreeBufferHandle.invoke($resRawName)", MEMORY_SEGMENT)
     }
     return this
 }
@@ -183,9 +184,10 @@ fun CodeBlock.Builder.addResultVariantResolution(
         is XrossType.Vec, is XrossType.Slice -> {
             val innerType = if (type is XrossType.Vec) type.inner else (type as XrossType.Slice).inner
             beginControlFlow("run")
-            addStatement("val dataPtr = (%L).get(java.lang.foreign.ValueLayout.ADDRESS, 0L)", ptrName)
-            addStatement("val dataLen = (%L).get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)", ptrName)
-            beginControlFlow("if (dataPtr == %T.NULL || dataLen == 0L)", MEMORY_SEGMENT)
+            addStatement("val dataCap = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 0L)", ptrName)
+            addStatement("val dataLen = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)", ptrName)
+            addStatement("val dataPtr = %L.get(java.lang.foreign.ValueLayout.ADDRESS, 16L)", ptrName)
+            beginControlFlow("val resArr = if (dataPtr == %T.NULL || dataLen == 0L)", MEMORY_SEGMENT)
             val emptyValue = when (innerType) {
                 is XrossType.I32 -> "intArrayOf()"
                 is XrossType.I64 -> "longArrayOf()"
@@ -198,9 +200,24 @@ fun CodeBlock.Builder.addResultVariantResolution(
             }
             addStatement(emptyValue)
             nextControlFlow("else")
-            val layout = innerType.layoutMember
-            addStatement("dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)", java.lang.foreign.ValueLayout::class, layout.simpleName, java.lang.foreign.ValueLayout::class, layout.simpleName)
+            if (innerType is XrossType.Object) {
+                val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(GeneratorUtils.getClassName(innerType.signature, basePackage), selfType)
+                addStatement("val ptrs = dataPtr.reinterpret(dataLen * java.lang.foreign.ValueLayout.ADDRESS.byteSize()).toArray(java.lang.foreign.ValueLayout.ADDRESS)")
+                addStatement("val list = mutableListOf<%T>()", GeneratorUtils.resolveReturnType(innerType, basePackage))
+                beginControlFlow("for (p in ptrs)")
+                addStatement("val obj = %L(p.reinterpret(%L), parent = null, isPersistent = false)", fromPointerExpr, sizeExpr)
+                addStatement("obj.registerNativeCleaner(%L)", dropExpr)
+                addStatement("list.add(obj)")
+                endControlFlow()
+                addStatement("list")
+            } else {
+                val layout = innerType.layoutMember
+                addStatement("dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)", java.lang.foreign.ValueLayout::class, layout.simpleName, java.lang.foreign.ValueLayout::class, layout.simpleName)
+            }
             endControlFlow()
+            // Always free Buffer return
+            addStatement("if (%L != %T.NULL) xrossFreeBufferHandle.invoke(%L)", ptrName, MEMORY_SEGMENT, ptrName)
+            addStatement("resArr")
             endControlFlow()
         }
         else -> {
@@ -249,7 +266,7 @@ fun CodeBlock.Builder.addResultResolution(
 ) {
     beginControlFlow("run")
     val runtimePkg = "$basePackage.xross.runtime"
-    addStatement("val resRawSeg = (%L)", resRaw)
+    addStatement("val resRawSeg = %L", resRaw)
     addStatement("val isOk = resRawSeg.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
     addStatement("val ptr = resRawSeg.get(%M, 8L)", FFMConstants.ADDRESS)
 
@@ -342,16 +359,31 @@ fun CodeBlock.Builder.addArgumentPreparation(
         }
 
         is XrossType.Slice, is XrossType.Vec -> {
-            val isNullable = type is XrossType.Optional // This might need refinement depending on how nullability is tracked
-            // Actually, we can check if the type name is nullable
-            val kotlinType = GeneratorUtils.resolveReturnType(type, basePackage)
-            if (kotlinType.isNullable) {
-                addStatement("val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)", MEMORY_SEGMENT, MEMORY_SEGMENT)
+            val inner = if (type is XrossType.Slice) type.inner else (type as XrossType.Vec).inner
+            val isObject = inner is XrossType.Object
+            
+            if (isObject) {
+                // Create a buffer of pointers for Object lists
+                addStatement("val ${name}Seg = if ($name == null) %T.NULL else run {", MEMORY_SEGMENT)
+                indent()
+                addStatement("val seg = $arenaName.allocate(java.lang.foreign.ValueLayout.ADDRESS, $name.size.toLong())")
+                beginControlFlow("for (i in $name.indices)")
+                addStatement("val obj = $name[i]")
+                addStatement("seg.setAtIndex(java.lang.foreign.ValueLayout.ADDRESS, i.toLong(), if (obj == null) %T.NULL else obj.segment)", MEMORY_SEGMENT)
+                endControlFlow()
+                addStatement("seg")
+                unindent()
+                addStatement("}")
             } else {
-                addStatement("val ${name}Seg = %T.ofArray($name)", MEMORY_SEGMENT)
+                val kotlinType = GeneratorUtils.resolveReturnType(type, basePackage)
+                if (kotlinType.isNullable) {
+                    addStatement("val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)", MEMORY_SEGMENT, MEMORY_SEGMENT)
+                } else {
+                    addStatement("val ${name}Seg = %T.ofArray($name)", MEMORY_SEGMENT)
+                }
             }
             callArgs.add(CodeBlock.of("${name}Seg"))
-            callArgs.add(CodeBlock.of("$name.size.toLong()"))
+            callArgs.add(CodeBlock.of("($name?.size ?: 0).toLong()"))
         }
 
         else -> callArgs.add(CodeBlock.of("%L", name))
