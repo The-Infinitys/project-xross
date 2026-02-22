@@ -17,6 +17,7 @@ object LayoutGenerator {
             .addStatement("val f = parts[i].split(':')")
             .addStatement("if (f.size < 3) continue")
             .addStatement("val fName = f[0]; val fOffset = f[1].toLong(); val fSize = f[2].toLong()")
+            // 対策1: オフセット間の隙間が0より大きい場合のみパディングを追加
             .beginControlFlow("if (fOffset > currentOffsetPos)")
             .addStatement("layouts.add(%T.paddingLayout(fOffset - currentOffsetPos))", MEMORY_LAYOUT)
             .addStatement("currentOffsetPos = fOffset")
@@ -32,10 +33,14 @@ object LayoutGenerator {
             val isComplex = field.ty.isComplex
 
             if (isComplex) {
-                init.addStatement("layouts.add(%T.paddingLayout(fSize).withName(%S))", MEMORY_LAYOUT, field.name)
+                // 対策2: 複合型のサイズが0より大きい場合のみ追加
+                init.beginControlFlow("if (fSize > 0)")
+                    .addStatement("layouts.add(%T.paddingLayout(fSize).withName(%S))", MEMORY_LAYOUT, field.name)
+                    .endControlFlow()
             } else {
                 val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
                 init.addStatement("layouts.add(%L.withName(%S)%L)", field.ty.layoutCode, field.name, alignmentCode)
+                // 対策3: フィールドサイズと型のサイズの差分が0より大きい場合のみパディングを追加
                 init.beginControlFlow("if (fSize > $kotlinSize)")
                     .addStatement("layouts.add(%T.paddingLayout(fSize - $kotlinSize))", MEMORY_LAYOUT)
                     .endControlFlow()
@@ -51,14 +56,19 @@ object LayoutGenerator {
         }
 
         init.beginControlFlow("else ->")
+            // 対策4: 未知のフィールドサイズが0より大きい場合のみ追加
+            .beginControlFlow("if (fSize > 0)")
             .addStatement("layouts.add(%T.paddingLayout(fSize))", MEMORY_LAYOUT)
+            .endControlFlow()
             .addStatement("currentOffsetPos = fOffset + fSize")
             .endControlFlow()
         init.endControlFlow()
         init.endControlFlow() // Close for loop
 
-        init.beginControlFlow("if (currentOffsetPos < STRUCT_SIZE)")
-            .addStatement("layouts.add(%T.paddingLayout(STRUCT_SIZE - currentOffsetPos))", MEMORY_LAYOUT)
+        // 対策5: 構造体全体のサイズに満たない場合の末尾パディング
+        init.addStatement("val finalPadding = STRUCT_SIZE - currentOffsetPos")
+        init.beginControlFlow("if (finalPadding > 0)")
+            .addStatement("layouts.add(%T.paddingLayout(finalPadding))", MEMORY_LAYOUT)
             .endControlFlow()
 
         init.addStatement(
@@ -95,6 +105,7 @@ object LayoutGenerator {
                 variant.fields.forEach { field ->
                     init.beginControlFlow("%S ->", field.name)
                         .addStatement("val vLayouts = mutableListOf<%T>()", MEMORY_LAYOUT)
+                        // 対策6: Enumのフィールドオフセットパディング
                         .addStatement("if (fOffsetL > 0) vLayouts.add(%T.paddingLayout(fOffsetL))", MEMORY_LAYOUT)
 
                     val kotlinSize = field.ty.kotlinSize
@@ -107,13 +118,17 @@ object LayoutGenerator {
                         val alignmentCode =
                             if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
                         init.addStatement("vLayouts.add(%L.withName(fName)%L)", field.ty.layoutCode, alignmentCode)
+                        // 対策7: Enumフィールドのサイズ差分パディング
                         init.beginControlFlow("if (fSizeL > $kotlinSize)")
-                            .addStatement("vLayouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
+                            .addStatement("layouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
                             .endControlFlow()
                     }
 
+                    // 対策8: Enum構造体の残りのサイズパディング
                     init.addStatement("val remaining = STRUCT_SIZE - fOffsetL - fSizeL")
-                        .addStatement("if (remaining > 0) vLayouts.add(%T.paddingLayout(remaining))", MEMORY_LAYOUT)
+                        .beginControlFlow("if (remaining > 0)")
+                        .addStatement("vLayouts.add(%T.paddingLayout(remaining))", MEMORY_LAYOUT)
+                        .endControlFlow()
                         .addStatement("val vLayout = %T.structLayout(*vLayouts.toTypedArray())", MEMORY_LAYOUT)
                         .addStatement("this.OFFSET_${variant.name}_${field.name.toCamelCase()} = fOffsetL")
 
