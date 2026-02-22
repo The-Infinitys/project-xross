@@ -96,6 +96,11 @@ pub fn batch_heavy_prime_factorization(n: u64, repeat: u32) -> u32 {
 }
 
 #[xross_function(package = "standalone")]
+pub fn get_large_array(size: usize) -> Vec<i32> {
+    (0..size as i32).collect()
+}
+
+#[xross_function(package = "standalone")]
 pub fn batch_heavy_matrix_multiplication(size: usize, repeat: u32) -> f64 {
     let a = vec![1.1f64; size * size];
     let b = vec![2.2f64; size * size];

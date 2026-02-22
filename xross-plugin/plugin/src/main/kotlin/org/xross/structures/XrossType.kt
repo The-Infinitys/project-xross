@@ -104,6 +104,18 @@ sealed class XrossType {
             Pointer, is Object -> ClassName("java.lang.foreign", "MemorySegment")
         }
 
+    val viewClassName: String?
+        get() = when (this) {
+            I32, U32 -> "XrossIntArrayView"
+            F64 -> "XrossDoubleArrayView"
+            F32 -> "XrossFloatArrayView"
+            I64, U64, ISize, USize -> "XrossLongArrayView"
+            I8, U8 -> "XrossByteArrayView"
+            I16 -> "XrossShortArrayView"
+            Bool -> "XrossBooleanArrayView"
+            else -> null
+        }
+
     /**
      * Returns the [MemberName] for the Java FFM ValueLayout of this type.
      */

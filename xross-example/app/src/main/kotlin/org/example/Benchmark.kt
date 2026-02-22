@@ -37,8 +37,44 @@ fun main() {
     // 8. Graphics
     results.addAll(runGraphicsBenchmarks())
 
+    // 9. Array (Zero-Copy)
+    results.addAll(runArrayBenchmarks())
+
     // Final Report
     printFinalReport(results)
+}
+
+fun runArrayBenchmarks(): List<BenchmarkResult> {
+    val size = 1_000_000
+    val iterations = 100
+
+    // Standard Copy
+    val timeCopy = measureTimeMillis {
+        repeat(iterations) {
+            val arr = org.example.standalone.GetLargeArray.getLargeArray(size.toLong())
+            var sum = 0L
+            for (i in arr) {
+                sum += i
+            }
+        }
+    }
+
+    // Zero-Copy View
+    val timeZeroCopy = measureTimeMillis {
+        repeat(iterations) {
+            org.example.standalone.GetLargeArray.withGetLargeArray(size.toLong()) { view ->
+                var sum = 0L
+                for (i in 0L until view.size) {
+                    sum += view.get(i)
+                }
+            }
+        }
+    }
+
+    return listOf(
+        BenchmarkResult("Array", "Standard Copy ($size x $iterations)", timeCopy, timeCopy), // Self-compare for layout
+        BenchmarkResult("Array", "Zero-Copy View ($size x $iterations)", timeZeroCopy, timeCopy),
+    )
 }
 
 fun runHeavyBenchmarks(): List<BenchmarkResult> {

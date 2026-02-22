@@ -399,6 +399,60 @@ object RuntimeGenerator {
             )
             .build()
 
+        // --- Zero-Copy Array Views ---
+        val arrayViews = mutableListOf<TypeSpec>()
+        val primitiveTypes = listOf(
+            Triple("Int", INT, "JAVA_INT"),
+            Triple("Double", DOUBLE, "JAVA_DOUBLE"),
+            Triple("Float", FLOAT, "JAVA_FLOAT"),
+            Triple("Long", LONG, "JAVA_LONG"),
+            Triple("Byte", BYTE, "JAVA_BYTE"),
+            Triple("Short", SHORT, "JAVA_SHORT"),
+            Triple("Boolean", BOOLEAN, "JAVA_BYTE"),
+        )
+
+        primitiveTypes.forEach { (name, type, layout) ->
+            val viewName = "Xross${name}ArrayView"
+            val isBool = name == "Boolean"
+            val builder = TypeSpec.classBuilder(viewName)
+                .primaryConstructor(FunSpec.constructorBuilder().addParameter("segment", MEMORY_SEGMENT).build())
+                .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT).initializer("segment").build())
+                .addProperty(
+                    PropertySpec.builder("size", Long::class)
+                        .getter(FunSpec.getterBuilder().addStatement("return segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)").build())
+                        .build(),
+                )
+                .addProperty(
+                    PropertySpec.builder("ptr", MEMORY_SEGMENT, KModifier.PRIVATE)
+                        .getter(FunSpec.getterBuilder().addStatement("return segment.get(java.lang.foreign.ValueLayout.ADDRESS, 16L).reinterpret(size * %T.%L.byteSize())", java.lang.foreign.ValueLayout::class, layout).build())
+                        .build(),
+                )
+                .addFunction(
+                    FunSpec.builder("get")
+                        .addModifiers(KModifier.OPERATOR)
+                        .addParameter("index", Long::class)
+                        .returns(type)
+                        .addCode(if (isBool) "return ptr.getAtIndex(java.lang.foreign.ValueLayout.JAVA_BYTE, index) != (0).toByte()" else "return ptr.getAtIndex(java.lang.foreign.ValueLayout.%L, index)", layout)
+                        .build(),
+                )
+                .addFunction(
+                    FunSpec.builder("set")
+                        .addModifiers(KModifier.OPERATOR)
+                        .addParameter("index", Long::class)
+                        .addParameter("value", type)
+                        .addCode(if (isBool) "ptr.setAtIndex(java.lang.foreign.ValueLayout.JAVA_BYTE, index, if (value) 1.toByte() else 0.toByte())" else "ptr.setAtIndex(java.lang.foreign.ValueLayout.%L, index, value)", layout)
+                        .build(),
+                )
+                .addFunction(
+                    FunSpec.builder("forEach")
+                        .addModifiers(KModifier.INLINE)
+                        .addParameter("block", LambdaTypeName.get(null, type, returnType = UNIT))
+                        .addCode("val n = size\nfor (i in 0L until n) {\n    block(get(i))\n}\n")
+                        .build(),
+                )
+            arrayViews.add(builder.build())
+        }
+
         val file = FileSpec.builder(pkg, "XrossRuntime")
             .addImport("java.util.concurrent.atomic", "AtomicBoolean")
             .addImport("java.util.concurrent.locks", "ReentrantReadWriteLock")
@@ -412,6 +466,7 @@ object RuntimeGenerator {
             .addType(lockState)
             .addType(xrossString)
             .addType(xrossStringView)
+            .apply { arrayViews.forEach { addType(it) } }
             .build()
 
         GeneratorUtils.writeToDisk(file, outputDir)

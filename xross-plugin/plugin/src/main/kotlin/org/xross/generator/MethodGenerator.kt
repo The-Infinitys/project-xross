@@ -6,6 +6,7 @@ import org.xross.generator.util.GeneratorUtils
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
+import java.lang.foreign.ValueLayout
 
 /**
  * Generates Kotlin methods that wrap native Rust functions using Java FFM.
@@ -73,7 +74,6 @@ object MethodGenerator {
             }
 
             val body = CodeBlock.builder()
-            val needsLocks = GeneratorUtils.needsLocks(meta)
             if (method.methodType != XrossMethodType.Static) {
                 body.addStatement("val currentSegment = this.segment")
                 body.beginControlFlow("if (currentSegment == %T.NULL || !this.isValid)", MEMORY_SEGMENT)
@@ -139,6 +139,82 @@ object MethodGenerator {
                 companionBuilder.addFunction(funBuilder.build())
             } else {
                 classBuilder.addFunction(funBuilder.build())
+            }
+
+            // --- Generate Zero-Copy View Method ---
+            if (method.ret is XrossType.Vec || method.ret is XrossType.Slice) {
+                val inner = if (method.ret is XrossType.Vec) method.ret.inner else (method.ret as XrossType.Slice).inner
+                val viewName = inner.viewClassName
+                if (viewName != null) {
+                    val viewClass = ClassName("$basePackage.xross.runtime", viewName)
+                    val withFunName = "with${method.name.toCamelCase().replaceFirstChar { it.uppercase() }}"
+                    val withFunBuilder = FunSpec.builder(withFunName).addTypeVariable(TypeVariableName("R"))
+                    if (method.isAsync) withFunBuilder.addModifiers(KModifier.SUSPEND)
+
+                    method.args.forEach { arg ->
+                        withFunBuilder.addParameter(
+                            arg.name.toCamelCase().escapeKotlinKeyword(),
+                            GeneratorUtils.resolveReturnType(arg.ty, basePackage),
+                        )
+                    }
+                    withFunBuilder.addParameter("block", LambdaTypeName.get(null, viewClass, returnType = TypeVariableName("R")))
+                    withFunBuilder.returns(TypeVariableName("R"))
+
+                    val withBody = CodeBlock.builder()
+                    if (method.methodType != XrossMethodType.Static) {
+                        withBody.addStatement("val curSeg = this.segment")
+                        withBody.beginControlFlow("if (curSeg == %T.NULL || !this.isValid)", MEMORY_SEGMENT)
+                        withBody.addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Object dropped or invalid")
+                        withBody.endControlFlow()
+                    }
+
+                    withBody.beginControlFlow("return try")
+                    val withCallArgs = mutableListOf<CodeBlock>()
+                    if (method.methodType != XrossMethodType.Static) withCallArgs.add(CodeBlock.of("curSeg"))
+
+                    val withArgPrep = CodeBlock.builder()
+                    val withArenaName = if (method.isAsync) "java.lang.foreign.Arena.ofAuto()" else "arena"
+
+                    if (!method.isAsync) withArgPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
+
+                    GeneratorUtils.prepareArgumentsAndArena(method.args, method.handleMode, withArgPrep, basePackage, withCallArgs, checkObjectValidity = true, arenaName = withArenaName)
+
+                    withArgPrep.addStatement("val outBuf = %L.allocate(%L)", withArenaName, FFMConstants.XROSS_STRING_LAYOUT_CODE)
+                    val pArgs = mutableListOf(CodeBlock.of("outBuf"))
+                    pArgs.addAll(withCallArgs)
+                    withArgPrep.addStatement("%L.invokeExact(%L)", handleName, pArgs.joinToCode(", "))
+
+                    // Invocation logic tailored for view
+                    withArgPrep.beginControlFlow("val res = run")
+                    withArgPrep.addStatement("val resRaw = outBuf as %T", MEMORY_SEGMENT)
+                    withArgPrep.beginControlFlow("if (resRaw == %T.NULL || resRaw.get(%T.ADDRESS, 16L) == %T.NULL)", MEMORY_SEGMENT, ValueLayout::class, MEMORY_SEGMENT)
+                    withArgPrep.addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
+                    withArgPrep.endControlFlow()
+                    withArgPrep.addStatement("val view = %T(resRaw)", viewClass)
+                    withArgPrep.beginControlFlow("try")
+                    withArgPrep.addStatement("block(view)")
+                    withArgPrep.nextControlFlow("finally")
+                    withArgPrep.addStatement("xrossFreeBufferHandle.invoke(resRaw)")
+                    withArgPrep.endControlFlow()
+                    withArgPrep.endControlFlow()
+                    withArgPrep.addStatement("res")
+
+                    if (!method.isAsync) withArgPrep.endControlFlow()
+
+                    withBody.add(withArgPrep.build())
+
+                    withBody.nextControlFlow("catch (e: Throwable)")
+                    withBody.addStatement("if (e is %T) throw e", ClassName("$basePackage.xross.runtime", "XrossException"))
+                    withBody.addStatement("throw %T(e)", RuntimeException::class.asTypeName())
+                    withBody.endControlFlow()
+
+                    withFunBuilder.addCode(withBody.build())
+                    if (method.methodType == XrossMethodType.Static) {
+                        companionBuilder.addFunction(withFunBuilder.build())
+                    } else {
+                        classBuilder.addFunction(withFunBuilder.build())
+                    }
+                }
             }
         }
     }
