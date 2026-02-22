@@ -17,7 +17,7 @@ object CompanionGenerator {
     private val MEMORY_LAYOUT = MemoryLayout::class.asTypeName()
 
     fun generateCompanions(companionBuilder: TypeSpec.Builder, meta: XrossDefinition, basePackage: String) {
-        defineProperties(companionBuilder, meta, basePackage)
+        defineProperties(companionBuilder, meta)
 
         val init = CodeBlock.builder()
             .addStatement("val lookup = %T.loaderLookup()", SymbolLookup::class.asTypeName())
@@ -74,7 +74,7 @@ object CompanionGenerator {
         companionBuilder.addInitializerBlock(init.build())
     }
 
-    private fun defineProperties(builder: TypeSpec.Builder, meta: XrossDefinition, basePackage: String) {
+    private fun defineProperties(builder: TypeSpec.Builder, meta: XrossDefinition) {
         val handles = mutableListOf<String>()
 
         builder.addProperty(

@@ -62,7 +62,11 @@ object LayoutGenerator {
             .endControlFlow()
 
         init.addStatement(
-            "this.LAYOUT = if (layouts.isEmpty()) %T.structLayout(%T.paddingLayout(STRUCT_SIZE)) else %T.structLayout(*layouts.toTypedArray())",
+            "this.LAYOUT = if (layouts.isEmpty()) { " +
+                "if (STRUCT_SIZE > 0) %T.structLayout(%T.paddingLayout(STRUCT_SIZE))" +
+                " else %T.structLayout() " +
+                "} else %T.structLayout(*layouts.toTypedArray())",
+            MEMORY_LAYOUT,
             MEMORY_LAYOUT,
             MEMORY_LAYOUT,
             MEMORY_LAYOUT,
@@ -96,9 +100,12 @@ object LayoutGenerator {
                     val kotlinSize = field.ty.kotlinSize
                     val isComplex = field.ty.isComplex
                     if (isComplex) {
-                        init.addStatement("vLayouts.add(%T.paddingLayout(fSizeL).withName(fName))", MEMORY_LAYOUT)
+                        init.beginControlFlow("if (fSizeL > 0)")
+                            .addStatement("vLayouts.add(%T.paddingLayout(fSizeL).withName(fName))", MEMORY_LAYOUT)
+                            .endControlFlow()
                     } else {
-                        val alignmentCode = if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
+                        val alignmentCode =
+                            if (field.safety == XrossThreadSafety.Atomic) "" else ".withByteAlignment(1)"
                         init.addStatement("vLayouts.add(%L.withName(fName)%L)", field.ty.layoutCode, alignmentCode)
                         init.beginControlFlow("if (fSizeL > $kotlinSize)")
                             .addStatement("vLayouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
@@ -111,7 +118,10 @@ object LayoutGenerator {
                         .addStatement("this.OFFSET_${variant.name}_${field.name.toCamelCase()} = fOffsetL")
 
                     if (field.ty.isPrimitive) {
-                        init.addStatement("this.VH_${variant.name}_${field.name.toCamelCase()} = %L.varHandle()", field.ty.layoutCode)
+                        init.addStatement(
+                            "this.VH_${variant.name}_${field.name.toCamelCase()} = %L.varHandle()",
+                            field.ty.layoutCode,
+                        )
                     }
                     init.endControlFlow()
                 }
