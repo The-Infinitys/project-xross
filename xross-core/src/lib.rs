@@ -53,11 +53,15 @@ pub type XrossString = XrossBuffer;
 
 impl XrossBuffer {
     /// Converts the `XrossBuffer` back into a Rust `String`.
+    /// # Safety
+    /// please call from generated
     pub unsafe fn into_string(self) -> String {
         unsafe { String::from_raw_parts(self.ptr as *mut u8, self.len, self.cap) }
     }
 
     /// Converts the `XrossBuffer` back into a Rust `Vec<T>`.
+    /// # Safety
+    /// please call from generated
     pub unsafe fn into_vec<T>(self) -> Vec<T> {
         unsafe { Vec::from_raw_parts(self.ptr as *mut T, self.len, self.cap) }
     }
@@ -105,19 +109,15 @@ unsafe impl Send for XrossTask {}
 unsafe impl Sync for XrossTask {}
 
 #[cfg(feature = "tokio")]
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 #[cfg(feature = "tokio")]
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(||{
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
 
-#[cfg(feature = "tokio")]
-fn get_runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create Tokio runtime")
-    })
-}
+});
 
 #[cfg(feature = "tokio")]
 pub fn xross_spawn_task<F, T>(future: F, mapper: fn(T) -> XrossResult) -> XrossTask
@@ -125,7 +125,7 @@ where
     F: Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    let rt = get_runtime();
+    let rt = &RUNTIME;
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     rt.spawn(async move {
@@ -162,6 +162,9 @@ pub trait XrossClass {
 
 /// Frees an array (or string) allocated by Rust that was passed to the JVM.
 /// ptr, len, and cap must correspond to a Vec<u8> or String.
+/// # Safety
+/// Please call from generated funcs
+/// Do not call from your funcs
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xross_free_buffer(xb: XrossBuffer) {
     if !xb.ptr.is_null() && xb.cap > 0 {
