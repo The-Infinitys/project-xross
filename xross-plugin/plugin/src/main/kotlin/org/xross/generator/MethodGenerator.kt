@@ -88,18 +88,40 @@ object MethodGenerator {
             if (method.methodType != XrossMethodType.Static) callArgs.add(CodeBlock.of("currentSegment"))
 
             val argPrep = CodeBlock.builder()
-            val needsArena = method.args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
-            val isPanicable = method.handleMode is HandleMode.Panicable
-            val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
-
-            val forceConfined = isComplexRet || isPanicable
-            val arenaForArg = if (forceConfined && !needsArena) {
-                argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                GeneratorUtils.prepareArgumentsAndArena(method.args, method.handleMode, argPrep, basePackage, callArgs, checkObjectValidity = true, arenaName = "arena")
-            } else {
-                GeneratorUtils.prepareArgumentsAndArena(method, argPrep, basePackage, callArgs, checkObjectValidity = true)
+            val needsArena = method.args.any {
+                it.ty is XrossType.Vec ||
+                    it.ty is XrossType.Slice ||
+                    it.ty is XrossType.RustString ||
+                    it.ty is XrossType.Optional ||
+                    it.ty is XrossType.Result
             }
 
+            val isPanicable = method.handleMode is HandleMode.Panicable
+            val isComplexRet =
+                method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
+            val forceConfined = isComplexRet || isPanicable || needsArena
+            val arenaForArg = if (forceConfined) {
+                argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
+                GeneratorUtils.prepareArgumentsAndArena(
+                    method.args,
+                    method.handleMode,
+                    argPrep,
+                    basePackage,
+                    callArgs,
+                    checkObjectValidity = true,
+                    arenaName = "arena",
+                )
+            } else {
+                // Arena が不要な単純な primitive のみの場合
+                GeneratorUtils.prepareArgumentsAndArena(
+                    method,
+                    argPrep,
+                    basePackage,
+                    callArgs,
+                    checkObjectValidity = true,
+                )
+                null
+            }
             val handleName = "${method.name.toCamelCase()}Handle"
             val call = if (isComplexRet || isPanicable) {
                 val layout = if (isPanicable) {
@@ -157,14 +179,21 @@ object MethodGenerator {
                             GeneratorUtils.resolveReturnType(arg.ty, basePackage),
                         )
                     }
-                    withFunBuilder.addParameter("block", LambdaTypeName.get(null, viewClass, returnType = TypeVariableName("R")))
+                    withFunBuilder.addParameter(
+                        "block",
+                        LambdaTypeName.get(null, viewClass, returnType = TypeVariableName("R")),
+                    )
                     withFunBuilder.returns(TypeVariableName("R"))
 
                     val withBody = CodeBlock.builder()
                     if (method.methodType != XrossMethodType.Static) {
                         withBody.addStatement("val curSeg = this.segment")
                         withBody.beginControlFlow("if (curSeg == %T.NULL || !this.isValid)", MEMORY_SEGMENT)
-                        withBody.addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Object dropped or invalid")
+                        withBody.addStatement(
+                            "throw %T(%S)",
+                            NullPointerException::class.asTypeName(),
+                            "Object dropped or invalid",
+                        )
                         withBody.endControlFlow()
                     }
 
@@ -177,9 +206,21 @@ object MethodGenerator {
 
                     if (!method.isAsync) withArgPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
 
-                    GeneratorUtils.prepareArgumentsAndArena(method.args, method.handleMode, withArgPrep, basePackage, withCallArgs, checkObjectValidity = true, arenaName = withArenaName)
+                    GeneratorUtils.prepareArgumentsAndArena(
+                        method.args,
+                        method.handleMode,
+                        withArgPrep,
+                        basePackage,
+                        withCallArgs,
+                        checkObjectValidity = true,
+                        arenaName = withArenaName,
+                    )
 
-                    withArgPrep.addStatement("val outBuf = %L.allocate(%L)", withArenaName, FFMConstants.XROSS_STRING_LAYOUT_CODE)
+                    withArgPrep.addStatement(
+                        "val outBuf = %L.allocate(%L)",
+                        withArenaName,
+                        FFMConstants.XROSS_STRING_LAYOUT_CODE,
+                    )
                     val pArgs = mutableListOf(CodeBlock.of("outBuf"))
                     pArgs.addAll(withCallArgs)
                     withArgPrep.addStatement("%L.invokeExact(%L)", handleName, pArgs.joinToCode(", "))
@@ -187,8 +228,17 @@ object MethodGenerator {
                     // Invocation logic tailored for view
                     withArgPrep.beginControlFlow("val res = run")
                     withArgPrep.addStatement("val resRaw = outBuf as %T", MEMORY_SEGMENT)
-                    withArgPrep.beginControlFlow("if (resRaw == %T.NULL || resRaw.get(%T.ADDRESS, 16L) == %T.NULL)", MEMORY_SEGMENT, ValueLayout::class, MEMORY_SEGMENT)
-                    withArgPrep.addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
+                    withArgPrep.beginControlFlow(
+                        "if (resRaw == %T.NULL || resRaw.get(%T.ADDRESS, 16L) == %T.NULL)",
+                        MEMORY_SEGMENT,
+                        ValueLayout::class,
+                        MEMORY_SEGMENT,
+                    )
+                    withArgPrep.addStatement(
+                        "throw %T(%S)",
+                        NullPointerException::class.asTypeName(),
+                        "Unexpected NULL return",
+                    )
                     withArgPrep.endControlFlow()
                     withArgPrep.addStatement("val view = %T(resRaw)", viewClass)
                     withArgPrep.beginControlFlow("try")
@@ -204,7 +254,10 @@ object MethodGenerator {
                     withBody.add(withArgPrep.build())
 
                     withBody.nextControlFlow("catch (e: Throwable)")
-                    withBody.addStatement("if (e is %T) throw e", ClassName("$basePackage.xross.runtime", "XrossException"))
+                    withBody.addStatement(
+                        "if (e is %T) throw e",
+                        ClassName("$basePackage.xross.runtime", "XrossException"),
+                    )
                     withBody.addStatement("throw %T(e)", RuntimeException::class.asTypeName())
                     withBody.endControlFlow()
 

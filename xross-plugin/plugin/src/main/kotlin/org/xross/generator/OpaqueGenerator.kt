@@ -71,7 +71,7 @@ object OpaqueGenerator {
             }
 
             is XrossType.RustString -> {
-                body.addRustStringResolution("$getHandle.invokeExact(java.lang.foreign.Arena.ofAuto() as java.lang.foreign.SegmentAllocator, this.segment)", "s", basePackage = basePackage)
+                body.addRustStringResolution("$getHandle.invokeExact(java.lang.foreign.Arena.ofAuto() as java.lang.foreign.SegmentAllocator, this.segment)", "s")
                 body.addStatement("val res = s")
             }
 

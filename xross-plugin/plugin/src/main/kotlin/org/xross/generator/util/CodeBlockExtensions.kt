@@ -10,7 +10,6 @@ fun CodeBlock.Builder.addResourceConstruction(
     sizeExpr: CodeBlock,
     fromPointerExpr: CodeBlock,
     dropExpr: CodeBlock,
-    flagType: ClassName,
 ) {
     if (inner.isOwned) {
         // オブジェクトごとに Arena を作らず、Cleaner/close() で直接 drop を呼ぶ
@@ -32,7 +31,6 @@ fun CodeBlock.Builder.addResourceConstruction(
 }
 
 fun CodeBlock.Builder.addArenaAndFlag(
-    basePackage: String,
     isPersistent: Boolean = false,
     externalArena: CodeBlock? = null,
 ): CodeBlock.Builder {
@@ -52,18 +50,16 @@ fun CodeBlock.Builder.addFactoryBody(
     basePackage: String,
     handleCall: CodeBlock,
     structSizeExpr: CodeBlock,
-    dropHandleExpr: CodeBlock,
     isPersistent: Boolean = false,
     handleMode: org.xross.structures.HandleMode = org.xross.structures.HandleMode.Normal,
     externalArena: CodeBlock? = null,
     defineArenaAndFlag: Boolean = true,
 ): CodeBlock.Builder {
     val runtimePkg = "$basePackage.xross.runtime"
-    val xrossRuntime = ClassName(runtimePkg, "XrossRuntime")
     val memorySegment = ClassName("java.lang.foreign", "MemorySegment")
 
     if (defineArenaAndFlag) {
-        addArenaAndFlag(basePackage, isPersistent, externalArena)
+        addArenaAndFlag(isPersistent, externalArena)
     }
 
     if (handleMode is org.xross.structures.HandleMode.Panicable) {
@@ -71,7 +67,7 @@ fun CodeBlock.Builder.addFactoryBody(
         addStatement("val isOk = resRawObj.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 0L) != (0).toByte()")
         addStatement("val resRaw = resRawObj.get(java.lang.foreign.ValueLayout.ADDRESS, 8L)")
         beginControlFlow("if (!isOk)")
-        addRustStringResolution("resRaw", "errVal", basePackage = basePackage)
+        addRustStringResolution("resRaw", "errVal")
         addStatement("throw %T(errVal)", ClassName(runtimePkg, "XrossException"))
         endControlFlow()
     } else {
@@ -123,14 +119,12 @@ fun CodeBlock.Builder.addRustStringResolution(
     resultVar: String = "str",
     isAssignment: Boolean = false,
     shouldFree: Boolean = true,
-    basePackage: String = "org.example",
-    arenaName: String = "java.lang.foreign.Arena.ofAuto()",
 ): CodeBlock.Builder {
     val resRawName = if (call is String && call.endsWith("RawInternal")) call else "${resultVar}RawInternal"
     if (!(call is String && call == resRawName)) {
-        when {
-            call == "it" -> addStatement("val $resRawName = %L", call)
-            call is String && (call.endsWith("Raw") || call.endsWith("Segment") || call == "resRaw") ->
+        when (call) {
+            "it" -> addStatement("val $resRawName = %L", call)
+            is String if (call.endsWith("Raw") || call.endsWith("Segment") || call == "resRaw") ->
                 addStatement("val $resRawName = %L", call)
 
             else -> {
@@ -176,13 +170,13 @@ fun CodeBlock.Builder.addResultVariantResolution(
                 selfType,
                 dropHandleName,
             )
-            addResourceConstruction(type, ptrName, sizeExpr, fromPointerExpr, dropExpr, ClassName("", "UNUSED"))
+            addResourceConstruction(type, ptrName, sizeExpr, fromPointerExpr, dropExpr)
             endControlFlow()
         }
 
         is XrossType.RustString -> {
             beginControlFlow("run")
-            addRustStringResolution(ptrName, basePackage = basePackage)
+            addRustStringResolution(ptrName)
             addStatement("str")
             endControlFlow()
         }
@@ -417,7 +411,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
             val isObject = inner is XrossType.Object
 
             if (isObject) {
-                // Create a buffer of pointers for Object lists
+                // Objectリストはポインタ配列を作る必要があるので既存のままでOK
                 addStatement("val ${name}Seg = if ($name == null) %T.NULL else run {", MEMORY_SEGMENT)
                 indent()
                 addStatement("val seg = $arenaName.allocate(java.lang.foreign.ValueLayout.ADDRESS, $name.size.toLong())")
@@ -432,21 +426,32 @@ fun CodeBlock.Builder.addArgumentPreparation(
                 unindent()
                 addStatement("}")
             } else {
-                val kotlinType = GeneratorUtils.resolveReturnType(type, basePackage)
-                if (kotlinType.isNullable) {
-                    addStatement(
-                        "val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)",
-                        MEMORY_SEGMENT,
-                        MEMORY_SEGMENT,
-                    )
-                } else {
-                    addStatement("val ${name}Seg = %T.ofArray($name)", MEMORY_SEGMENT)
-                }
+                // プリミティブ配列 (IntArray, FloatArray等)
+                // スレッド判定を廃止し、常に安全なオフヒープコピーを実行
+                addStatement("val ${name}Seg = run {", MEMORY_SEGMENT)
+                indent()
+
+                val layoutCode = inner.layoutCode
+                val byteSize = inner.kotlinSize // または inner.byteSize
+
+                // 常に Arena を使用して Native Segment を確保
+                addStatement("val seg = $arenaName.allocate(%L, $name.size.toLong())", layoutCode)
+
+                // ヒープ(IntArray) -> ネイティブ(seg) へのバルクコピー
+                addStatement(
+                    "%T.copy(%T.ofArray($name), 0, seg, 0, $name.size.toLong() * %L)",
+                    MEMORY_SEGMENT,
+                    MEMORY_SEGMENT,
+                    byteSize,
+                )
+
+                addStatement("seg")
+                unindent()
+                addStatement("}")
             }
             callArgs.add(CodeBlock.of("${name}Seg"))
             callArgs.add(CodeBlock.of("($name?.size ?: 0).toLong()"))
         }
-
         else -> {
             val converter = GeneratorUtils.getSignedConverter(type)
             callArgs.add(CodeBlock.of("%L$converter", name))

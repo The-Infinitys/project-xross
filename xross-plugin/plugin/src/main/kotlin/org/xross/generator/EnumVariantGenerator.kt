@@ -54,7 +54,6 @@ object EnumVariantGenerator {
                             basePackage,
                             handleCall,
                             CodeBlock.of("STRUCT_SIZE"),
-                            CodeBlock.of("dropHandle"),
                             isPersistent = true,
                             handleMode = org.xross.structures.HandleMode.Normal,
                         )
@@ -97,7 +96,7 @@ object EnumVariantGenerator {
                 .addStatement("if (ptr == %T.NULL) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class.asTypeName(), "Pointer is NULL")
                 .addStatement("val outBuf = java.lang.foreign.Arena.ofAuto().allocate(%L)", FFMConstants.XROSS_STRING_LAYOUT_CODE)
                 .addStatement("getVariantNameHandle.invokeExact(outBuf, ptr)")
-                .addRustStringResolution("outBuf", "n", basePackage = basePackage)
+                .addRustStringResolution("outBuf", "n")
                 .addStatement("n")
                 .endControlFlow()
                 .build(),

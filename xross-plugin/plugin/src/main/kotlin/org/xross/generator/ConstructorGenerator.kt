@@ -45,7 +45,7 @@ object ConstructorGenerator {
             .returns(tripleType)
 
         val body = CodeBlock.builder()
-        body.addArenaAndFlag(basePackage, externalArena = CodeBlock.of("externalArena"))
+        body.addArenaAndFlag(externalArena = CodeBlock.of("externalArena"))
 
         val callArgs = mutableListOf<CodeBlock>()
         val arenaForArg = GeneratorUtils.prepareArgumentsAndArena(method, body, basePackage, callArgs, namePrefix = "argOf")
@@ -69,7 +69,6 @@ object ConstructorGenerator {
             basePackage,
             handleCall,
             CodeBlock.of("STRUCT_SIZE"),
-            CodeBlock.of("dropHandle"),
             handleMode = method.handleMode,
             externalArena = CodeBlock.of("externalArena"),
             defineArenaAndFlag = false,

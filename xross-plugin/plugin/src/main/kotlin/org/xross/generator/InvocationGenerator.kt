@@ -239,7 +239,7 @@ object InvocationGenerator {
 
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
-                body.addRustStringResolution(call, basePackage = basePackage)
+                body.addRustStringResolution(call)
                 body.addStatement("str")
                 body.endControlFlow()
             }
@@ -253,7 +253,7 @@ object InvocationGenerator {
                     .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
                 body.nextControlFlow("else")
                 val (size, drop, from) = getExprs(returnType)
-                body.addResourceConstruction(retTy, "resRaw", size, from, drop, flagType)
+                body.addResourceConstruction(retTy, "resRaw", size, from, drop)
                 body.endControlFlow().endControlFlow()
             }
 
