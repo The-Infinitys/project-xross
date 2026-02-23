@@ -27,6 +27,10 @@ constructor(
     @get:Input
     abstract val packageName: Property<String>
 
+    @get:Input
+    @get:Optional
+    abstract val useUnsignedTypes: Property<Boolean>
+
     @TaskAction
     fun execute() {
         val outDir = outputDir.get().asFile
@@ -40,6 +44,7 @@ constructor(
                 params.outputDir.set(outDir)
                 params.packageName.set(packageName)
                 params.metadataDir.set(metadataDir.get().asFile)
+                params.useUnsignedTypes.set(useUnsignedTypes.get())
             }
         }
         queue.await()

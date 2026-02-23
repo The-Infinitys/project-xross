@@ -2,12 +2,14 @@ package org.xross.generator.util
 
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import org.xross.generator.XrossGenerator
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
 import org.xross.structures.XrossThreadSafety
 import org.xross.structures.XrossType
 import java.io.File
+import java.lang.foreign.ValueLayout
 
 /**
  * Utility functions for code generation.
@@ -96,29 +98,16 @@ object GeneratorUtils {
     }
 
     /**
-     * Helper to write a [TypeSpec] to disk.
-     */
-    fun writeToDisk(
-        typeSpec: TypeSpec,
-        pkg: String,
-        name: String,
-        outputDir: File,
-    ) {
-        val fileSpec =
-            FileSpec
-                .builder(pkg, name)
-                .addType(typeSpec)
-                .indent("    ")
-                .build()
-        writeToDisk(fileSpec, outputDir)
-    }
-
-    /**
      * Builds a getter with optimistic read locking using [java.util.concurrent.locks.StampedLock].
      * Optionally wraps with XrossAsyncLock read lock.
      */
-    fun buildFullGetter(kType: TypeName, readCode: CodeBlock, useAsyncLock: Boolean = true, safety: org.xross.structures.XrossThreadSafety = org.xross.structures.XrossThreadSafety.Lock): FunSpec {
-        if (safety == org.xross.structures.XrossThreadSafety.Direct) {
+    fun buildFullGetter(
+        kType: TypeName,
+        readCode: CodeBlock,
+        useAsyncLock: Boolean = true,
+        safety: XrossThreadSafety = XrossThreadSafety.Lock,
+    ): FunSpec {
+        if (safety == XrossThreadSafety.Direct) {
             return FunSpec.getterBuilder()
                 .addStatement("var res: %T", kType)
                 .addCode(readCode)
@@ -161,8 +150,13 @@ object GeneratorUtils {
      * Builds a setter with appropriate locking based on thread safety.
      * Optionally wraps with XrossAsyncLock write lock.
      */
-    fun buildFullSetter(safety: XrossThreadSafety, kType: TypeName, writeCode: CodeBlock, useAsyncLock: Boolean = true): FunSpec {
-        if (safety == org.xross.structures.XrossThreadSafety.Direct) {
+    fun buildFullSetter(
+        safety: XrossThreadSafety,
+        kType: TypeName,
+        writeCode: CodeBlock,
+        useAsyncLock: Boolean = true,
+    ): FunSpec {
+        if (safety == XrossThreadSafety.Direct) {
             return FunSpec.setterBuilder()
                 .addParameter("v", kType)
                 .addCode(writeCode)
@@ -189,6 +183,7 @@ object GeneratorUtils {
                 } finally { this.fl.unlock() }
                 """.trimIndent()
             }
+
             XrossThreadSafety.Unsafe -> alLock
             else -> {
                 """
@@ -215,6 +210,22 @@ object GeneratorUtils {
         is XrossType.Object -> getClassName(type.signature, basePackage)
         is XrossType.Optional -> resolveReturnType(type.inner, basePackage).copy(nullable = true)
         is XrossType.Result -> ClassName("kotlin", "Result").parameterizedBy(resolveReturnType(type.ok, basePackage))
+
+        // --- ここを修正 ---
+        is XrossType.Slice, is XrossType.Vec -> {
+            val inner = if (type is XrossType.Slice) type.inner else (type as XrossType.Vec).inner
+            when (inner) {
+                is XrossType.U64, is XrossType.I64 -> LongArray::class.asTypeName()
+                is XrossType.U32, is XrossType.I32 -> IntArray::class.asTypeName()
+                is XrossType.U16, is XrossType.I16 -> ShortArray::class.asTypeName()
+                is XrossType.U8, is XrossType.I8 -> ByteArray::class.asTypeName()
+                is XrossType.F32 -> FloatArray::class.asTypeName()
+                is XrossType.F64 -> DoubleArray::class.asTypeName()
+                is XrossType.Bool -> BooleanArray::class.asTypeName()
+                else -> List::class.asClassName().parameterizedBy(resolveReturnType(inner, basePackage))
+            }
+        }
+        // -----------------
         else -> type.kotlinType
     }
 
@@ -248,9 +259,20 @@ object GeneratorUtils {
      */
     fun addLockProperties(builder: TypeSpec.Builder, basePackage: String) {
         val runtimePkg = "$basePackage.xross.runtime"
-        builder.addProperty(PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock")).addModifiers(KModifier.INTERNAL).getter(FunSpec.getterBuilder().addStatement("return lockState.sl").build()).build())
-        builder.addProperty(PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock")).addModifiers(KModifier.INTERNAL).getter(FunSpec.getterBuilder().addStatement("return lockState.fl").build()).build())
-        builder.addProperty(PropertySpec.builder("al", ClassName(runtimePkg, "XrossAsyncLock")).addModifiers(KModifier.INTERNAL).getter(FunSpec.getterBuilder().addStatement("return lockState.al").build()).build())
+        builder.addProperty(
+            PropertySpec.builder("sl", ClassName("java.util.concurrent.locks", "StampedLock"))
+                .addModifiers(KModifier.INTERNAL)
+                .getter(FunSpec.getterBuilder().addStatement("return lockState.sl").build()).build(),
+        )
+        builder.addProperty(
+            PropertySpec.builder("fl", ClassName("java.util.concurrent.locks", "ReentrantLock"))
+                .addModifiers(KModifier.INTERNAL)
+                .getter(FunSpec.getterBuilder().addStatement("return lockState.fl").build()).build(),
+        )
+        builder.addProperty(
+            PropertySpec.builder("al", ClassName(runtimePkg, "XrossAsyncLock")).addModifiers(KModifier.INTERNAL)
+                .getter(FunSpec.getterBuilder().addStatement("return lockState.al").build()).build(),
+        )
     }
 
     /**
@@ -264,7 +286,8 @@ object GeneratorUtils {
         val isSelf = targetTypeName.copy(nullable = false) == selfType
         val sizeExpr = if (isSelf) CodeBlock.of("STRUCT_SIZE") else CodeBlock.of("%T.STRUCT_SIZE", targetTypeName)
         val dropExpr = if (isSelf) CodeBlock.of(dropHandleName) else CodeBlock.of("%T.dropHandle", targetTypeName)
-        val fromPointerExpr = if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", targetTypeName)
+        val fromPointerExpr =
+            if (isSelf) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", targetTypeName)
         return Triple(sizeExpr, dropExpr, fromPointerExpr)
     }
 
@@ -279,7 +302,11 @@ object GeneratorUtils {
     /**
      * Returns an allocation expression based on the XrossType.
      */
-    fun generateAllocMsg(ty: XrossType, valueName: String, arenaName: String = "java.lang.foreign.Arena.ofAuto()"): CodeBlock = when (ty) {
+    fun generateAllocMsg(
+        ty: XrossType,
+        valueName: String,
+        arenaName: String = "java.lang.foreign.Arena.ofAuto()",
+    ): CodeBlock = when (ty) {
         is XrossType.Object -> CodeBlock.of("$valueName.segment")
         is XrossType.RustString -> CodeBlock.of("$arenaName.allocateFrom($valueName)")
         is XrossType.F32 -> CodeBlock.of("MemorySegment.ofAddress(%L.toRawBits().toLong())", valueName)
@@ -380,7 +407,12 @@ object GeneratorUtils {
      * Adds a check to ensure the object is still alive (not NULL and valid).
      */
     fun addAliveCheck(body: CodeBlock.Builder, message: String = "Access error") {
-        body.addStatement("if (this.segment == %T.NULL || !this.isValid) throw %T(%S)", MEMORY_SEGMENT, NullPointerException::class, message)
+        body.addStatement(
+            "if (this.segment == %T.NULL || !this.isValid) throw %T(%S)",
+            MEMORY_SEGMENT,
+            NullPointerException::class,
+            message,
+        )
     }
 
     /**
@@ -430,7 +462,8 @@ object GeneratorUtils {
         arenaName: String? = null,
         namePrefix: String = "",
     ): String {
-        val needsArena = args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
+        val needsArena =
+            args.any { it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
         val finalArenaName = arenaName ?: if (needsArena) "arena" else "java.lang.foreign.Arena.ofAuto()"
 
         if (needsArena && arenaName == null) {
@@ -450,5 +483,37 @@ object GeneratorUtils {
             )
         }
         return finalArenaName
+    }
+
+    fun getUnsignedConverter(retTy: XrossType): String = if (XrossGenerator.property.useUnsignedTypes) {
+        when (retTy) {
+            is XrossType.U8 -> ".toUByte()"
+            is XrossType.U16 -> ".toUShort()"
+            is XrossType.U32 -> ".toUInt()"
+            is XrossType.U64 -> ".toULong()"
+            is XrossType.USize -> getUnsignedConverter(
+                if (ValueLayout.ADDRESS.byteSize() == 8L) XrossType.U64 else XrossType.U32,
+            )
+
+            else -> ""
+        }
+    } else {
+        ""
+    }
+
+    fun getSignedConverter(ty: XrossType): String = if (XrossGenerator.property.useUnsignedTypes) {
+        when (ty) {
+            is XrossType.U8 -> ".toByte()"
+            is XrossType.U16 -> ".toShort()"
+            is XrossType.U32 -> ".toInt()"
+            is XrossType.U64 -> ".toLong()"
+            is XrossType.USize -> getSignedConverter(
+                if (ValueLayout.ADDRESS.byteSize() == 8L) XrossType.U64 else XrossType.U32,
+            )
+
+            else -> ""
+        }
+    } else {
+        ""
     }
 }

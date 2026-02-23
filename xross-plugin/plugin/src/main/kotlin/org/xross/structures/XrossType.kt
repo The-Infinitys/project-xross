@@ -3,7 +3,9 @@ package org.xross.structures
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import kotlinx.serialization.Serializable
+import org.xross.generator.XrossGenerator
 import org.xross.generator.util.FFMConstants
+import org.xross.generator.util.FFMConstants.MEMORY_SEGMENT
 
 /**
  * Represents the data types supported by Xross in Kotlin.
@@ -67,49 +69,92 @@ sealed class XrossType {
      */
     val kotlinType: TypeName
         get() = when (this) {
-            I32, U32 -> INT
-            I64, U64 -> LONG
-            ISize, USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
+            I32 -> INT
+            U32 -> if (XrossGenerator.property.useUnsignedTypes) U_INT else INT
+            I64 -> LONG
+            U64 -> if (XrossGenerator.property.useUnsignedTypes) U_LONG else LONG
+            ISize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
+            USize -> {
+                if (XrossGenerator.property.useUnsignedTypes) {
+                    if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) U_INT else U_LONG
+                } else {
+                    if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
+                }
+            }
             F32 -> FLOAT
             F64 -> DOUBLE
             Bool -> BOOLEAN
-            I8, U8 -> BYTE
+            I8 -> BYTE
+            U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE else BYTE
             I16 -> SHORT
             U16 -> CHAR
             Void -> UNIT
-            RustString -> String::class.asTypeName()
+            RustString -> STRING
+
             is Slice -> when (inner) {
-                I32 -> IntArray::class.asTypeName()
-                I64 -> LongArray::class.asTypeName()
-                F32 -> FloatArray::class.asTypeName()
-                F64 -> DoubleArray::class.asTypeName()
-                I8 -> ByteArray::class.asTypeName()
-                I16 -> ShortArray::class.asTypeName()
-                Bool -> BooleanArray::class.asTypeName()
-                else -> List::class.asClassName().parameterizedBy(inner.kotlinType)
+                I32 -> INT_ARRAY
+                U32 -> if (XrossGenerator.property.useUnsignedTypes) U_INT_ARRAY else INT_ARRAY
+                I64 -> LONG_ARRAY
+                U64 -> if (XrossGenerator.property.useUnsignedTypes) U_LONG_ARRAY else LONG_ARRAY
+                F32 -> FLOAT_ARRAY
+                F64 -> DOUBLE_ARRAY
+                I8 -> BYTE_ARRAY
+                U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE_ARRAY else BYTE_ARRAY
+                I16 -> SHORT_ARRAY
+                U16 -> CHAR_ARRAY
+                Bool -> BOOLEAN_ARRAY
+                ISize ->
+                    if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+
+                USize ->
+                    if (XrossGenerator.property.useUnsignedTypes) {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) U_INT_ARRAY else U_LONG_ARRAY
+                    } else {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+                    }
+
+                else -> LIST.parameterizedBy(inner.kotlinType)
             }
+
             is Vec -> when (inner) {
-                I32 -> IntArray::class.asTypeName()
-                I64 -> LongArray::class.asTypeName()
-                F32 -> FloatArray::class.asTypeName()
-                F64 -> DoubleArray::class.asTypeName()
-                I8, U8 -> ByteArray::class.asTypeName()
-                I16 -> ShortArray::class.asTypeName()
-                Bool -> BooleanArray::class.asTypeName()
-                else -> List::class.asClassName().parameterizedBy(inner.kotlinType)
+                I32 -> INT_ARRAY
+                U32 -> if (XrossGenerator.property.useUnsignedTypes) U_INT_ARRAY else INT_ARRAY
+                I64 -> LONG_ARRAY
+                U64 -> if (XrossGenerator.property.useUnsignedTypes) U_LONG_ARRAY else LONG_ARRAY
+                F32 -> FLOAT_ARRAY
+                F64 -> DOUBLE_ARRAY
+                I8 -> BYTE_ARRAY
+                U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE_ARRAY else BYTE_ARRAY
+                I16 -> SHORT_ARRAY
+                U16 -> CHAR_ARRAY
+                Bool -> BOOLEAN_ARRAY
+                ISize ->
+                    if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+
+                USize ->
+                    if (XrossGenerator.property.useUnsignedTypes) {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) U_INT_ARRAY else U_LONG_ARRAY
+                    } else {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+                    }
+
+                else -> LIST.parameterizedBy(inner.kotlinType)
             }
+
             is Optional -> inner.kotlinType.copy(nullable = true)
             is Result -> ok.kotlinType
             is Async -> inner.kotlinType
-            Pointer, is Object -> ClassName("java.lang.foreign", "MemorySegment")
+            Pointer, is Object -> MEMORY_SEGMENT
         }
-
     val viewClassName: String?
         get() = when (this) {
             I32, U32 -> "XrossIntArrayView"
             F64 -> "XrossDoubleArrayView"
             F32 -> "XrossFloatArrayView"
-            I64, U64, ISize, USize -> "XrossLongArrayView"
+            I64, U64 -> "XrossLongArrayView"
+            ISize, USize ->
+                if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) "XrossIntArrayView" else "XrossLongArrayView"
+
             I8, U8 -> "XrossByteArrayView"
             I16 -> "XrossShortArrayView"
             Bool -> "XrossBooleanArrayView"

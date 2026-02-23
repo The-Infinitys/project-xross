@@ -10,4 +10,5 @@ interface GenerateParameters : WorkParameters {
     val outputDir: DirectoryProperty
     val packageName: Property<String>
     val metadataDir: Property<File>
+    val useUnsignedTypes: Property<Boolean>
 }

@@ -102,10 +102,18 @@ fun CodeBlock.Builder.addResultAllocation(
     addStatement("val $targetMemoryName = $arenaName.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
     beginControlFlow("if ($valueName.isSuccess)")
     addStatement("$targetMemoryName.set(%M, 0L, 1.toByte())", FFMConstants.JAVA_BYTE)
-    addStatement("$targetMemoryName.set(%M, 8L, %L)", FFMConstants.ADDRESS, GeneratorUtils.generateAllocMsg(ty.ok, "$valueName.getOrNull()!!", arenaName))
+    addStatement(
+        "$targetMemoryName.set(%M, 8L, %L)",
+        FFMConstants.ADDRESS,
+        GeneratorUtils.generateAllocMsg(ty.ok, "$valueName.getOrNull()!!", arenaName),
+    )
     nextControlFlow("else")
     addStatement("$targetMemoryName.set(%M, 0L, 0.toByte())", FFMConstants.JAVA_BYTE)
-    addStatement("$targetMemoryName.set(%M, 8L, %T.NULL)", FFMConstants.ADDRESS, ClassName("java.lang.foreign", "MemorySegment"))
+    addStatement(
+        "$targetMemoryName.set(%M, 8L, %T.NULL)",
+        FFMConstants.ADDRESS,
+        ClassName("java.lang.foreign", "MemorySegment"),
+    )
     endControlFlow()
     return this
 }
@@ -124,6 +132,7 @@ fun CodeBlock.Builder.addRustStringResolution(
             call == "it" -> addStatement("val $resRawName = %L", call)
             call is String && (call.endsWith("Raw") || call.endsWith("Segment") || call == "resRaw") ->
                 addStatement("val $resRawName = %L", call)
+
             else -> {
                 if (call is CodeBlock || (call is String && call.contains("("))) {
                     addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
@@ -162,25 +171,34 @@ fun CodeBlock.Builder.addResultVariantResolution(
     when (type) {
         is XrossType.Object -> {
             beginControlFlow("run")
-            val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(targetTypeName, selfType, dropHandleName)
+            val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(
+                targetTypeName,
+                selfType,
+                dropHandleName,
+            )
             addResourceConstruction(type, ptrName, sizeExpr, fromPointerExpr, dropExpr, ClassName("", "UNUSED"))
             endControlFlow()
         }
+
         is XrossType.RustString -> {
             beginControlFlow("run")
             addRustStringResolution(ptrName, basePackage = basePackage)
             addStatement("str")
             endControlFlow()
         }
+
         is XrossType.F32 -> {
             add("%T.fromBits(%L.address().toInt())", Float::class, ptrName)
         }
+
         is XrossType.F64 -> {
             add("%T.fromBits(%L.address())", Double::class, ptrName)
         }
+
         is XrossType.Bool -> {
             add("%L.address() != 0L", ptrName)
         }
+
         is XrossType.Vec, is XrossType.Slice -> {
             val innerType = if (type is XrossType.Vec) type.inner else (type as XrossType.Slice).inner
             beginControlFlow("run")
@@ -201,18 +219,34 @@ fun CodeBlock.Builder.addResultVariantResolution(
             addStatement(emptyValue)
             nextControlFlow("else")
             if (innerType is XrossType.Object) {
-                val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(GeneratorUtils.getClassName(innerType.signature, basePackage), selfType)
+                val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(
+                    GeneratorUtils.getClassName(
+                        innerType.signature,
+                        basePackage,
+                    ),
+                    selfType,
+                )
                 addStatement("val ptrs = dataPtr.reinterpret(dataLen * java.lang.foreign.ValueLayout.ADDRESS.byteSize()).toArray(java.lang.foreign.ValueLayout.ADDRESS)")
                 addStatement("val list = mutableListOf<%T>()", GeneratorUtils.resolveReturnType(innerType, basePackage))
                 beginControlFlow("for (p in ptrs)")
-                addStatement("val obj = %L(p.reinterpret(%L), parent = null, isPersistent = false)", fromPointerExpr, sizeExpr)
+                addStatement(
+                    "val obj = %L(p.reinterpret(%L), parent = null, isPersistent = false)",
+                    fromPointerExpr,
+                    sizeExpr,
+                )
                 addStatement("obj.registerNativeCleaner(%L)", dropExpr)
                 addStatement("list.add(obj)")
                 endControlFlow()
                 addStatement("list")
             } else {
                 val layout = innerType.layoutMember
-                addStatement("dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)", java.lang.foreign.ValueLayout::class, layout.simpleName, java.lang.foreign.ValueLayout::class, layout.simpleName)
+                addStatement(
+                    "dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)",
+                    java.lang.foreign.ValueLayout::class,
+                    layout.simpleName,
+                    java.lang.foreign.ValueLayout::class,
+                    layout.simpleName,
+                )
             }
             endControlFlow()
             // Always free Buffer return
@@ -220,6 +254,7 @@ fun CodeBlock.Builder.addResultVariantResolution(
             addStatement("resArr")
             endControlFlow()
         }
+
         else -> {
             val kType = type.kotlinType
             if (type.kotlinSize <= 4) {
@@ -272,12 +307,26 @@ fun CodeBlock.Builder.addResultResolution(
 
     beginControlFlow("if (isOk)")
     add("val okVal = ")
-    addResultVariantResolution(ty.ok, "ptr", GeneratorUtils.resolveReturnType(ty.ok, basePackage), selfType, basePackage, dropHandleName)
+    addResultVariantResolution(
+        ty.ok,
+        "ptr",
+        GeneratorUtils.resolveReturnType(ty.ok, basePackage),
+        selfType,
+        basePackage,
+        dropHandleName,
+    )
     addStatement("Result.success(okVal)")
 
     nextControlFlow("else")
     add("val errVal = ")
-    addResultVariantResolution(ty.err, "ptr", GeneratorUtils.resolveReturnType(ty.err, basePackage), selfType, basePackage, dropHandleName)
+    addResultVariantResolution(
+        ty.err,
+        "ptr",
+        GeneratorUtils.resolveReturnType(ty.err, basePackage),
+        selfType,
+        basePackage,
+        dropHandleName,
+    )
     addStatement("Result.failure(%T(errVal))", ClassName(runtimePkg, "XrossException"))
     endControlFlow()
     endControlFlow()
@@ -337,7 +386,12 @@ fun CodeBlock.Builder.addArgumentPreparation(
                     "if ($name.segment == %T.NULL || !$name.isValid)",
                     MEMORY_SEGMENT,
                 )
-                addStatement("throw %T(%S + $name.segment + %S + $name.isValid)", NullPointerException::class.asTypeName(), "Arg invalid: segment=", ", isValid=")
+                addStatement(
+                    "throw %T(%S + $name.segment + %S + $name.isValid)",
+                    NullPointerException::class.asTypeName(),
+                    "Arg invalid: segment=",
+                    ", isValid=",
+                )
                 endControlFlow()
             }
             callArgs.add(CodeBlock.of("$name.segment"))
@@ -369,7 +423,10 @@ fun CodeBlock.Builder.addArgumentPreparation(
                 addStatement("val seg = $arenaName.allocate(java.lang.foreign.ValueLayout.ADDRESS, $name.size.toLong())")
                 beginControlFlow("for (i in $name.indices)")
                 addStatement("val obj = $name[i]")
-                addStatement("seg.setAtIndex(java.lang.foreign.ValueLayout.ADDRESS, i.toLong(), if (obj == null) %T.NULL else obj.segment)", MEMORY_SEGMENT)
+                addStatement(
+                    "seg.setAtIndex(java.lang.foreign.ValueLayout.ADDRESS, i.toLong(), if (obj == null) %T.NULL else obj.segment)",
+                    MEMORY_SEGMENT,
+                )
                 endControlFlow()
                 addStatement("seg")
                 unindent()
@@ -377,7 +434,11 @@ fun CodeBlock.Builder.addArgumentPreparation(
             } else {
                 val kotlinType = GeneratorUtils.resolveReturnType(type, basePackage)
                 if (kotlinType.isNullable) {
-                    addStatement("val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)", MEMORY_SEGMENT, MEMORY_SEGMENT)
+                    addStatement(
+                        "val ${name}Seg = if ($name == null) %T.NULL else %T.ofArray($name)",
+                        MEMORY_SEGMENT,
+                        MEMORY_SEGMENT,
+                    )
                 } else {
                     addStatement("val ${name}Seg = %T.ofArray($name)", MEMORY_SEGMENT)
                 }
@@ -386,6 +447,9 @@ fun CodeBlock.Builder.addArgumentPreparation(
             callArgs.add(CodeBlock.of("($name?.size ?: 0).toLong()"))
         }
 
-        else -> callArgs.add(CodeBlock.of("%L", name))
+        else -> {
+            val converter = GeneratorUtils.getSignedConverter(type)
+            callArgs.add(CodeBlock.of("%L$converter", name))
+        }
     }
 }

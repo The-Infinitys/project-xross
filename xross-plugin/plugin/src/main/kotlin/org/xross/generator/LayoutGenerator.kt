@@ -17,11 +17,11 @@ object LayoutGenerator {
             .addStatement("val f = parts[i].split(':')")
             .addStatement("if (f.size < 3) continue")
             .addStatement("val fName = f[0]; val fOffset = f[1].toLong(); val fSize = f[2].toLong()")
-            // 対策1: オフセット間の隙間が0より大きい場合のみパディングを追加
-            .beginControlFlow("if (fOffset > currentOffsetPos)")
-            .addStatement("layouts.add(%T.paddingLayout(fOffset - currentOffsetPos))", MEMORY_LAYOUT)
-            .addStatement("currentOffsetPos = fOffset")
+            .addStatement("val padSize = fOffset - currentOffsetPos") // サイズを計算
+            .beginControlFlow("if (padSize > 0)") // 0より大きい場合のみ作成
+            .addStatement("layouts.add(%T.paddingLayout(padSize))", MEMORY_LAYOUT)
             .endControlFlow()
+            .addStatement("currentOffsetPos = fOffset")
             .beginControlFlow("if (fName in matchedFields)")
             .addStatement("continue")
             .endControlFlow()
@@ -120,7 +120,7 @@ object LayoutGenerator {
                         init.addStatement("vLayouts.add(%L.withName(fName)%L)", field.ty.layoutCode, alignmentCode)
                         // 対策7: Enumフィールドのサイズ差分パディング
                         init.beginControlFlow("if (fSizeL > $kotlinSize)")
-                            .addStatement("layouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
+                            .addStatement("vLayouts.add(%T.paddingLayout(fSizeL - $kotlinSize))", MEMORY_LAYOUT)
                             .endControlFlow()
                     }
 

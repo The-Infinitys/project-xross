@@ -1,13 +1,16 @@
 package org.xross.generator
 
-import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.TypeName
+import com.squareup.kotlinpoet.asTypeName
 import org.xross.generator.util.*
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
+import java.lang.foreign.ValueLayout
 
 object InvocationGenerator {
-    private val VAL_LAYOUT = FFMConstants.VAL_LAYOUT
     private val ADDRESS = FFMConstants.ADDRESS
     private val MEMORY_SEGMENT = FFMConstants.MEMORY_SEGMENT
 
@@ -26,13 +29,15 @@ object InvocationGenerator {
         // Prepare list of objects to lock (including self and arguments)
         val targets = mutableListOf<LockTarget>()
         if (needsLocks && method.methodType != XrossMethodType.Static) {
-            val isMut = method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance
+            val isMut =
+                method.methodType == XrossMethodType.MutInstance || method.methodType == XrossMethodType.OwnedInstance
             targets.add(LockTarget("this", isMut, isSelf = true))
         }
         if (needsLocks) {
             method.args.forEach { arg ->
                 if (arg.ty is XrossType.Object) {
-                    val isMut = arg.ty.ownership == XrossType.Ownership.MutRef || arg.ty.ownership == XrossType.Ownership.Owned || arg.ty.ownership == XrossType.Ownership.Boxed
+                    val isMut =
+                        arg.ty.ownership == XrossType.Ownership.MutRef || arg.ty.ownership == XrossType.Ownership.Owned || arg.ty.ownership == XrossType.Ownership.Boxed
                     targets.add(LockTarget(arg.name.toCamelCase().escapeKotlinKeyword(), isMut, isSelf = false))
                 }
             }
@@ -163,8 +168,17 @@ object InvocationGenerator {
             body.addStatement("val pollFnPtr = task.get(%M, 8L)", ADDRESS)
             body.addStatement("val dropFnPtr = task.get(%M, 16L)", ADDRESS)
 
-            body.addStatement("val pollFn = linker.downcallHandle(pollFnPtr, %T.of(%L, %M))", FFMConstants.FUNCTION_DESCRIPTOR, FFMConstants.XROSS_RESULT_LAYOUT_CODE, ADDRESS)
-            body.addStatement("val dropFn = linker.downcallHandle(dropFnPtr, %T.ofVoid(%M))", FFMConstants.FUNCTION_DESCRIPTOR, ADDRESS)
+            body.addStatement(
+                "val pollFn = linker.downcallHandle(pollFnPtr, %T.of(%L, %M))",
+                FFMConstants.FUNCTION_DESCRIPTOR,
+                FFMConstants.XROSS_RESULT_LAYOUT_CODE,
+                ADDRESS,
+            )
+            body.addStatement(
+                "val dropFn = linker.downcallHandle(dropFnPtr, %T.ofVoid(%M))",
+                FFMConstants.FUNCTION_DESCRIPTOR,
+                ADDRESS,
+            )
 
             body.beginControlFlow("%T.awaitFuture(taskPtr, pollFn, dropFn)", ClassName(runtimePkg, "XrossAsync"))
             body.addResultVariantResolution(
@@ -232,7 +246,8 @@ object InvocationGenerator {
 
             is XrossType.Object -> {
                 body.beginControlFlow("run")
-                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                val callExpr =
+                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
                     .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
@@ -244,7 +259,8 @@ object InvocationGenerator {
 
             is XrossType.Optional -> {
                 body.beginControlFlow("run")
-                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                val callExpr =
+                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addOptionalResolution(retTy.inner, "resRaw", selfType, basePackage)
                 body.endControlFlow()
@@ -252,7 +268,8 @@ object InvocationGenerator {
 
             is XrossType.Result -> {
                 body.beginControlFlow("run")
-                val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                val callExpr =
+                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addResultResolution(retTy, "resRaw", selfType, basePackage)
                 body.endControlFlow()
@@ -267,9 +284,21 @@ object InvocationGenerator {
                 body.addResultVariantResolution(retTy, callExpr, returnType, selfType, basePackage)
             }
 
-            // 数値型やBooleanなどのプリミティブ型
             else -> {
-                body.addStatement("%L as %T", call, returnType)
+                val jvmType = when (retTy) {
+                    is XrossType.U8 -> Byte::class.asTypeName()
+                    is XrossType.U16 -> Short::class.asTypeName()
+                    is XrossType.U32 -> Int::class.asTypeName()
+                    is XrossType.U64 -> Long::class.asTypeName()
+                    is XrossType.USize -> if (ValueLayout.ADDRESS.byteSize() == 8L) Long::class.asTypeName() else Int::class.asTypeName()
+                    else -> returnType
+                }
+                if (jvmType != returnType) {
+                    val converter = GeneratorUtils.getUnsignedConverter(retTy)
+                    body.addStatement("((%L as %T)%L)", call, jvmType, converter)
+                } else {
+                    body.addStatement("%L as %T", call, returnType)
+                }
             }
         }
         return body.build()

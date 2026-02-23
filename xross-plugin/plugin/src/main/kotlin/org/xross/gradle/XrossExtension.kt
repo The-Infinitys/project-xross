@@ -14,6 +14,10 @@ abstract class XrossExtension {
      */
     var packageName: String = ""
 
+    /**
+     * Default export dir for generated Kotlin files.
+     */
+    var exportDir: String = "generated/source/xross/main/kotlin"
     private var customMetadataDir: String? = null
 
     /**
@@ -25,4 +29,14 @@ abstract class XrossExtension {
         set(value) {
             customMetadataDir = value
         }
+
+    /**
+     * Use Kotlin's unsigned types
+     */
+    var useUnsignedTypes: Boolean = false
+
+    /**
+     * Automatically set sources
+     */
+    var autoSrc: Boolean = true
 }

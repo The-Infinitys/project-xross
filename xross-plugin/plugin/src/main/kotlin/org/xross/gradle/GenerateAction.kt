@@ -31,6 +31,7 @@ abstract class GenerateAction : WorkAction<GenerateParameters> {
         // Generator側が内部で fullPackage.replace('.', '/') を実行している前提です
         val outputBaseDir = parameters.outputDir.get().asFile
         val resolver = TypeResolver(parameters.metadataDir.get())
+        XrossGenerator.property.useUnsignedTypes = parameters.useUnsignedTypes.get()
         XrossGenerator.generate(
             meta,
             outputBaseDir, // ここで掘り進めない
