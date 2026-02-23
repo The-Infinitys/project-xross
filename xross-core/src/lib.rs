@@ -111,12 +111,11 @@ unsafe impl Sync for XrossTask {}
 #[cfg(feature = "tokio")]
 use std::sync::LazyLock;
 #[cfg(feature = "tokio")]
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(||{
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to create Tokio runtime")
-
 });
 
 #[cfg(feature = "tokio")]
