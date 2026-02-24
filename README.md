@@ -1,7 +1,7 @@
-# Project Xross (3.1.0)
+# Project Xross (3.2.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/the-infinitys/xross)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/the-infinitys/xross)
 
 **Xross** (Cross) is a high-performance, memory-safe cross-language framework designed to dissolve the boundary between Rust and JVM (Kotlin/Java).
 
@@ -63,7 +63,7 @@ pluginManagement {
 // build.gradle.kts
 buildscript {
     repositories { maven { url = uri("https://jitpack.io") } }
-    dependencies { classpath("com.github.the-infinitys:xross:3.1.0") }
+    dependencies { classpath("com.github.the-infinitys:xross:3.2.0") }
 }
 apply(plugin = "org.xross")
 ```
@@ -72,7 +72,7 @@ apply(plugin = "org.xross")
 
 ```toml
 [dependencies]
-xross-core = "3.1.0"
+xross-core = "3.2.0"
 ```
 
 ## 🛠️ Rust and Kotlin Mapping

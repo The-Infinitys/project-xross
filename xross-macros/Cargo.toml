@@ -1,19 +1,20 @@
 [package]
 name = "xross-macros"
-version = "3.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 build = "build.rs"
+
 [lib]
 # これにより proc-macro としてコンパイルされます
 proc-macro = true
 
 [dependencies]
 serde_json.workspace = true
-xross-metadata = { path = "../xross-metadata", version = "3.1.0" }
+xross-metadata.workspace= true
 syn = { version = "2.0", features = ["full"] }
 quote = "1.0"
 heck = "0.5.0"
 proc-macro2 = "1.0.106"
 
 [dev-dependencies]
-xross-core = { path = "../xross-core", version = "3.1.0" }
+xross-core.workspace = true
