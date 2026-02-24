@@ -14,34 +14,7 @@ object RuntimeGenerator {
     private val MEMORY_SEGMENT = MemorySegment::class.asTypeName()
     private val CLEANABLE = ClassName("java.lang.ref.Cleaner", "Cleanable")
 
-    private fun TypeSpec.Builder.addBufferProperties(memorySegment: TypeName): TypeSpec.Builder = this.primaryConstructor(
-        FunSpec.constructorBuilder()
-            .addParameter("segment", memorySegment)
-            .build(),
-    )
-        .addProperty(PropertySpec.builder("segment", memorySegment).initializer("segment").build())
-        .addProperty(
-            PropertySpec.builder("cap", Long::class)
-                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 0L)").build())
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("len", Long::class)
-                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("ptr", memorySegment)
-                .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 16L)").build())
-                .build(),
-        )
-
     fun generate(outputDir: File, basePackage: String) {
-        // ... (rest of the code)
-        // I will replace the whole file generation block for XrossString and XrossStringView below.
-        // ... (rest of the code)
-        // Ensure to update toString() in XrossString as well
-        // I will do it in the next replacement for clarity if needed, or all at once.
         val pkg = if (basePackage.isEmpty()) "xross.runtime" else "$basePackage.xross.runtime"
 
         // --- XrossException ---
@@ -364,7 +337,27 @@ object RuntimeGenerator {
 
         // --- XrossString ---
         val xrossString = TypeSpec.classBuilder("XrossString")
-            .addBufferProperties(MEMORY_SEGMENT)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("segment", MEMORY_SEGMENT)
+                    .build(),
+            )
+            .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT).initializer("segment").build())
+            .addProperty(
+                PropertySpec.builder("cap", Long::class)
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 0L)")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("len", Long::class)
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("ptr", MEMORY_SEGMENT)
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.ADDRESS, 16L)")
+                    .build(),
+            )
             .addFunction(
                 FunSpec.builder("toString")
                     .addModifiers(KModifier.OVERRIDE)
@@ -384,17 +377,17 @@ object RuntimeGenerator {
             .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT).initializer("segment").build())
             .addProperty(
                 PropertySpec.builder("ptr", MEMORY_SEGMENT)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.ADDRESS, 0L)").build())
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.ADDRESS, 0L)")
                     .build(),
             )
             .addProperty(
                 PropertySpec.builder("len", Long::class)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_LONG, 8L)").build())
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)")
                     .build(),
             )
             .addProperty(
                 PropertySpec.builder("encoding", Byte::class)
-                    .getter(FunSpec.getterBuilder().addStatement("return segment.get(ValueLayout.JAVA_BYTE, 16L)").build())
+                    .initializer("segment.get(java.lang.foreign.ValueLayout.JAVA_BYTE, 16L)")
                     .build(),
             )
             .build()
@@ -416,15 +409,15 @@ object RuntimeGenerator {
             val isBool = name == "Boolean"
             val builder = TypeSpec.classBuilder(viewName)
                 .primaryConstructor(FunSpec.constructorBuilder().addParameter("segment", MEMORY_SEGMENT).build())
-                .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT).initializer("segment").build())
+                .addProperty(PropertySpec.builder("segment", MEMORY_SEGMENT, KModifier.PRIVATE).initializer("segment").build())
                 .addProperty(
                     PropertySpec.builder("size", Long::class)
-                        .getter(FunSpec.getterBuilder().addStatement("return segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)").build())
+                        .initializer("segment.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)")
                         .build(),
                 )
                 .addProperty(
                     PropertySpec.builder("ptr", MEMORY_SEGMENT, KModifier.PRIVATE)
-                        .getter(FunSpec.getterBuilder().addStatement("return segment.get(java.lang.foreign.ValueLayout.ADDRESS, 16L).reinterpret(size * %T.%L.byteSize())", java.lang.foreign.ValueLayout::class, layout).build())
+                        .initializer("segment.get(java.lang.foreign.ValueLayout.ADDRESS, 16L).reinterpret(size * %T.%L.byteSize())", java.lang.foreign.ValueLayout::class, layout)
                         .build(),
                 )
                 .addFunction(

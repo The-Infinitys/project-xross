@@ -42,7 +42,7 @@ sealed class XrossType {
     /**
      * Ownership model for bridged types.
      */
-    enum class Ownership { Owned, Boxed, Ref, MutRef }
+    enum class Ownership { Owned, Boxed, Ref, MutRef, Value }
 
     /**
      * A user-defined object type.
@@ -193,6 +193,15 @@ sealed class XrossType {
             is Async -> FFMConstants.XROSS_TASK_LAYOUT_CODE
             is Vec, is Slice -> CodeBlock.of("%M", FFMConstants.ADDRESS)
             else -> CodeBlock.of("%M", layoutMember)
+        }
+
+    val abiLayoutCode: CodeBlock
+        get() = when (this) {
+            is Object -> {
+                val className = signature.substringAfterLast('.')
+                CodeBlock.of("%N.LAYOUT", className) // Need to handle alignment here
+            }
+            else -> layoutCode
         }
 
     /**

@@ -1,4 +1,3 @@
-use crate::types::resolver::resolve_type_with_attr;
 use crate::utils::{extract_base_type, extract_inner_type, is_primitive_type};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -12,10 +11,26 @@ pub fn resolve_return_type(
     package: &str,
     type_ident: &syn::Ident,
 ) -> XrossType {
+    resolve_return_type_ext(output, attrs, package, type_ident, false)
+}
+
+pub fn resolve_return_type_ext(
+    output: &ReturnType,
+    attrs: &[Attribute],
+    package: &str,
+    type_ident: &syn::Ident,
+    force_value: bool,
+) -> XrossType {
     match output {
         ReturnType::Default => XrossType::Void,
         ReturnType::Type(_, ty) => {
-            let mut xty = resolve_type_with_attr(ty, attrs, package, Some(type_ident));
+            let mut xty = crate::types::resolver::resolve_type_with_attr_ext(
+                ty,
+                attrs,
+                package,
+                Some(type_ident),
+                force_value,
+            );
             let ownership = match &**ty {
                 Type::Reference(r) => {
                     if r.mutability.is_some() {
@@ -24,7 +39,13 @@ pub fn resolve_return_type(
                         Ownership::Ref
                     }
                 }
-                _ => Ownership::Owned,
+                _ => {
+                    if force_value {
+                        Ownership::Value
+                    } else {
+                        Ownership::Owned
+                    }
+                }
             };
             if let XrossType::Object { ownership: o, .. } = &mut xty {
                 *o = ownership;
@@ -133,7 +154,7 @@ pub fn gen_arg_conversion(
                     let inner = extract_inner_type(arg_ty);
                     quote! { let #arg_id = unsafe { Box::from_raw(#arg_id as *mut #inner) }; }
                 }
-                Ownership::Owned => {
+                Ownership::Owned | Ownership::Value => {
                     let base = extract_base_type(arg_ty);
                     // Use ptr::read instead of Box::from_raw to avoid freeing memory that might be owned by Kotlin (e.g. Pure Enums).
                     quote! { let #arg_id = unsafe { std::ptr::read(#arg_id as *const #base) }; }
@@ -254,7 +275,7 @@ pub fn gen_ret_wrapping(
                 quote! { *mut std::ffi::c_void },
                 quote! { #inner_call as *const _ as *mut std::ffi::c_void },
             ),
-            Ownership::Owned => (
+            Ownership::Owned | Ownership::Value => (
                 quote! { *mut std::ffi::c_void },
                 quote! { Box::into_raw(Box::new(#inner_call)) as *mut std::ffi::c_void },
             ),

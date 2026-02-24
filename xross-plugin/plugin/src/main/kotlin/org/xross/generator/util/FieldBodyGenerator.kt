@@ -112,36 +112,15 @@ object FieldBodyGenerator {
                 }
 
                 is XrossType.Bool -> addStatement(
-                    "res = this.segment.get(%T.JAVA_BYTE, ${ctx.offsetName}) != (0).toByte()",
-                    ValueLayout::class,
+                    "res = ${ctx.vhName}.get(this.segment, 0L) != (0).toByte()",
                 )
 
                 else -> {
-                    val layout = ty.layoutMember
                     val converter = GeneratorUtils.getUnsignedConverter(ty)
-                    val needsCast = when (ty) {
-                        is XrossType.I8, is XrossType.U8, is XrossType.I16, is XrossType.U16,
-                        is XrossType.I32, is XrossType.U32, is XrossType.I64, is XrossType.U64,
-                        is XrossType.ISize, is XrossType.USize,
-                        is XrossType.F32, is XrossType.F64,
-                        is XrossType.Pointer,
-                        -> false
-                        else -> true
-                    }
-                    if (needsCast) {
-                        addStatement(
-                            "res = this.segment.get(%T.%L, ${ctx.offsetName})$converter as %T",
-                            ValueLayout::class,
-                            layout.simpleName,
-                            ctx.kType,
-                        )
-                    } else {
-                        addStatement(
-                            "res = this.segment.get(%T.%L, ${ctx.offsetName})$converter",
-                            ValueLayout::class,
-                            layout.simpleName,
-                        )
-                    }
+                    addStatement(
+                        "res = ${ctx.vhName}.get(this.segment, 0L)$converter as %T",
+                        ctx.kType,
+                    )
                 }
             }
 
@@ -191,18 +170,13 @@ object FieldBodyGenerator {
             }
 
             is XrossType.Bool -> body.addStatement(
-                "this.segment.set(%T.JAVA_BYTE, ${ctx.offsetName}, if (v) 1.toByte() else 0.toByte())",
-                ValueLayout::class,
+                "${ctx.vhName}.set(this.segment, 0L, if (v) 1.toByte() else 0.toByte())",
             )
 
             else -> {
-                val layout = ty.layoutMember
-                // ここを getUnsignedConverter ではなく getSignedConverter に変更！
                 val signedConverter = GeneratorUtils.getSignedConverter(ty)
                 body.addStatement(
-                    "this.segment.set(%T.%L, ${ctx.offsetName}, v%L)", // . ではなく %L で連結
-                    ValueLayout::class,
-                    layout.simpleName,
+                    "${ctx.vhName}.set(this.segment, 0L, v%L)",
                     signedConverter,
                 )
             }

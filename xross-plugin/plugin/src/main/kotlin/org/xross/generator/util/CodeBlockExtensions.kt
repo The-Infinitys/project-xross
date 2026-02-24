@@ -384,20 +384,25 @@ fun CodeBlock.Builder.addArgumentPreparation(
         }
 
         is XrossType.Object -> {
-            if (checkObjectValidity) {
-                beginControlFlow(
-                    "if ($name.segment == %T.NULL || !$name.isValid)",
-                    MEMORY_SEGMENT,
-                )
-                addStatement(
-                    "throw %T(%S + $name.segment + %S + $name.isValid)",
-                    NullPointerException::class.asTypeName(),
-                    "Arg invalid: segment=",
-                    ", isValid=",
-                )
-                endControlFlow()
+            if (type.ownership == XrossType.Ownership.Value) {
+                // Pass-by-value: the argument is already a MemorySegment (struct content)
+                callArgs.add(CodeBlock.of("$name"))
+            } else {
+                if (checkObjectValidity) {
+                    beginControlFlow(
+                        "if ($name.segment == %T.NULL || !$name.isValid)",
+                        MEMORY_SEGMENT,
+                    )
+                    addStatement(
+                        "throw %T(%S + $name.segment + %S + $name.isValid)",
+                        NullPointerException::class.asTypeName(),
+                        "Arg invalid: segment=",
+                        ", isValid=",
+                    )
+                    endControlFlow()
+                }
+                callArgs.add(CodeBlock.of("$name.segment"))
             }
-            callArgs.add(CodeBlock.of("$name.segment"))
         }
 
         is XrossType.Bool -> callArgs.add(CodeBlock.of("if ($name) 1.toByte() else 0.toByte()"))

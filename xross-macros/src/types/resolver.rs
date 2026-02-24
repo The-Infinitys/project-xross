@@ -9,6 +9,16 @@ pub fn resolve_type_with_attr(
     current_pkg: &str,
     current_ident: Option<&syn::Ident>,
 ) -> XrossType {
+    resolve_type_with_attr_ext(ty, attrs, current_pkg, current_ident, false)
+}
+
+pub fn resolve_type_with_attr_ext(
+    ty: &Type,
+    attrs: &[Attribute],
+    current_pkg: &str,
+    current_ident: Option<&syn::Ident>,
+    force_value: bool,
+) -> XrossType {
     let base_ty = map_type(ty);
 
     let (inner_ty, mut ownership) = match ty {
@@ -16,7 +26,7 @@ pub fn resolve_type_with_attr(
             let ow = if r.mutability.is_some() { Ownership::MutRef } else { Ownership::Ref };
             (&*r.elem, ow)
         }
-        _ => (ty, Ownership::Owned),
+        _ => (ty, if force_value { Ownership::Value } else { Ownership::Owned }),
     };
 
     if let XrossType::Object { ownership: base_ow, .. } = &base_ty

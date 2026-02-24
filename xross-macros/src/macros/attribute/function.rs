@@ -111,11 +111,12 @@ fn impl_xross_function_attribute_ext(
                 } else {
                     "arg".into()
                 };
-                let xross_ty = crate::types::resolver::resolve_type_with_attr(
+                let xross_ty = crate::types::resolver::resolve_type_with_attr_ext(
                     &pat_type.ty,
                     &[],
                     &package_name,
                     Some(&dummy_ident),
+                    true, // force_value
                 );
                 ffi_data.args_meta.push(xross_metadata::XrossField {
                     name: arg_name,
@@ -129,7 +130,13 @@ fn impl_xross_function_attribute_ext(
             }
         }
 
-        let ret_ty = resolve_return_type(&raw.sig_output, &[], &package_name, &dummy_ident);
+        let ret_ty = crate::codegen::ffi::resolve_return_type_ext(
+            &raw.sig_output,
+            &[],
+            &package_name,
+            &dummy_ident,
+            true, // force_value
+        );
 
         crate::utils::register_xross_function_ext(
             &package_name,

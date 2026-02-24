@@ -6,6 +6,7 @@ import org.xross.generator.util.GeneratorUtils
 import org.xross.helper.StringHelper.escapeKotlinKeyword
 import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.*
+import java.lang.foreign.SegmentAllocator
 import java.lang.foreign.ValueLayout
 
 /**
@@ -73,18 +74,22 @@ object MethodGenerator {
                 )
             }
 
+            val isPanicable = method.handleMode is HandleMode.Panicable
+            val isComplexRet =
+                method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
+
             if (method.isRaw) {
                 // Generate the raw private method first
                 val rawKotlinName = "raw${method.name.toCamelCase().replaceFirstChar { it.uppercase() }}"
-                val isPanicable = method.handleMode is HandleMode.Panicable
-                val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
-                val actualReturnType = if (isPanicable) MEMORY_SEGMENT else returnType
+                val isValueRet = method.ret is XrossType.Object && method.ret.ownership == XrossType.Ownership.Value
+                val actualReturnType = if (isPanicable || isValueRet) MEMORY_SEGMENT else returnType
                 val rawFunBuilder = FunSpec.builder(rawKotlinName).returns(actualReturnType).addModifiers(KModifier.PRIVATE)
                 if (method.isAsync) rawFunBuilder.addModifiers(KModifier.SUSPEND)
                 method.args.forEach { arg ->
+                    val kType = if (arg.ty is XrossType.Object && arg.ty.ownership == XrossType.Ownership.Value) MEMORY_SEGMENT else GeneratorUtils.resolveReturnType(arg.ty, basePackage)
                     rawFunBuilder.addParameter(
                         arg.name.toCamelCase().escapeKotlinKeyword(),
-                        GeneratorUtils.resolveReturnType(arg.ty, basePackage),
+                        kType,
                     )
                 }
 
@@ -101,12 +106,48 @@ object MethodGenerator {
                 if (method.methodType != XrossMethodType.Static) callArgs.add(CodeBlock.of("currentSegment"))
                 val argPrep = CodeBlock.builder()
                 val needsArena = method.args.any { it.ty is XrossType.Vec || it.ty is XrossType.Slice || it.ty is XrossType.RustString || it.ty is XrossType.Optional || it.ty is XrossType.Result }
-                val forceConfined = isComplexRet || isPanicable || needsArena
+
+                // Use ofAuto for returns to ensure the segment stays alive for the user
+                val forceConfined = isComplexRet || isPanicable || isValueRet || needsArena
+                val arenaName = if (isPanicable || isValueRet) "java.lang.foreign.Arena.ofAuto()" else "arena"
                 val arenaForArg = if (forceConfined) {
-                    argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
-                    GeneratorUtils.prepareArgumentsAndArena(method.args, method.handleMode, argPrep, basePackage, callArgs, checkObjectValidity = true, arenaName = "arena")
+                    if (isPanicable || isValueRet) {
+                        // Use ofAuto, no .use block needed for the return value itself
+                        GeneratorUtils.prepareArgumentsAndArena(
+                            method.args,
+                            method.handleMode,
+                            argPrep,
+                            basePackage,
+                            callArgs,
+                            checkObjectValidity = true,
+                            arenaName = arenaName,
+                            skipValidityCheckForValueTypes = true,
+                        )
+                        arenaName
+                    } else {
+                        argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
+                        GeneratorUtils.prepareArgumentsAndArena(
+                            method.args,
+                            method.handleMode,
+                            argPrep,
+                            basePackage,
+                            callArgs,
+                            checkObjectValidity = true,
+                            arenaName = "arena",
+                            skipValidityCheckForValueTypes = true,
+                        )
+                        "arena"
+                    }
                 } else {
-                    GeneratorUtils.prepareArgumentsAndArena(method, argPrep, basePackage, callArgs, checkObjectValidity = true)
+                    GeneratorUtils.prepareArgumentsAndArena(
+                        method.args,
+                        method.handleMode,
+                        argPrep,
+                        basePackage,
+                        callArgs,
+                        checkObjectValidity = true,
+                        skipValidityCheckForValueTypes = true,
+                    )
                     null
                 }
                 val handleName = "${method.name.toCamelCase()}Handle"
@@ -118,6 +159,11 @@ object MethodGenerator {
                     pArgs.addAll(callArgs)
                     argPrep.addStatement("%L.invokeExact(%L)", handleName, pArgs.joinToCode(", "))
                     argPrep.addStatement("outBuf")
+                } else if (isValueRet) {
+                    // Return by value: invokeExact requires a SegmentAllocator as the first argument
+                    val pArgs = mutableListOf(CodeBlock.of("(%L as %T)", arenaForArg, SegmentAllocator::class.asTypeName()))
+                    pArgs.addAll(callArgs)
+                    argPrep.addStatement("(%L.invokeExact(%L) as %T)", handleName, pArgs.joinToCode(", "), MEMORY_SEGMENT)
                 } else if (isComplexRet) {
                     argPrep.addStatement("val outBuf = %L.allocate(%L)", arenaForArg, FFMConstants.XROSS_STRING_LAYOUT_CODE)
                     val pArgs = mutableListOf(CodeBlock.of("outBuf"))
@@ -134,7 +180,7 @@ object MethodGenerator {
                 }
 
                 rawBody.add(argPrep.build())
-                if (needsArena || forceConfined) rawBody.endControlFlow()
+                if (needsArena || (forceConfined && !(isPanicable || isValueRet))) rawBody.endControlFlow()
                 rawBody.nextControlFlow("catch (e: Throwable)")
                 rawBody.addStatement("if (e is %T) throw e", ClassName("$basePackage.xross.runtime", "XrossException"))
                 rawBody.addStatement("throw %T(e)", RuntimeException::class.asTypeName())
@@ -147,9 +193,10 @@ object MethodGenerator {
                 val wrapperFunBuilder = FunSpec.builder(kotlinName).returns(actualReturnType)
                 if (method.isAsync) wrapperFunBuilder.addModifiers(KModifier.SUSPEND)
                 method.args.forEach { arg ->
+                    val kType = if (arg.ty is XrossType.Object && arg.ty.ownership == XrossType.Ownership.Value) MEMORY_SEGMENT else GeneratorUtils.resolveReturnType(arg.ty, basePackage)
                     wrapperFunBuilder.addParameter(
                         arg.name.toCamelCase().escapeKotlinKeyword(),
-                        GeneratorUtils.resolveReturnType(arg.ty, basePackage),
+                        kType,
                     )
                 }
                 val argNames = method.args.joinToString(", ") { it.name.toCamelCase().escapeKotlinKeyword() }
@@ -184,9 +231,6 @@ object MethodGenerator {
                     it.ty is XrossType.Result
             }
 
-            val isPanicable = method.handleMode is HandleMode.Panicable
-            val isComplexRet =
-                method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
             val forceConfined = isComplexRet || isPanicable || needsArena
             val arenaForArg = if (forceConfined) {
                 argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")

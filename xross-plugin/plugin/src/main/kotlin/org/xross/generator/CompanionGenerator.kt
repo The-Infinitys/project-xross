@@ -46,9 +46,17 @@ object CompanionGenerator {
                 .addStatement("this.STRUCT_SIZE = parts[0].toLong()")
 
             when (meta) {
-                is XrossDefinition.Struct -> LayoutGenerator.buildStructLayoutInit(init, meta)
-                is XrossDefinition.Enum -> LayoutGenerator.buildEnumLayoutInit(init, meta)
-                is XrossDefinition.Opaque -> {}
+                is XrossDefinition.Struct -> {
+                    LayoutGenerator.buildStructLayoutInit(init, meta)
+                    LayoutGenerator.buildStructAbiLayoutInit(init, meta)
+                }
+                is XrossDefinition.Enum -> {
+                    LayoutGenerator.buildEnumLayoutInit(init, meta)
+                    init.addStatement("this.ABI_LAYOUT = this.LAYOUT") // Enums by value not yet fully supported
+                }
+                is XrossDefinition.Opaque -> {
+                    init.addStatement("this.ABI_LAYOUT = this.LAYOUT")
+                }
             }
 
             init.beginControlFlow("if (layoutRaw != %T.NULL)", MEMORY_SEGMENT)
@@ -101,7 +109,9 @@ object CompanionGenerator {
                     val baseCamel = field.name.toCamelCase()
                     addPropertyHandles(handles, field, baseCamel)
 
-                    builder.addProperty(PropertySpec.builder("VH_$baseCamel", VH_TYPE, KModifier.INTERNAL, KModifier.LATEINIT).mutable().build())
+                    if (field.ty.isPrimitive) {
+                        builder.addProperty(PropertySpec.builder("VH_$baseCamel", VH_TYPE, KModifier.INTERNAL, KModifier.LATEINIT).mutable().build())
+                    }
                     builder.addProperty(PropertySpec.builder("OFFSET_$baseCamel", Long::class.asTypeName(), KModifier.INTERNAL).mutable().initializer("0L").build())
                 }
             }
@@ -115,7 +125,7 @@ object CompanionGenerator {
                         val combinedName = "${v.name}_$baseCamel"
                         addPropertyHandles(handles, f, combinedName)
 
-                        if (!(f.ty is XrossType.Object && f.ty.ownership == XrossType.Ownership.Owned)) {
+                        if (f.ty.isPrimitive) {
                             builder.addProperty(PropertySpec.builder("VH_$combinedName", VH_TYPE, KModifier.INTERNAL, KModifier.LATEINIT).mutable().build())
                         }
                         builder.addProperty(PropertySpec.builder("OFFSET_$combinedName", Long::class.asTypeName(), KModifier.INTERNAL).mutable().initializer("0L").build())
@@ -139,6 +149,7 @@ object CompanionGenerator {
 
         if (meta !is XrossDefinition.Function) {
             builder.addProperty(PropertySpec.builder("LAYOUT", LAYOUT_TYPE, KModifier.INTERNAL).mutable().initializer("%T.structLayout()", MEMORY_LAYOUT).build())
+            builder.addProperty(PropertySpec.builder("ABI_LAYOUT", LAYOUT_TYPE, KModifier.INTERNAL).mutable().initializer("%T.structLayout()", MEMORY_LAYOUT).build())
             builder.addProperty(PropertySpec.builder("STRUCT_SIZE", Long::class.asTypeName(), KModifier.INTERNAL).mutable().initializer("0L").build())
         }
     }

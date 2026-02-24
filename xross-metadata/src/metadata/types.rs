@@ -11,6 +11,8 @@ pub enum Ownership {
     Ref,
     /// Mutable reference (&mut T).
     MutRef,
+    /// Passed or returned by value (C-style struct copy).
+    Value,
 }
 
 /// Represents the data types supported by the Xross bridge.

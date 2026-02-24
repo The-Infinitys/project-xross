@@ -73,8 +73,19 @@ object HandleResolver {
                     layouts.add(CodeBlock.of("%M", JAVA_LONG)) // len
                 }
 
+                is XrossType.Object -> {
+                    if (field.ty.ownership == XrossType.Ownership.Value) {
+                        // Pass by value: use the class's ABI_LAYOUT
+                        val className = field.ty.signature.substringAfterLast('.')
+                        layouts.add(CodeBlock.of("%N.ABI_LAYOUT", className))
+                    } else {
+                        layouts.add(CodeBlock.of("%M", ADDRESS))
+                    }
+                }
+
                 else -> {
-                    layouts.add(layoutCode)
+                    // Use natural layout for ABI compatibility
+                    layouts.add(CodeBlock.of("%M", field.ty.layoutMember))
                 }
             }
         }
@@ -91,7 +102,12 @@ object HandleResolver {
                 allArgs.addAll(argLayouts)
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, allArgs.joinToCode(", "))
             } else {
-                val retLayout = CodeBlock.of("%M", ADDRESS)
+                val retLayout = if (method.ret is XrossType.Object && method.ret.ownership == XrossType.Ownership.Value) {
+                    val className = method.ret.signature.substringAfterLast('.')
+                    CodeBlock.of("%N.ABI_LAYOUT", className)
+                } else {
+                    CodeBlock.of("%M", ADDRESS)
+                }
                 if (argLayouts.isEmpty()) {
                     CodeBlock.of("%T.of(%L)", FUNCTION_DESCRIPTOR, retLayout)
                 } else {
@@ -265,7 +281,13 @@ object HandleResolver {
                 CodeBlock.of("%T.ofVoid(%L)", FUNCTION_DESCRIPTOR, allArgs.joinToCode(", "))
             } else {
                 val argsPart = if (args.isEmpty()) CodeBlock.of("") else CodeBlock.of(", %L", args.joinToCode(", "))
-                val retLayout = method.ret.layoutCode
+                val retLayout = if (method.ret is XrossType.Object && method.ret.ownership == XrossType.Ownership.Value) {
+                    val className = method.ret.signature.substringAfterLast('.')
+                    CodeBlock.of("%N.ABI_LAYOUT", className)
+                } else {
+                    // Use natural layout for return value
+                    CodeBlock.of("%M", method.ret.layoutMember)
+                }
                 CodeBlock.of("%T.of(%L%L)", FUNCTION_DESCRIPTOR, retLayout, argsPart)
             }
 

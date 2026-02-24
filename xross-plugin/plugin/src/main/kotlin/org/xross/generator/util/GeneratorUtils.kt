@@ -461,6 +461,7 @@ object GeneratorUtils {
         checkObjectValidity: Boolean = false,
         arenaName: String? = null,
         namePrefix: String = "",
+        skipValidityCheckForValueTypes: Boolean = false,
     ): String {
         // 修正: 実際に Arena が必要な型のみをリストアップ
         val needsArena = args.any {
@@ -479,11 +480,12 @@ object GeneratorUtils {
 
         args.forEach { arg ->
             val name = (namePrefix + arg.name.toCamelCase()).escapeKotlinKeyword()
+            val isValueType = arg.ty is XrossType.Object && arg.ty.ownership == XrossType.Ownership.Value
             body.addArgumentPreparation(
                 arg.ty,
                 name,
                 callArgs,
-                checkObjectValidity = checkObjectValidity,
+                checkObjectValidity = checkObjectValidity && !(skipValidityCheckForValueTypes && isValueType),
                 basePackage = basePackage,
                 handleMode = handleMode,
                 arenaName = finalArenaName,

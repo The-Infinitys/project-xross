@@ -1,5 +1,15 @@
 use xross_core::{XrossClass, xross_methods};
 
+#[derive(XrossClass, Clone, Copy, Debug)]
+#[xross_package("fast")]
+#[repr(C)]
+pub struct Point {
+    #[xross_field]
+    pub x: i32,
+    #[xross_field]
+    pub y: i32,
+}
+
 #[derive(XrossClass)]
 #[xross_package("fast")]
 #[repr(C)]
@@ -29,5 +39,16 @@ impl FastStruct {
     }]
     pub fn add_raw(&self, a: i32, b: i32) -> i32 {
         a + b
+    }
+
+    #[xross_raw_method {
+        sig = (p: Point) -> Point;
+        import = |p| { p };
+        export = |res| { res };
+    }]
+    pub fn move_point_raw(&self, mut p: Point) -> Point {
+        p.x += 10;
+        p.y += 20;
+        p
     }
 }

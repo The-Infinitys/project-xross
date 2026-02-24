@@ -166,8 +166,23 @@ fun executeRawMethodTest(silent: Boolean = false) {
     } catch (e: Throwable) {
         if (!silent) println("Caught expected panic from raw function: ${e.message}")
     }
-}
 
+    // 5. Test Pass-by-Value Struct
+    java.lang.foreign.Arena.ofConfined().use { arena ->
+        val p = arena.allocate(org.example.fast.Point.LAYOUT)
+        p.set(java.lang.foreign.ValueLayout.JAVA_INT, 0L, 5)
+        p.set(java.lang.foreign.ValueLayout.JAVA_INT, 4L, 10)
+
+        val fs2 = org.example.fast.FastStruct(0, "")
+        val resP = fs2.movePointRaw(p)
+
+        val rx = resP.get(java.lang.foreign.ValueLayout.JAVA_INT, 0L)
+        val ry = resP.get(java.lang.foreign.ValueLayout.JAVA_INT, 4L)
+        if (!silent) println("Raw Point Value result: x=$rx, y=$ry")
+        assert(rx == 15 && ry == 30) { "Raw struct pass-by-value failed!" }
+        fs2.close()
+    }
+}
 fun executeAllTypesTest(silent: Boolean = false) {
     val t = AllTypesTest()
 
