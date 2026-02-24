@@ -1,7 +1,8 @@
 use std::ffi::c_void;
 
 pub use xross_macros::{
-    XrossClass, xross_class, xross_function, xross_function_dsl, xross_methods,
+    XrossClass, xross_class, xross_function, xross_function_dsl, xross_methods, xross_raw_function,
+    xross_raw_method,
 };
 
 #[cfg(feature = "xross-alloc")]

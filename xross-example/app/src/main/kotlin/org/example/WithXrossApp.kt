@@ -26,6 +26,7 @@ fun main() {
 
         executeMemoryLeakTest()
         println("\n--- Running Stability Test ---")
+        executeRawMethodTest()
         executePrimitiveTypeTest()
         executeReferenceAndOwnershipTest()
         executeConcurrencyTest()
@@ -135,6 +136,36 @@ fun executeFastStructTest(silent: Boolean = false) {
     val count = fs.countChars("Zero Copy")
     if (!silent) println("FastStruct count: $count")
     fs.close()
+}
+
+fun executeRawMethodTest(silent: Boolean = false) {
+    // 1. Test Raw Method
+    val fs = org.example.fast.FastStruct(10, "Fast")
+    val resMethod = fs.addRaw(100, 200)
+    if (!silent) println("Raw Method result: $resMethod")
+    assert(resMethod == 300) { "Raw method addRaw failed!" }
+    fs.close()
+
+    // 2. Test Raw Function
+    val resFunc = org.example.standalone.RawGlobalAdd.rawGlobalAdd(1000, 2000)
+    if (!silent) println("Raw Function result: $resFunc")
+    assert(resFunc == 3000) { "Raw function rawGlobalAdd failed!" }
+
+    // 3. Test Critical Raw Function
+    val resCrit = org.example.standalone.RawGlobalAddCritical.rawGlobalAddCritical(10, 20)
+    if (!silent) println("Raw Critical Function result: $resCrit")
+    assert(resCrit == 30) { "Raw critical function failed!" }
+
+    // 4. Test Panicable Raw Function
+    try {
+        org.example.standalone.RawGlobalPanic.rawGlobalPanic(0.toByte())
+        if (!silent) println("Raw Panicable Function (Safe) success")
+
+        org.example.standalone.RawGlobalPanic.rawGlobalPanic(1.toByte())
+        assert(false) { "Raw panicable function should have panicked!" }
+    } catch (e: Throwable) {
+        if (!silent) println("Caught expected panic from raw function: ${e.message}")
+    }
 }
 
 fun executeAllTypesTest(silent: Boolean = false) {

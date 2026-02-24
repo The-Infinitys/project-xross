@@ -35,6 +35,19 @@ pub fn xross_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     macros::attribute::impl_xross_function_attribute(attr.into(), input_fn).into()
 }
 
+/// Attribute macro for raw methods.
+#[proc_macro_attribute]
+pub fn xross_raw_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Attribute macro for raw standalone functions.
+#[proc_macro_attribute]
+pub fn xross_raw_function(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_fn = parse_macro_input!(item as syn::ItemFn);
+    macros::attribute::function::impl_xross_raw_function_attribute(attr.into(), input_fn).into()
+}
+
 /// Macro to define standalone functions in a DSL.
 #[proc_macro]
 pub fn xross_function_dsl(input: TokenStream) -> TokenStream {

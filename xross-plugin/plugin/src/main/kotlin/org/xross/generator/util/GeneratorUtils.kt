@@ -462,14 +462,13 @@ object GeneratorUtils {
         arenaName: String? = null,
         namePrefix: String = "",
     ): String {
-        // 修正: Vec と Slice も Arena を必須とする（オフヒープコピーのため）
+        // 修正: 実際に Arena が必要な型のみをリストアップ
         val needsArena = args.any {
             it.ty is XrossType.RustString ||
                 it.ty is XrossType.Optional ||
                 it.ty is XrossType.Result ||
                 it.ty is XrossType.Vec ||
-                // 追加
-                it.ty is XrossType.Slice // 追加
+                it.ty is XrossType.Slice
         }
 
         val finalArenaName = arenaName ?: if (needsArena) "arena" else "java.lang.foreign.Arena.ofAuto()"

@@ -47,6 +47,8 @@ pub fn extract_handle_mode(attrs: &[Attribute]) -> HandleMode {
         if path.is_ident("xross_method")
             || path.is_ident("xross_new")
             || path.is_ident("xross_default")
+            || path.is_ident("xross_raw_method")
+            || path.is_ident("xross_raw_function")
             || path.is_ident("xross")
         {
             let _ = attr.parse_nested_meta(|meta| {

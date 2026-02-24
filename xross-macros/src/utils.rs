@@ -28,6 +28,28 @@ pub fn register_xross_function(
     ret_ty: &xross_metadata::XrossType,
     docs: Vec<String>,
 ) {
+    register_xross_function_ext(
+        package_name,
+        name_str,
+        ffi_data,
+        handle_mode,
+        safety,
+        ret_ty,
+        docs,
+        false,
+    )
+}
+
+pub fn register_xross_function_ext(
+    package_name: &str,
+    name_str: &str,
+    ffi_data: &crate::codegen::ffi::MethodFfiData,
+    handle_mode: HandleMode,
+    safety: ThreadSafety,
+    ret_ty: &xross_metadata::XrossType,
+    docs: Vec<String>,
+    is_raw: bool,
+) {
     use crate::metadata::save_definition;
     use xross_metadata::{XrossDefinition, XrossMethod};
 
@@ -39,6 +61,7 @@ pub fn register_xross_function(
         safety,
         is_constructor: false,
         is_default: false,
+        is_raw,
         is_async: ffi_data.is_async,
         args: ffi_data.args_meta.clone(),
         ret: ret_ty.clone(),

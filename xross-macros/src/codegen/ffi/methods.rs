@@ -201,6 +201,7 @@ pub fn add_clone_method(
         handle_mode,
         is_constructor: false,
         is_default: false,
+        is_raw: false,
         is_async: false,
         args: vec![],
         ret: XrossType::Object {
@@ -220,6 +221,7 @@ pub fn add_drop_method(methods: &mut Vec<XrossMethod>, symbol_base: &str, handle
         handle_mode,
         is_constructor: false,
         is_default: false,
+        is_raw: false,
         is_async: false,
         args: vec![],
         ret: XrossType::Void,

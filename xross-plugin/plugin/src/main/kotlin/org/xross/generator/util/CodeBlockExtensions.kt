@@ -128,7 +128,14 @@ fun CodeBlock.Builder.addRustStringResolution(
                 addStatement("val $resRawName = %L", call)
 
             else -> {
-                if (call is CodeBlock || (call is String && call.contains("("))) {
+                if (call is CodeBlock) {
+                    val callStr = call.toString()
+                    if (callStr.contains(" as MemorySegment") || callStr == "outBuf" || callStr == "outPanic") {
+                        addStatement("val $resRawName = %L", call)
+                    } else {
+                        addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
+                    }
+                } else if (call is String && call.contains("(")) {
                     addStatement("val $resRawName = %L as %T", call, MEMORY_SEGMENT)
                 } else {
                     addStatement("val $resRawName = %L", call)
@@ -251,7 +258,9 @@ fun CodeBlock.Builder.addResultVariantResolution(
 
         else -> {
             val kType = type.kotlinType
-            if (type.kotlinSize <= 4) {
+            if (kType == MEMORY_SEGMENT) {
+                add("%L", ptrName)
+            } else if (type.kotlinSize <= 4) {
                 if (kType == INT) {
                     add("%L.address().toInt()", ptrName)
                 } else {

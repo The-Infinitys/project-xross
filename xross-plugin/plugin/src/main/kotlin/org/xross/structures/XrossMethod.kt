@@ -13,6 +13,7 @@ data class XrossMethod(
     val handleMode: HandleMode = HandleMode.Normal,
     val isConstructor: Boolean,
     val isDefault: Boolean = false,
+    val isRaw: Boolean = false,
     val isAsync: Boolean = false,
     val args: List<XrossField>,
     val ret: XrossType,

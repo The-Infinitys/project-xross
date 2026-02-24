@@ -23,6 +23,41 @@ pub fn global_greet(name: String) -> String {
 }
 
 #[xross_function(package = "standalone")]
+#[xross_raw_function {
+    sig = (a: i32, b: i32) -> i32;
+    import = |a, b| { (a, b) };
+    export = |res| { res };
+}]
+pub fn raw_global_add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[xross_function(package = "standalone")]
+#[xross_raw_function {
+    sig = (a: i32, b: i32) -> i32;
+    import = |a, b| { (a, b) };
+    export = |res| { res };
+    critical;
+}]
+pub fn raw_global_add_critical(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[xross_function(package = "standalone")]
+#[xross_raw_function {
+    sig = (should_panic: u8) -> *mut xross_core::XrossString;
+    import = |should_panic| { should_panic };
+    export = |res| { res };
+    panicable;
+}]
+pub fn raw_global_panic(should_panic: u8) -> *mut xross_core::XrossString {
+    if should_panic != 0 {
+        panic!("Intentional panic from raw function!");
+    }
+    Box::into_raw(Box::new(xross_core::XrossString::from("Safe".to_string())))
+}
+
+#[xross_function(package = "standalone")]
 pub fn test_unsigned(a: u8, b: u32, c: u64) -> u64 {
     (a as u64) + (b as u64) + c
 }

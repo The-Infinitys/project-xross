@@ -196,7 +196,7 @@ object InvocationGenerator {
 
         if (isPanicable) {
             body.beginControlFlow("run")
-            val callExpr = if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+            val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
             body.addStatement("val resRaw = %L", callExpr)
             body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
             body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)
@@ -239,7 +239,8 @@ object InvocationGenerator {
 
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
-                body.addRustStringResolution(call)
+                val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                body.addRustStringResolution(callExpr)
                 body.addStatement("str")
                 body.endControlFlow()
             }
@@ -247,7 +248,7 @@ object InvocationGenerator {
             is XrossType.Object -> {
                 body.beginControlFlow("run")
                 val callExpr =
-                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
                     .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
@@ -260,7 +261,7 @@ object InvocationGenerator {
             is XrossType.Optional -> {
                 body.beginControlFlow("run")
                 val callExpr =
-                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addOptionalResolution(retTy.inner, "resRaw", selfType, basePackage)
                 body.endControlFlow()
@@ -269,14 +270,14 @@ object InvocationGenerator {
             is XrossType.Result -> {
                 body.beginControlFlow("run")
                 val callExpr =
-                    if (call.toString() == "outPanic") call else CodeBlock.of("%L as %T", call, MEMORY_SEGMENT)
+                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addResultResolution(retTy, "resRaw", selfType, basePackage)
                 body.endControlFlow()
             }
 
             is XrossType.Vec, is XrossType.Slice -> {
-                val callExpr = if (call.toString() == "outPanic") {
+                val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") {
                     call
                 } else {
                     CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
@@ -297,7 +298,11 @@ object InvocationGenerator {
                     val converter = GeneratorUtils.getUnsignedConverter(retTy)
                     body.addStatement("((%L as %T)%L)", call, jvmType, converter)
                 } else {
-                    body.addStatement("%L as %T", call, returnType)
+                    if (returnType == MEMORY_SEGMENT) {
+                        body.addStatement("(%L as %T)", call, MEMORY_SEGMENT)
+                    } else {
+                        body.addStatement("(%L as %T)", call, returnType)
+                    }
                 }
             }
         }

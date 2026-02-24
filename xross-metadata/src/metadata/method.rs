@@ -21,6 +21,9 @@ pub struct XrossMethod {
     pub is_constructor: bool,
     /// Whether this method is the default constructor.
     pub is_default: bool,
+    /// Whether this method is a raw method (user-defined FFI).
+    #[serde(default)]
+    pub is_raw: bool,
     /// Whether this method is asynchronous.
     pub is_async: bool,
     /// Arguments of the method.

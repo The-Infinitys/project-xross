@@ -21,4 +21,13 @@ impl FastStruct {
     pub fn count_chars(&self, s: String) -> i32 {
         s.chars().count() as i32
     }
+
+    #[xross_raw_method {
+        sig = (a: i32, b: i32) -> i32;
+        import = |a, b| { (a, b) };
+        export = |res| { res };
+    }]
+    pub fn add_raw(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
 }
