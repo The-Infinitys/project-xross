@@ -112,15 +112,21 @@ object FieldBodyGenerator {
                 }
 
                 is XrossType.Bool -> addStatement(
-                    "res = ${ctx.vhName}.get(this.segment, 0L) != (0).toByte()",
+                    "res = ((${ctx.vhName}.get(this.segment, 0L) as Byte) != (0).toByte())",
                 )
 
                 else -> {
                     val converter = GeneratorUtils.getUnsignedConverter(ty)
-                    addStatement(
-                        "res = ${ctx.vhName}.get(this.segment, 0L)$converter as %T",
-                        ctx.kType,
-                    )
+                    if (converter.startsWith(" as")) {
+                        addStatement(
+                            "res = (${ctx.vhName}.get(this.segment, 0L)$converter",
+                        )
+                    } else {
+                        addStatement(
+                            "res = ${ctx.vhName}.get(this.segment, 0L)$converter as %T",
+                            ctx.kType,
+                        )
+                    }
                 }
             }
 

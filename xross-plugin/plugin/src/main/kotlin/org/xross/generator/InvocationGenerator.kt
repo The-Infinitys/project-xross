@@ -296,7 +296,12 @@ object InvocationGenerator {
                 }
                 if (jvmType != returnType) {
                     val converter = GeneratorUtils.getUnsignedConverter(retTy)
-                    body.addStatement("((%L as %T)%L)", call, jvmType, converter)
+                    if (converter.startsWith(" as")) {
+                        // converter already contains " as Primitive).toUnsigned()"
+                        body.addStatement("((%L as %T)$converter", call, jvmType)
+                    } else {
+                        body.addStatement("((%L as %T)%L)", call, jvmType, converter)
+                    }
                 } else {
                     if (returnType == MEMORY_SEGMENT) {
                         body.addStatement("(%L as %T)", call, MEMORY_SEGMENT)

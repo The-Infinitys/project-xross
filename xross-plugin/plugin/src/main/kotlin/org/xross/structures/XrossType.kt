@@ -87,7 +87,7 @@ sealed class XrossType {
             I8 -> BYTE
             U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE else BYTE
             I16 -> SHORT
-            U16 -> CHAR
+            U16 -> if (XrossGenerator.property.useUnsignedTypes) U_SHORT else SHORT
             Void -> UNIT
             RustString -> STRING
 
@@ -101,7 +101,7 @@ sealed class XrossType {
                 I8 -> BYTE_ARRAY
                 U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE_ARRAY else BYTE_ARRAY
                 I16 -> SHORT_ARRAY
-                U16 -> CHAR_ARRAY
+                U16 -> if (XrossGenerator.property.useUnsignedTypes) U_SHORT_ARRAY else SHORT_ARRAY
                 Bool -> BOOLEAN_ARRAY
                 ISize ->
                     if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
@@ -126,7 +126,7 @@ sealed class XrossType {
                 I8 -> BYTE_ARRAY
                 U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE_ARRAY else BYTE_ARRAY
                 I16 -> SHORT_ARRAY
-                U16 -> CHAR_ARRAY
+                U16 -> if (XrossGenerator.property.useUnsignedTypes) U_SHORT_ARRAY else SHORT_ARRAY
                 Bool -> BOOLEAN_ARRAY
                 ISize ->
                     if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
@@ -156,7 +156,7 @@ sealed class XrossType {
                 if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) "XrossIntArrayView" else "XrossLongArrayView"
 
             I8, U8 -> "XrossByteArrayView"
-            I16 -> "XrossShortArrayView"
+            I16, U16 -> "XrossShortArrayView"
             Bool -> "XrossBooleanArrayView"
             else -> null
         }
@@ -173,8 +173,7 @@ sealed class XrossType {
             F64 -> FFMConstants.JAVA_DOUBLE
             Bool -> FFMConstants.JAVA_BYTE
             I8, U8 -> FFMConstants.JAVA_BYTE
-            I16 -> FFMConstants.JAVA_SHORT
-            U16 -> FFMConstants.JAVA_CHAR
+            I16, U16 -> FFMConstants.JAVA_SHORT
             Void -> throw IllegalStateException("Void has no layout")
             is Slice, is Vec -> FFMConstants.ADDRESS
             else -> FFMConstants.ADDRESS
@@ -235,3 +234,12 @@ sealed class XrossType {
             else -> 8L
         }
 }
+
+private val U_BYTE = ClassName("kotlin", "UByte")
+private val U_SHORT = ClassName("kotlin", "UShort")
+private val U_INT = ClassName("kotlin", "UInt")
+private val U_LONG = ClassName("kotlin", "ULong")
+private val U_BYTE_ARRAY = ClassName("kotlin", "UByteArray")
+private val U_SHORT_ARRAY = ClassName("kotlin", "UShortArray")
+private val U_INT_ARRAY = ClassName("kotlin", "UIntArray")
+private val U_LONG_ARRAY = ClassName("kotlin", "ULongArray")

@@ -495,13 +495,13 @@ object GeneratorUtils {
     }
     fun getUnsignedConverter(retTy: XrossType): String = if (XrossGenerator.property.useUnsignedTypes) {
         when (retTy) {
-            is XrossType.U8 -> ".toUByte()"
-            is XrossType.U16 -> ".toUShort()"
-            is XrossType.U32 -> ".toUInt()"
-            is XrossType.U64 -> ".toULong()"
-            is XrossType.USize -> getUnsignedConverter(
-                if (ValueLayout.ADDRESS.byteSize() == 8L) XrossType.U64 else XrossType.U32,
-            )
+            is XrossType.U8 -> " as Byte).toUByte()"
+            is XrossType.U16 -> " as Short).toUShort()"
+            is XrossType.U32 -> " as Int).toUInt()"
+            is XrossType.U64 -> " as Long).toULong()"
+            is XrossType.USize -> {
+                if (ValueLayout.ADDRESS.byteSize() == 8L) " as Long).toULong()" else " as Int).toUInt()"
+            }
 
             else -> ""
         }
