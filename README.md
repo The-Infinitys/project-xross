@@ -196,6 +196,28 @@ Using `#[xross_function]`, you can bind global functions that do not belong to a
 ### 🔎 Opaque Types
 Using `#[xross_core::opaque_class]`, you can safely pass pointers to Kotlin while hiding Rust-side details.
 
+### 🛠️ Advanced FFI Control
+For cases where the default conversion logic is insufficient, you can use `#[xross_raw_method]` and `#[xross_raw_function]` to manually define the FFI boundary.
+
+*   **Custom Signatures**: Manually specify FFI-compatible types (`sig`).
+*   **Manual Conversion**: Define `import` and `export` closures to bridge FFI types and Rust types.
+*   **Optimization**: Bypass high-level abstractions for extreme performance.
+*   **Panic Safety**: Use `panicable` to safely catch Rust panics at the FFI boundary.
+
+**Example:**
+```rust
+#[xross_raw_method {
+    sig = (p: Point) -> Point;
+    import = |p| { p };
+    export = |res| { res };
+}]
+pub fn move_point_raw(&self, mut p: Point) -> Point {
+    p.x += 10;
+    p.y += 20;
+    p
+}
+```
+
 ## 🛡️ Best Practices
 
 1.  **Ownership Awareness**: Objects returned as `Owned` must be released using a `use` block or by calling `close()`.

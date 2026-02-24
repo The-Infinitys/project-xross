@@ -196,6 +196,28 @@ Rust の `enum` は Kotlin の `sealed class` として生成され、`when` 式
 ### 🔎 不透明型 (Opaque Types)
 `#[xross_core::opaque_class]` を使用することで、Rust 側の詳細を隠蔽したまま Kotlin へポインタを安全に渡すことができます。
 
+### 🛠️ 高度な FFI 制御 (Advanced FFI Control)
+デフォルトの自動変換ロジックでは不十分な場合、`#[xross_raw_method]` や `#[xross_raw_function]` を使用して FFI 境界を詳細に定義できます。
+
+*   **カスタムシグネチャ**: FFI 互換の型 (`sig`) を手動で指定。
+*   **手動変換**: `import` と `export` クロージャを定義し、FFI 型と Rust 型の橋渡しを記述。
+*   **最適化**: 高レベルの抽象化をバイパスし、極限のパフォーマンスを追求。
+*   **パニック耐性**: `panicable` を使用して、FFI 境界で Rust のパニックを安全に捕捉。
+
+**例:**
+```rust
+#[xross_raw_method {
+    sig = (p: Point) -> Point;
+    import = |p| { p };
+    export = |res| { res };
+}]
+pub fn move_point_raw(&self, mut p: Point) -> Point {
+    p.x += 10;
+    p.y += 20;
+    p
+}
+```
+
 ## 🛡️ ベストプラクティス
 
 1.  **所有権の意識**: `Owned` として返されたオブジェクトは必ず `use` ブロックまたは `close()` で解放してください。
