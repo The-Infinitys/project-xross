@@ -7,6 +7,16 @@ pub fn map_type(ty: &syn::Type) -> XrossType {
 
         Type::Slice(s) => XrossType::Slice(Box::new(map_type(&s.elem))),
 
+        Type::Array(a) => {
+            let inner = Box::new(map_type(&a.elem));
+            let len = if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(lit), .. }) = &a.len {
+                lit.base10_parse::<usize>().unwrap_or(0)
+            } else {
+                0
+            };
+            XrossType::Array { inner, len }
+        }
+
         Type::Path(TypePath { path, .. }) => {
             let last_segment = path.segments.last().unwrap();
             let last_ident = last_segment.ident.to_string();

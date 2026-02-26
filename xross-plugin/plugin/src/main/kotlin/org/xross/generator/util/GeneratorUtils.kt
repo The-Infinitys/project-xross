@@ -211,9 +211,12 @@ object GeneratorUtils {
         is XrossType.Optional -> resolveReturnType(type.inner, basePackage).copy(nullable = true)
         is XrossType.Result -> ClassName("kotlin", "Result").parameterizedBy(resolveReturnType(type.ok, basePackage))
 
-        // --- ここを修正 ---
-        is XrossType.Slice, is XrossType.Vec -> {
-            val inner = if (type is XrossType.Slice) type.inner else (type as XrossType.Vec).inner
+        is XrossType.Slice, is XrossType.Vec, is XrossType.Array -> {
+            val inner = when (type) {
+                is XrossType.Slice -> type.inner
+                is XrossType.Vec -> type.inner
+                is XrossType.Array -> type.inner
+            }
             when (inner) {
                 is XrossType.U64, is XrossType.I64 -> LongArray::class.asTypeName()
                 is XrossType.U32, is XrossType.I32 -> IntArray::class.asTypeName()
@@ -305,7 +308,7 @@ object GeneratorUtils {
     fun generateAllocMsg(
         ty: XrossType,
         valueName: String,
-        arenaName: String = "java.lang.foreign.Arena.ofAuto()",
+        arenaName: String = "(java.lang.foreign.Arena.ofConfined() as java.lang.foreign.SegmentAllocator)",
     ): CodeBlock = when (ty) {
         is XrossType.Object -> CodeBlock.of("$valueName.segment")
         is XrossType.RustString -> CodeBlock.of("$arenaName.allocateFrom($valueName)")
@@ -469,13 +472,17 @@ object GeneratorUtils {
                 it.ty is XrossType.Optional ||
                 it.ty is XrossType.Result ||
                 it.ty is XrossType.Vec ||
-                it.ty is XrossType.Slice
+                it.ty is XrossType.Slice ||
+                it.ty is XrossType.Array
         }
 
-        val finalArenaName = arenaName ?: if (needsArena) "arena" else "java.lang.foreign.Arena.ofAuto()"
-
-        if (needsArena && arenaName == null) {
+        val finalArenaName = if (arenaName != null) {
+            arenaName
+        } else if (needsArena) {
             body.beginControlFlow("%T.ofConfined().use { arena ->", ARENA)
+            "arena"
+        } else {
+            "(java.lang.foreign.Arena.ofConfined() as java.lang.foreign.SegmentAllocator)"
         }
 
         args.forEach { arg ->

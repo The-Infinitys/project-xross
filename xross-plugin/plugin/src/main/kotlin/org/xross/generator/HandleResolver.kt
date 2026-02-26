@@ -67,9 +67,9 @@ object HandleResolver {
                     layouts.add(CodeBlock.of("%M", JAVA_BYTE)) // encoding
                 }
 
-                is XrossType.Slice, is XrossType.Vec -> {
-                    // Vec and Slice arguments need ptr and len
-                    layouts.add(layoutCode) // ptr (critical or normal ADDRESS)
+                is XrossType.Slice, is XrossType.Vec, is XrossType.Array -> {
+                    // Vec, Slice and Array arguments need ptr and len
+                    layouts.add(CodeBlock.of("%M", ADDRESS)) // Always ADDRESS for pointer
                     layouts.add(CodeBlock.of("%M", JAVA_LONG)) // len
                 }
 
@@ -270,7 +270,7 @@ object HandleResolver {
             if (method.methodType != XrossMethodType.Static) args.add(CodeBlock.of("%M", ADDRESS))
             args.addAll(getArgLayouts(method.handleMode, method.args))
 
-            val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
+            val isComplexRet = method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice || method.ret is XrossType.Array
 
             val isPanicable = method.handleMode is HandleMode.Panicable
             val desc = if (method.ret is XrossType.Void && !method.isAsync && !isPanicable) {

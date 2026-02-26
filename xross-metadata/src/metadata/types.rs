@@ -54,6 +54,13 @@ pub enum XrossType {
     Slice(Box<XrossType>),
     /// An owned vector of values (Vec<T>).
     Vec(Box<XrossType>),
+    /// A fixed-size array ([T; N]).
+    Array {
+        /// Type of the elements.
+        inner: Box<XrossType>,
+        /// Number of elements.
+        len: usize,
+    },
     /// A user-defined object type.
     Object {
         /// Unique signature of the object type.

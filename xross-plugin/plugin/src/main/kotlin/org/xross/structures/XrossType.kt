@@ -40,6 +40,11 @@ sealed class XrossType {
     data class Vec(val inner: XrossType) : XrossType()
 
     /**
+     * A fixed-size array ([T; N]).
+     */
+    data class Array(val inner: XrossType, val len: Long) : XrossType()
+
+    /**
      * Ownership model for bridged types.
      */
     enum class Ownership { Owned, Boxed, Ref, MutRef, Value }
@@ -141,6 +146,31 @@ sealed class XrossType {
                 else -> LIST.parameterizedBy(inner.kotlinType)
             }
 
+            is Array -> when (inner) {
+                I32 -> INT_ARRAY
+                U32 -> if (XrossGenerator.property.useUnsignedTypes) U_INT_ARRAY else INT_ARRAY
+                I64 -> LONG_ARRAY
+                U64 -> if (XrossGenerator.property.useUnsignedTypes) U_LONG_ARRAY else LONG_ARRAY
+                F32 -> FLOAT_ARRAY
+                F64 -> DOUBLE_ARRAY
+                I8 -> BYTE_ARRAY
+                U8 -> if (XrossGenerator.property.useUnsignedTypes) U_BYTE_ARRAY else BYTE_ARRAY
+                I16 -> SHORT_ARRAY
+                U16 -> if (XrossGenerator.property.useUnsignedTypes) U_SHORT_ARRAY else SHORT_ARRAY
+                Bool -> BOOLEAN_ARRAY
+                ISize ->
+                    if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+
+                USize ->
+                    if (XrossGenerator.property.useUnsignedTypes) {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) U_INT_ARRAY else U_LONG_ARRAY
+                    } else {
+                        if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT_ARRAY else LONG_ARRAY
+                    }
+
+                else -> LIST.parameterizedBy(inner.kotlinType)
+            }
+
             is Optional -> inner.kotlinType.copy(nullable = true)
             is Result -> ok.kotlinType
             is Async -> inner.kotlinType
@@ -158,6 +188,7 @@ sealed class XrossType {
             I8, U8 -> "XrossByteArrayView"
             I16, U16 -> "XrossShortArrayView"
             Bool -> "XrossBooleanArrayView"
+            is Array -> inner.viewClassName
             else -> null
         }
 
@@ -175,13 +206,13 @@ sealed class XrossType {
             I8, U8 -> FFMConstants.JAVA_BYTE
             I16, U16 -> FFMConstants.JAVA_SHORT
             Void -> throw IllegalStateException("Void has no layout")
-            is Slice, is Vec -> FFMConstants.ADDRESS
+            is Slice, is Vec, is Array -> FFMConstants.ADDRESS
             else -> FFMConstants.ADDRESS
         }
 
     val layoutCodeCritical: CodeBlock
         get() = when (this) {
-            is Vec, is Slice -> CodeBlock.of("%M", FFMConstants.CRITICAL_MEMORY_SEGMENT)
+            is Vec, is Slice, is Array -> CodeBlock.of("%M", FFMConstants.CRITICAL_MEMORY_SEGMENT)
             else -> layoutCode
         }
 
@@ -191,6 +222,7 @@ sealed class XrossType {
             is RustString -> FFMConstants.XROSS_STRING_LAYOUT_CODE
             is Async -> FFMConstants.XROSS_TASK_LAYOUT_CODE
             is Vec, is Slice -> CodeBlock.of("%M", FFMConstants.ADDRESS)
+            is Array -> CodeBlock.of("%T.sequenceLayout(%L, %L)", FFMConstants.MEMORY_LAYOUT, len, inner.layoutCode)
             else -> CodeBlock.of("%M", layoutMember)
         }
 
@@ -200,6 +232,7 @@ sealed class XrossType {
                 val className = signature.substringAfterLast('.')
                 CodeBlock.of("%N.LAYOUT", className) // Need to handle alignment here
             }
+            is Array -> layoutCode
             else -> layoutCode
         }
 
@@ -209,24 +242,27 @@ sealed class XrossType {
     val isOwned: Boolean
         get() = when (this) {
             is Object -> ownership == Ownership.Owned || ownership == Ownership.Boxed
-            is Result, is Async, is Vec -> true
+            is Result, is Async, is Vec, is Array -> true
             else -> false
         }
 
-    val isComplex: Boolean get() = this is Object || this is Optional || this is Result || this is RustString || this is Async || this is Slice || this is Vec
+    val isComplex: Boolean get() = this is Object || this is Optional || this is Result || this is RustString || this is Async || this is Slice || this is Vec || this is Array
     val isPrimitive: Boolean get() = !isComplex
 
     /**
      * Returns the size in bytes for the primitive type.
      */
-    val kotlinSize
+    val kotlinSize: Long
         get() = when (this) {
             is I32, is U32, is F32 -> 4L
-            is I64, is U64, is F64, is Pointer, is RustString -> 8L
+            is I64, is U64, is F64, is Pointer -> 8L
+            is RustString -> 24L
             is ISize, is USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) 4L else 8L
             is Result -> 16L
             is Async -> 24L
-            is Slice, is Vec -> 16L
+            is Slice -> 16L
+            is Vec -> 24L
+            is Array -> inner.kotlinSize * len
             is Object -> 8L
             is Bool, is I8, is U8 -> 1L
             is I16, is U16 -> 2L

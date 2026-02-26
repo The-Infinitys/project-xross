@@ -174,7 +174,7 @@ object EnumVariantGenerator {
                 val backingFields = mutableListOf<String>()
                 variant.fields.forEach { field ->
                     val baseCamelName = field.name.toCamelCase()
-                    val isPrimitive = field.ty !is XrossType.Object && field.ty !is XrossType.Optional && field.ty !is XrossType.Result
+                    val isPrimitive = field.ty.isPrimitive
                     val combinedName = "${variant.name}_$baseCamelName"
                     val vhName = if (isPrimitive) "VH_$combinedName" else "null"
                     val offsetName = "OFFSET_$combinedName"

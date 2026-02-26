@@ -13,9 +13,10 @@ object LayoutGenerator {
         init.addStatement("val layouts = mutableListOf<%T>()", MEMORY_LAYOUT)
         init.addStatement("var currentPos = 0L")
 
-        init.beginControlFlow("for (i in 1 until parts.size)")
-            .addStatement("val f = parts[i].split(':')")
-            .addStatement("if (f.size < 3) continue")
+        // Parse and sort fields by offset to handle Rust field reordering
+        init.addStatement("val fieldParts = parts.drop(1).map { it.split(':') }.filter { it.size >= 3 }.sortedBy { it[1].toLong() }")
+
+        init.beginControlFlow("for (f in fieldParts)")
             .addStatement("val fName = f[0]; val fOffset = f[1].toLong(); val fSize = f[2].toLong()")
             .addStatement("val pad = fOffset - currentPos")
             .beginControlFlow("if (pad > 0)")
@@ -76,9 +77,8 @@ object LayoutGenerator {
         init.addStatement("var abiOffsetPos = 0L")
 
         init.beginControlFlow("try")
-        init.beginControlFlow("for (i in 1 until parts.size)")
-            .addStatement("val f = parts[i].split(':')")
-            .addStatement("if (f.size < 3) continue")
+        init.addStatement("val abiFieldParts = parts.drop(1).map { it.split(':') }.filter { it.size >= 3 }.sortedBy { it[1].toLong() }")
+        init.beginControlFlow("for (f in abiFieldParts)")
             .addStatement("val fName = f[0]; val fOffset = f[1].toLong(); val fSize = f[2].toLong()")
             .addStatement("val padSize = fOffset - abiOffsetPos")
             .beginControlFlow("if (padSize > 0)")

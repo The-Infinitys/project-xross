@@ -276,7 +276,7 @@ object InvocationGenerator {
                 body.endControlFlow()
             }
 
-            is XrossType.Vec, is XrossType.Slice -> {
+            is XrossType.Vec, is XrossType.Slice, is XrossType.Array -> {
                 val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") {
                     call
                 } else {

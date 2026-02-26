@@ -2,6 +2,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod all_types;
+pub mod arrays;
 pub mod counters;
 pub mod enums;
 pub mod fast;
@@ -12,6 +13,7 @@ pub mod services;
 pub mod standalone;
 
 pub use all_types::*;
+pub use arrays::*;
 pub use counters::*;
 pub use enums::*;
 pub use fast::*;

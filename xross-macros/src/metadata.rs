@@ -55,15 +55,7 @@ pub fn save_definition(def: &XrossDefinition) {
     let signature = def.signature();
     let path = get_path_by_signature(signature);
 
-    let mut final_def = def.clone();
-
-    // Deduplicate methods before saving
-    match &mut final_def {
-        XrossDefinition::Struct(s) => deduplicate_methods(&mut s.methods),
-        XrossDefinition::Enum(e) => deduplicate_methods(&mut e.methods),
-        XrossDefinition::Opaque(o) => deduplicate_methods(&mut o.methods),
-        XrossDefinition::Function(_) => {}
-    }
+    let final_def = def.clone();
 
     if path.exists()
         && let Ok(existing_content) = fs::read_to_string(&path)
@@ -80,19 +72,6 @@ pub fn save_definition(def: &XrossDefinition) {
     if let Ok(json) = serde_json::to_string(&final_def) {
         fs::write(&path, json).ok();
     }
-}
-
-fn deduplicate_methods(methods: &mut Vec<xross_metadata::XrossMethod>) {
-    let mut seen = std::collections::HashSet::new();
-    methods.retain(|m| {
-        let key = (m.name.clone(), m.symbol.clone());
-        if seen.contains(&key) {
-            false
-        } else {
-            seen.insert(key);
-            true
-        }
-    });
 }
 
 /// Checks if two definitions are structurally compatible.

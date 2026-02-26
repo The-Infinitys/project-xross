@@ -93,7 +93,7 @@ fun CodeBlock.Builder.addResultAllocation(
     ty: XrossType.Result,
     valueName: String,
     targetMemoryName: String,
-    arenaName: String = "java.lang.foreign.Arena.ofAuto()",
+    arenaName: String = "java.lang.foreign.Arena.ofConfined()",
 ): CodeBlock.Builder {
     addStatement("val $targetMemoryName = $arenaName.allocate(%L)", FFMConstants.XROSS_RESULT_LAYOUT_CODE)
     beginControlFlow("if ($valueName.isSuccess)")
@@ -108,7 +108,7 @@ fun CodeBlock.Builder.addResultAllocation(
     addStatement(
         "$targetMemoryName.set(%M, 8L, %T.NULL)",
         FFMConstants.ADDRESS,
-        ClassName("java.lang.foreign", "MemorySegment"),
+        java.lang.foreign.MemorySegment::class.asTypeName(),
     )
     endControlFlow()
     return this
@@ -183,7 +183,8 @@ fun CodeBlock.Builder.addResultVariantResolution(
 
         is XrossType.RustString -> {
             beginControlFlow("run")
-            addRustStringResolution(ptrName)
+            addStatement("val strRaw = (%L as %T).reinterpret(24)", ptrName, MEMORY_SEGMENT)
+            addRustStringResolution("strRaw")
             addStatement("str")
             endControlFlow()
         }
@@ -200,8 +201,12 @@ fun CodeBlock.Builder.addResultVariantResolution(
             add("%L.address() != 0L", ptrName)
         }
 
-        is XrossType.Vec, is XrossType.Slice -> {
-            val innerType = if (type is XrossType.Vec) type.inner else (type as XrossType.Slice).inner
+        is XrossType.Vec, is XrossType.Slice, is XrossType.Array -> {
+            val innerType = when (type) {
+                is XrossType.Vec -> type.inner
+                is XrossType.Slice -> type.inner
+                is XrossType.Array -> type.inner
+            }
             beginControlFlow("run")
             addStatement("val dataCap = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 0L)", ptrName)
             addStatement("val dataLen = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)", ptrName)
@@ -420,8 +425,12 @@ fun CodeBlock.Builder.addArgumentPreparation(
             callArgs.add(CodeBlock.of("${name}Memory"))
         }
 
-        is XrossType.Slice, is XrossType.Vec -> {
-            val inner = if (type is XrossType.Slice) type.inner else (type as XrossType.Vec).inner
+        is XrossType.Slice, is XrossType.Vec, is XrossType.Array -> {
+            val inner = when (type) {
+                is XrossType.Slice -> type.inner
+                is XrossType.Vec -> type.inner
+                is XrossType.Array -> type.inner
+            }
             val isObject = inner is XrossType.Object
 
             if (isObject) {

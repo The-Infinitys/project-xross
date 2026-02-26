@@ -63,8 +63,10 @@ pub fn write_ffi_function(
     let c_args = &ffi_data.c_args;
     let conv_logic = &ffi_data.conversion_logic;
 
-    let is_complex_ret =
-        matches!(ret_ty, XrossType::String | XrossType::Vec(_) | XrossType::Slice(_));
+    let is_complex_ret = matches!(
+        ret_ty,
+        XrossType::String | XrossType::Vec(_) | XrossType::Slice(_) | XrossType::Array { .. }
+    );
 
     if handle_mode == HandleMode::Panicable {
         let is_already_result = matches!(ret_ty, XrossType::Result { .. });
@@ -88,7 +90,10 @@ pub fn write_ffi_function(
                 | XrossType::Bool => {
                     quote! { val as usize as *mut std::ffi::c_void }
                 }
-                XrossType::String | XrossType::Vec(_) | XrossType::Slice(_) => {
+                XrossType::String
+                | XrossType::Vec(_)
+                | XrossType::Slice(_)
+                | XrossType::Array { .. } => {
                     quote! { Box::into_raw(Box::new(val)) as *mut std::ffi::c_void }
                 }
                 _ => quote! { val as *mut std::ffi::c_void },

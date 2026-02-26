@@ -191,7 +191,7 @@ fun executeAllTypesTest(silent: Boolean = false) {
     t.i8 = 10
     t.u8 = 20
     t.i16 = 30
-    t.u16 = 'A'
+    t.u16 = 'A'.code.toShort()
     t.i32 = 40
     t.u32 = 50
     t.i64 = 60
@@ -223,20 +223,20 @@ fun executeAllTypesTest(silent: Boolean = false) {
         assert(t.node.id == 500) { "Mutable reference modification failed!" }
         assert(t.optI == 42) { "Option passing failed!" }
 
-        println("Primitives - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8}, i16: ${t.i16}, u16: ${t.u16.code}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
+        println("Primitives - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8}, i16: ${t.i16}, u16: ${t.u16}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
 
         t.b = true
         t.i8 = 127
         t.u8 = 255.toByte()
         t.i16 = 32767
-        t.u16 = '\uFFFF'
+        t.u16 = 0xFFFF.toShort()
         t.i64 = Long.MAX_VALUE
         t.f32 = 3.14f
         t.f64 = 2.71828
         t.isize = -123
         t.usize = 456
 
-        println("After Update - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8.toInt() and 0xFF}, i16: ${t.i16}, u16: ${t.u16.code}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
+        println("After Update - b: ${t.b}, i8: ${t.i8}, u8: ${t.u8.toInt() and 0xFF}, i16: ${t.i16}, u16: ${t.u16}, i64: ${t.i64}, f32: ${t.f32}, f64: ${t.f64}, isize: ${t.isize}, usize: ${t.usize}")
     }
 
     t.close()

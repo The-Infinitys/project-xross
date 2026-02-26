@@ -115,6 +115,15 @@ object FieldBodyGenerator {
                     "res = ((${ctx.vhName}.get(this.segment, 0L) as Byte) != (0).toByte())",
                 )
 
+                is XrossType.Array -> {
+                    val inner = ty.inner
+                    val layout = inner.layoutMember
+                    val byteSize = ty.len * inner.kotlinSize
+                    val arrayType = ctx.kType
+                    addStatement("val slice = this.segment.asSlice(${ctx.offsetName}, $byteSize)")
+                    addStatement("res = slice.toArray(%T.%L)", ValueLayout::class, layout.simpleName)
+                }
+
                 else -> {
                     val converter = GeneratorUtils.getUnsignedConverter(ty)
                     if (converter.startsWith(" as")) {
@@ -178,6 +187,13 @@ object FieldBodyGenerator {
             is XrossType.Bool -> body.addStatement(
                 "${ctx.vhName}.set(this.segment, 0L, if (v) 1.toByte() else 0.toByte())",
             )
+
+            is XrossType.Array -> {
+                val inner = ty.inner
+                val byteSize = ty.len * inner.kotlinSize
+                body.addStatement("val slice = this.segment.asSlice(${ctx.offsetName}, $byteSize)")
+                body.addStatement("%T.copy(%T.ofArray(v), 0, slice, 0, $byteSize)", MemorySegment::class, MemorySegment::class)
+            }
 
             else -> {
                 val signedConverter = GeneratorUtils.getSignedConverter(ty)

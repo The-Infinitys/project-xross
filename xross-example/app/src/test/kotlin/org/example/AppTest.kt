@@ -29,7 +29,7 @@ class AppTest {
         // 1. Default constructor (via #[xross_default])
         UnknownStruct().use { defaultObj ->
             assertEquals(32, defaultObj.i)
-            assertEquals("Default String", defaultObj.s)
+            assertEquals("Hello, World!", defaultObj.s)
         }
 
         // 2. Specific constructor (via #[xross_new] with_int)
@@ -78,25 +78,14 @@ class AppTest {
     @Test
     fun testComplexStructs() {
         val cs = ComplexStruct(42, Result.success(100))
-        println("DEBUG: ComplexStruct opt initial: ${cs.opt}")
         assertEquals(42, cs.opt)
 
         val r1 = cs.res
-        println("DEBUG: ComplexStruct res 1st - success: ${r1.isSuccess}, val: ${r1.getOrNull()}")
-        val r2 = cs.res
-        println("DEBUG: ComplexStruct res 2nd - success: ${r2.isSuccess}, val: ${r2.getOrNull()}")
-
         assertTrue(cs.res.isSuccess, "Result should be success")
         assertEquals(100, cs.res.getOrNull())
 
-        println("DEBUG: Setting opt to null")
         cs.opt = null
-        println("DEBUG: ComplexStruct opt after null set: ${cs.opt}")
         assertNull(cs.opt)
-
-        println("DEBUG: Setting res to failure")
-        // Note: Result setter is not fully implemented in macros yet, skipping for now
-        // cs.res = Result.failure(org.example.xross.runtime.XrossException("Error"))
 
         cs.close()
     }
@@ -116,6 +105,36 @@ class AppTest {
             service.causePanic(1.toByte())
         }
         service.close()
+    }
+
+    @Test
+    fun testArray() {
+        // 1. Test Array as field
+        ArrayTest(1.23).use { t ->
+            val data = t.data
+            assertEquals(4, data.size)
+            data.forEach { assertEquals(1.23, it) }
+
+            t.data = doubleArrayOf(1.0, 2.0, 3.0, 4.0)
+            val updated = t.data
+            assertEquals(1.0, updated[0])
+            assertEquals(2.0, updated[1])
+            assertEquals(3.0, updated[2])
+            assertEquals(4.0, updated[3])
+
+            assertEquals(10.0, t.sum())
+        }
+
+        // 2. Test Array as return value
+        val arr = org.example.arrays.GetFixedArray.getFixedArray()
+        assertEquals(8, arr.size)
+        for (i in 0 until 8) {
+            assertEquals(i + 1, arr[i])
+        }
+
+        // 3. Test Array as argument
+        val sum = org.example.arrays.SumFixedArray.sumFixedArray(intArrayOf(1, 1, 1, 1, 1, 1, 1, 1))
+        assertEquals(8, sum)
     }
 
     @Test

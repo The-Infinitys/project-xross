@@ -76,7 +76,7 @@ object MethodGenerator {
 
             val isPanicable = method.handleMode is HandleMode.Panicable
             val isComplexRet =
-                method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice
+                method.ret is XrossType.RustString || method.isAsync || method.ret is XrossType.Vec || method.ret is XrossType.Slice || method.ret is XrossType.Array
 
             if (method.isRaw) {
                 // Generate the raw private method first
@@ -226,12 +226,13 @@ object MethodGenerator {
             val needsArena = method.args.any {
                 it.ty is XrossType.Vec ||
                     it.ty is XrossType.Slice ||
+                    it.ty is XrossType.Array ||
                     it.ty is XrossType.RustString ||
                     it.ty is XrossType.Optional ||
                     it.ty is XrossType.Result
             }
 
-            val forceConfined = isComplexRet || isPanicable || needsArena
+            val forceConfined = needsArena
             val arenaForArg = if (forceConfined) {
                 argPrep.beginControlFlow("java.lang.foreign.Arena.ofConfined().use { arena ->")
                 GeneratorUtils.prepareArgumentsAndArena(
@@ -243,6 +244,7 @@ object MethodGenerator {
                     checkObjectValidity = true,
                     arenaName = "arena",
                 )
+                "arena"
             } else {
                 // Arena が不要な単純な primitive のみの場合
                 GeneratorUtils.prepareArgumentsAndArena(
@@ -252,7 +254,7 @@ object MethodGenerator {
                     callArgs,
                     checkObjectValidity = true,
                 )
-                null
+                "(java.lang.foreign.Arena.ofConfined() as java.lang.foreign.SegmentAllocator)"
             }
             val handleName = "${method.name.toCamelCase()}Handle"
             val call = if (isComplexRet || isPanicable) {
@@ -260,7 +262,7 @@ object MethodGenerator {
                     FFMConstants.XROSS_RESULT_LAYOUT_CODE
                 } else if (method.isAsync) {
                     FFMConstants.XROSS_TASK_LAYOUT_CODE
-                } else if (method.ret is XrossType.RustString || method.ret is XrossType.Vec || method.ret is XrossType.Slice) {
+                } else if (method.ret is XrossType.RustString || method.ret is XrossType.Vec || method.ret is XrossType.Slice || method.ret is XrossType.Array) {
                     FFMConstants.XROSS_STRING_LAYOUT_CODE
                 } else {
                     method.ret.layoutCode
@@ -281,7 +283,7 @@ object MethodGenerator {
             body.add(argPrep.build())
             body.add(InvocationGenerator.applyMethodCall(method, call, returnType, selfType, basePackage, meta = meta))
 
-            if (needsArena || forceConfined) body.endControlFlow()
+            if (needsArena) body.endControlFlow()
             body.nextControlFlow("catch (e: Throwable)")
             val xrossException = ClassName("$basePackage.xross.runtime", "XrossException")
             body.addStatement("if (e is %T) throw e", xrossException)
@@ -296,8 +298,12 @@ object MethodGenerator {
             }
 
             // --- Generate Zero-Copy View Method ---
-            if (method.ret is XrossType.Vec || method.ret is XrossType.Slice) {
-                val inner = if (method.ret is XrossType.Vec) method.ret.inner else (method.ret as XrossType.Slice).inner
+            if (method.ret is XrossType.Vec || method.ret is XrossType.Slice || method.ret is XrossType.Array) {
+                val inner = when (method.ret) {
+                    is XrossType.Vec -> method.ret.inner
+                    is XrossType.Slice -> method.ret.inner
+                    is XrossType.Array -> method.ret.inner
+                }
                 val viewName = inner.viewClassName
                 if (viewName != null) {
                     val viewClass = ClassName("$basePackage.xross.runtime", viewName)

@@ -7,7 +7,6 @@ import org.xross.helper.StringHelper.toCamelCase
 import org.xross.structures.XrossDefinition
 import org.xross.structures.XrossField
 import org.xross.structures.XrossThreadSafety
-import org.xross.structures.XrossType
 
 object PropertyGenerator {
 
@@ -17,7 +16,7 @@ object PropertyGenerator {
         meta.fields.forEach { field ->
             val baseName = field.name.toCamelCase()
             val escapedName = baseName.escapeKotlinKeyword()
-            val isPrimitive = field.ty !is XrossType.Object && field.ty !is XrossType.Optional && field.ty !is XrossType.Result
+            val isPrimitive = field.ty.isPrimitive
             val vhName: String = when {
                 isPrimitive -> "VH_$baseName"
                 else -> "null"

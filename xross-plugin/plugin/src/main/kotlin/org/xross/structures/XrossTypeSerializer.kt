@@ -57,6 +57,13 @@ object XrossTypeSerializer : KSerializer<XrossType> {
                     "Option" -> XrossType.Optional(deserializeRecursive(body))
                     "Slice" -> XrossType.Slice(deserializeRecursive(body))
                     "Vec" -> XrossType.Vec(deserializeRecursive(body))
+                    "Array" -> {
+                        val obj = body.jsonObject
+                        XrossType.Array(
+                            deserializeRecursive(obj["inner"]!!),
+                            obj["len"]?.jsonPrimitive?.long ?: 0L,
+                        )
+                    }
                     "Result" -> {
                         val obj = body.jsonObject
                         XrossType.Result(
@@ -87,6 +94,12 @@ object XrossTypeSerializer : KSerializer<XrossType> {
             is XrossType.Optional -> buildJsonObject { put("Option", serializeRecursive(value.inner)) }
             is XrossType.Slice -> buildJsonObject { put("Slice", serializeRecursive(value.inner)) }
             is XrossType.Vec -> buildJsonObject { put("Vec", serializeRecursive(value.inner)) }
+            is XrossType.Array -> buildJsonObject {
+                putJsonObject("Array") {
+                    put("inner", serializeRecursive(value.inner))
+                    put("len", value.len)
+                }
+            }
             is XrossType.Result -> buildJsonObject {
                 putJsonObject("Result") {
                     put("ok", serializeRecursive(value.ok))

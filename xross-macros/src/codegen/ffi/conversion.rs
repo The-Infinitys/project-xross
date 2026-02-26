@@ -106,7 +106,7 @@ pub fn gen_arg_conversion(
                 quote!(#arg_id),
             )
         }
-        XrossType::Slice(inner) | XrossType::Vec(inner) => {
+        XrossType::Slice(inner) | XrossType::Vec(inner) | XrossType::Array { inner, .. } => {
             let ptr_id = format_ident!("{}_ptr", arg_id);
             let len_id = format_ident!("{}_len", arg_id);
             let inner_rust_ty = match &**inner {
@@ -131,10 +131,21 @@ pub fn gen_arg_conversion(
                 quote! {
                     let #arg_id = if #ptr_id.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id).to_vec() } };
                 }
-            } else {
+            } else if matches!(x_ty, XrossType::Slice(_)) {
                 quote! {
                     let #arg_id = if #ptr_id.is_null() { &[] } else { unsafe { std::slice::from_raw_parts(#ptr_id, #len_id) } };
                 }
+            } else if let XrossType::Array { len, .. } = x_ty {
+                let len_usize = *len;
+                quote! {
+                    let #arg_id = unsafe {
+                        if #ptr_id.is_null() { panic!("Array pointer is NULL"); }
+                        if #len_id != #len_usize { panic!("Array length mismatch: expected {}, got {}", #len_usize, #len_id); }
+                        std::ptr::read(#ptr_id as *const [#inner_rust_ty; #len_usize])
+                    };
+                }
+            } else {
+                unreachable!()
             };
 
             (quote! { #ptr_id: *const #inner_rust_ty, #len_id: usize }, conversion, quote!(#arg_id))
@@ -252,7 +263,7 @@ pub fn gen_ret_wrapping(
             quote! { xross_core::XrossBuffer },
             quote! { xross_core::XrossBuffer::from(#inner_call) },
         ),
-        XrossType::Vec(inner) | XrossType::Slice(inner) => (
+        XrossType::Vec(inner) | XrossType::Slice(inner) | XrossType::Array { inner, .. } => (
             quote! { xross_core::XrossBuffer },
             if let XrossType::Object { .. } = &**inner {
                 quote! {
