@@ -5,22 +5,23 @@ import org.xross.structures.XrossDefinition
 import java.io.File
 
 class TypeResolver(
-    metadataDir: File,
+    val metadataDir: java.io.File,
+    private val preScannedMapping: Map<String, String>? = null,
 ) {
     private val shortNameToFqn = mutableMapOf<String, MutableSet<String>>()
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     init {
-        if (metadataDir.exists()) {
+        // preScannedMapping が null の場合のみ、ディレクトリをスキャンする
+        if (preScannedMapping == null && metadataDir.exists()) {
             metadataDir.walkTopDown().filter { it.extension == "json" }.forEach { file ->
                 try {
-                    val def = json.decodeFromString<XrossDefinition>(file.readText())
+                    val def = json.decodeFromString<org.xross.structures.XrossDefinition>(file.readText())
                     val name = def.name
                     val fqn = def.signature
                     shortNameToFqn.getOrPut(name) { mutableSetOf() }.add(fqn)
                 } catch (e: Exception) {
                     println("Failed to parse $file: ${e.message}")
-                    // Ignore malformed JSON during scanning
                 }
             }
         }
@@ -30,6 +31,11 @@ class TypeResolver(
         signature: String,
         context: String = "Unknown",
     ): String {
+        // 事前スキャン済みデータがある場合は優先して使用する
+        if (preScannedMapping != null) {
+            return preScannedMapping[signature] ?: signature
+        }
+
         // すでにドットが含まれている場合は解決済みとみなす
         if (signature.contains('.')) return signature
 

@@ -22,17 +22,9 @@ object XrossGenerator {
         meta: XrossDefinition,
         outputDir: File,
         targetPackage: String,
+        basePackage: String,
         resolver: TypeResolver,
     ) {
-        val basePackage =
-            if (meta.packageName.isEmpty()) {
-                targetPackage
-            } else {
-                targetPackage.removeSuffix(meta.packageName)
-                    .removeSuffix(".")
-            }
-        RuntimeGenerator.generate(outputDir, basePackage)
-
         when (val resolvedMeta = resolveAllTypes(meta, resolver)) {
             is XrossDefinition.Struct, is XrossDefinition.Enum, is XrossDefinition.Opaque ->
                 generateComplexType(resolvedMeta, outputDir, targetPackage, basePackage)

@@ -1,42 +1,35 @@
 package org.xross.gradle
 
-import kotlinx.serialization.json.Json
 import org.gradle.workers.WorkAction
-import org.xross.generator.TypeResolver
 import org.xross.generator.XrossGenerator
-import org.xross.structures.XrossDefinition
 
 abstract class GenerateAction : WorkAction<GenerateParameters> {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     override fun execute() {
-        val file = parameters.jsonFile.get()
-        println("Processing metadata file: ${file.name}")
-        val fileText = file.readText()
-        val meta = json.decodeFromString<XrossDefinition>(fileText)
-        // 1. ベースパッケージ (org.example)
+        val jsonContent = parameters.jsonContent.get()
+        val meta = json.decodeFromString<org.xross.structures.XrossDefinition>(jsonContent)
+
         val basePackage = parameters.packageName.get()
+        val fullPackage = if (meta.packageName.isBlank()) {
+            basePackage
+        } else {
+            "$basePackage.${meta.packageName}"
+        }
 
-        // 2. メタデータのパッケージ (test.test2)
-        val subPackage = meta.packageName
+        val outputBaseDir = parameters.outputDir.get()
 
-        // 3. フルパッケージ名を生成 (org.example.test.test2)
-        val fullPackage =
-            if (subPackage.isBlank()) {
-                basePackage
-            } else {
-                "$basePackage.$subPackage"
-            }
+        // TypeResolver は事前スキャン済みマッピングを使用する
+        val typeMapping = parameters.typeMapping.get()
+        val resolver = org.xross.generator.TypeResolver(java.io.File("UNUSED"), typeMapping)
 
-        // 4. 【重要】ディレクトリは「パッケージ階層を含めないベース」を渡す
-        // Generator側が内部で fullPackage.replace('.', '/') を実行している前提です
-        val outputBaseDir = parameters.outputDir.get().asFile
-        val resolver = TypeResolver(parameters.metadataDir.get())
         XrossGenerator.property.useUnsignedTypes = parameters.useUnsignedTypes.get()
+
         XrossGenerator.generate(
             meta,
-            outputBaseDir, // ここで掘り進めない
+            outputBaseDir,
             fullPackage,
+            basePackage,
             resolver,
         )
     }

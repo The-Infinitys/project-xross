@@ -94,7 +94,16 @@ object GeneratorUtils {
         val content = cleanupPublic(fileSpec.toString())
         val fileDir = outputDir.resolve(fileSpec.packageName.replace('.', '/'))
         if (!fileDir.exists()) fileDir.mkdirs()
-        fileDir.resolve("${fileSpec.name}.kt").writeText(content)
+
+        val fileName = "${fileSpec.name}.kt"
+        val targetFile = fileDir.resolve(fileName)
+
+        // 追加の安全策：誤って JSON ファイルを書き換えないようにチェック
+        if (targetFile.extension == "json") {
+            throw java.lang.IllegalStateException("Attempted to write into a JSON file: ${targetFile.absolutePath}")
+        }
+
+        targetFile.writeText(content)
     }
 
     /**

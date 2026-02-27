@@ -25,7 +25,7 @@ abstract class XrossExtension {
      * Defaults to "${rustProjectDir}/target/xross".
      */
     var metadataDir: String
-        get() = customMetadataDir ?: "$rustProjectDir/target/xross"
+        get() = customMetadataDir ?: if (rustProjectDir.isEmpty()) "target/xross" else "$rustProjectDir/target/xross"
         set(value) {
             customMetadataDir = value
         }
@@ -39,4 +39,14 @@ abstract class XrossExtension {
      * Automatically set sources
      */
     var autoSrc: Boolean = true
+
+    /**
+     * List of crates to include for generation. If empty, all found crates are included.
+     */
+    var includeCrates: Set<String> = emptySet()
+
+    /**
+     * List of crates to exclude from generation.
+     */
+    var excludeCrates: Set<String> = emptySet()
 }
