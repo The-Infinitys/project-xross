@@ -11,6 +11,7 @@ abstract class GenerateAction : WorkAction<GenerateParameters> {
 
     override fun execute() {
         val file = parameters.jsonFile.get()
+        println("Processing metadata file: ${file.name}")
         val fileText = file.readText()
         val meta = json.decodeFromString<XrossDefinition>(fileText)
         // 1. ベースパッケージ (org.example)

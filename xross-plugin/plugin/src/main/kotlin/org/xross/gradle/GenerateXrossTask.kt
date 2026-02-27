@@ -34,11 +34,16 @@ constructor(
     @TaskAction
     fun execute() {
         val outDir = outputDir.get().asFile
+        val mDir = metadataDir.get().asFile
+        println("Generating Xross bindings to: ${outDir.absolutePath}")
+        println("Metadata directory: ${mDir.absolutePath}")
         outDir.deleteRecursively()
         outDir.mkdirs()
-        val jsonFiles = metadataDir.asFileTree.files.filter { it.extension == "json" }
-        val queue = workerExecutor.noIsolation() // プロセス分離が必要なら classLoaderIsolation()
+        val jsonFiles = mDir.listFiles { f -> f.extension == "json" } ?: emptyArray()
+        println("Found ${jsonFiles.size} JSON files")
+        val queue = workerExecutor.noIsolation()
         jsonFiles.forEach { file ->
+            println("Submitting GenerateAction for: ${file.name}")
             queue.submit(GenerateAction::class.java) { params ->
                 params.jsonFile.set(file)
                 params.outputDir.set(outDir)
