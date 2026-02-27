@@ -1,51 +1,43 @@
 use std::fs;
 use std::path::PathBuf;
 
-fn main() {
-    // 1. 手動設定の環境変数を最優先
-    let mut xross_dir = None;
-
+fn resolve_xross_parent_dir() -> PathBuf {
     if let Ok(val) = std::env::var("XROSS_METADATA_DIR") {
-        xross_dir = Some(PathBuf::from(val));
+        return PathBuf::from(val);
     }
 
-    // 2. OUT_DIR から遡って target ディレクトリを特定する
-    if xross_dir.is_none()
-        && let Ok(out_dir) = std::env::var("OUT_DIR")
-    {
+    // 2. OUT_DIR から target を特定
+    if let Ok(out_dir) = std::env::var("OUT_DIR") {
         let path = PathBuf::from(out_dir);
-        let mut target = path.as_path();
-        while let Some(parent) = target.parent() {
-            if target.file_name().and_then(|n| n.to_str()) == Some("target") {
-                xross_dir = Some(target.join("xross"));
-                break;
+        for ancestor in path.ancestors() {
+            if ancestor.file_name().and_then(|n| n.to_str()) == Some("target") {
+                return ancestor.join("xross");
             }
-            target = parent;
         }
     }
 
-    // 3. CARGO_TARGET_DIR 環境変数をチェック
-    if xross_dir.is_none()
-        && let Ok(val) = std::env::var("CARGO_TARGET_DIR")
-    {
-        xross_dir = Some(PathBuf::from(val).join("xross"));
+    // 3. CARGO_TARGET_DIR を確認
+    if let Ok(val) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(val).join("xross");
     }
 
-    // 4. フォールバック: ワークスペースルートを探索
-    let xross_dir = xross_dir.unwrap_or_else(|| {
-        let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-        let mut current = manifest_dir.as_path();
-        let mut root = current;
-        while let Some(parent) = current.parent() {
-            if parent.join("Cargo.toml").exists() {
-                root = parent;
-                current = parent;
-            } else {
-                break;
-            }
+    // 4. マニフェストの場所から推測
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap());
+
+    for ancestor in manifest_dir.ancestors() {
+        let target_path = ancestor.join("target");
+        if target_path.is_dir() {
+            return target_path.join("xross");
         }
-        root.join("target").join("xross")
-    });
+    }
+
+    manifest_dir.join("target").join("xross")
+}
+
+fn main() {
+    let xross_dir = resolve_xross_parent_dir();
 
     if !xross_dir.exists()
         && let Err(e) = fs::create_dir_all(&xross_dir)

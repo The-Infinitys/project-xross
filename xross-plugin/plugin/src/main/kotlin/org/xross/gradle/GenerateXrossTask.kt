@@ -39,7 +39,9 @@ constructor(
         println("Metadata directory: ${mDir.absolutePath}")
         outDir.deleteRecursively()
         outDir.mkdirs()
-        val jsonFiles = mDir.listFiles { f -> f.extension == "json" } ?: emptyArray()
+        val jsonFiles = mDir.walkTopDown()
+            .filter { it.isFile && it.extension == "json" }
+            .toList()
         println("Found ${jsonFiles.size} JSON files")
         val queue = workerExecutor.noIsolation()
         jsonFiles.forEach { file ->

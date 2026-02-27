@@ -1,45 +1,65 @@
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::path::PathBuf;
+use std::sync::Once;
 use xross_metadata::XrossDefinition;
 
+static INIT: Once = Once::new();
+
 /// Returns the directory where xross metadata files are stored.
-/// It tries to find the target directory of the cargo project.
+/// The first time this is called, the directory is cleared and recreated.
 pub fn get_xross_dir() -> PathBuf {
+    let xross_dir = resolve_xross_dir();
+
+    // 初回呼び出し時のみ実行されるスレッド安全な初期化
+    INIT.call_once(|| {
+        if xross_dir.exists() {
+            let _ = fs::remove_dir_all(&xross_dir);
+        }
+        let _ = fs::create_dir_all(&xross_dir);
+    });
+
+    xross_dir
+}
+
+// パス特定ロジックのみを分離（再利用と可読性のため）
+fn resolve_xross_dir() -> PathBuf {
+    // 1. 明示的な環境変数を最優先
+    let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "common".into());
+
     if let Ok(val) = std::env::var("XROSS_METADATA_DIR") {
         return PathBuf::from(val);
     }
 
+    // 2. OUT_DIR から target を特定
     if let Ok(out_dir) = std::env::var("OUT_DIR") {
         let path = PathBuf::from(out_dir);
-        let mut target = path.as_path();
-        while let Some(parent) = target.parent() {
-            if target.file_name().and_then(|n| n.to_str()) == Some("target") {
-                return target.join("xross");
+        for ancestor in path.ancestors() {
+            if ancestor.file_name().and_then(|n| n.to_str()) == Some("target") {
+                return ancestor.join("xross").join(crate_name);
             }
-            target = parent;
         }
     }
 
+    // 3. CARGO_TARGET_DIR を確認
     if let Ok(val) = std::env::var("CARGO_TARGET_DIR") {
-        return PathBuf::from(val).join("xross");
+        return PathBuf::from(val).join("xross").join(crate_name);
     }
 
+    // 4. マニフェストの場所から推測
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap());
 
-    let mut current = manifest_dir.as_path();
-    let mut root = current;
-    while let Some(parent) = current.parent() {
-        if parent.join("Cargo.toml").exists() {
-            root = parent;
-            current = parent;
-        } else {
-            break;
+    for ancestor in manifest_dir.ancestors() {
+        let target_path = ancestor.join("target");
+        if target_path.is_dir() {
+            return target_path.join("xross").join(crate_name);
         }
     }
 
-    root.join("target").join("xross")
+    manifest_dir.join("target").join("xross").join(crate_name)
 }
 
 /// Returns the file path for a given signature.
@@ -51,26 +71,41 @@ pub fn get_path_by_signature(signature: &str) -> PathBuf {
 /// Performs compatibility checks if a definition already exists.
 pub fn save_definition(def: &XrossDefinition) {
     let xross_dir = get_xross_dir();
+    // 1. ディレクトリ作成（既存なら何もしない）
     fs::create_dir_all(&xross_dir).ok();
+
     let signature = def.signature();
     let path = get_path_by_signature(signature);
 
-    let final_def = def.clone();
-
-    if path.exists()
-        && let Ok(existing_content) = fs::read_to_string(&path)
-        && let Ok(existing_def) = serde_json::from_str::<XrossDefinition>(&existing_content)
-        && !is_structurally_compatible(&existing_def, &final_def)
-    {
-        panic!(
-            "\n[Xross Error] Duplicate definition detected for signature: '{}'\n\
-             The same signature is being defined multiple times with different structures.\n",
-            signature
-        );
+    // 2. 既存チェック（他プロセスによる書き込み完了を考慮）
+    // NOTE: path.exists() が true の時点で、renameが完了していることが保証されます
+    if path.exists() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(existing_def) = serde_json::from_str::<XrossDefinition>(&content) {
+                if !is_structurally_compatible(&existing_def, def) {
+                    panic!("\n[Xross Error] Duplicate definition: '{}'\n", signature);
+                }
+                return;
+            }
+        }
     }
 
-    if let Ok(json) = serde_json::to_string(&final_def) {
-        fs::write(&path, json).ok();
+    // 3. 一時ファイルの書き込み
+    if let Ok(json) = serde_json::to_string(def) {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::time::Instant::now().hash(&mut hasher);
+        std::thread::current().id().hash(&mut hasher);
+        let temp_path = xross_dir.join(format!("tmp_{:016x}.json", hasher.finish()));
+
+        if fs::write(&temp_path, json).is_ok() {
+            // 4. アトミックな確定
+            // 既に存在していても上書きされる（OSレベルでアトミック）
+            if let Err(_) = fs::rename(&temp_path, &path) {
+                // リネームに失敗した場合（他プロセスが同一ファイルを処理中など）
+                // 一時ファイルを残さないように掃除だけする
+                let _ = fs::remove_file(&temp_path);
+            }
+        }
     }
 }
 
@@ -104,13 +139,27 @@ pub fn load_definition(ident: &syn::Ident) -> Option<XrossDefinition> {
         return None;
     }
 
-    if let Ok(entries) = fs::read_dir(xross_dir) {
-        for entry in entries.flatten() {
-            if let Ok(content) = fs::read_to_string(entry.path())
-                && let Ok(def) = serde_json::from_str::<XrossDefinition>(&content)
-                && *ident == def.name()
-            {
-                return Some(def);
+    let entries = fs::read_dir(xross_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // ファイルが .tmp の場合は無視
+        if path.extension().and_then(|s| s.to_str()) == Some("tmp") {
+            continue;
+        }
+
+        // 並列実行対策: ファイルが書き換え中の場合に備え、読み込み失敗時は少し待って再試行
+        let mut content = fs::read_to_string(&path);
+        if content.is_err() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            content = fs::read_to_string(&path);
+        }
+
+        if let Ok(c) = content {
+            if let Ok(def) = serde_json::from_str::<XrossDefinition>(&c) {
+                if *ident == def.name() {
+                    return Some(def);
+                }
             }
         }
     }
