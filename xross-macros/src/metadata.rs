@@ -68,7 +68,7 @@ pub fn get_path_by_signature(signature: &str) -> PathBuf {
 }
 
 /// Saves the type definition to a JSON file in the metadata directory.
-/// Performs compatibility checks if a definition already exists.
+/// Performs compatibility checks and merges methods if a definition already exists.
 pub fn save_definition(def: &XrossDefinition) {
     let xross_dir = get_xross_dir();
     // 1. ディレクトリ作成（既存なら何もしない）
@@ -76,6 +76,8 @@ pub fn save_definition(def: &XrossDefinition) {
 
     let signature = def.signature();
     let path = get_path_by_signature(signature);
+
+    let mut def_to_save = def.clone();
 
     // 2. 既存チェック（他プロセスによる書き込み完了を考慮）
     // NOTE: path.exists() が true の時点で、renameが完了していることが保証されます
@@ -85,13 +87,14 @@ pub fn save_definition(def: &XrossDefinition) {
                 if !is_structurally_compatible(&existing_def, def) {
                     panic!("\n[Xross Error] Duplicate definition: '{}'\n", signature);
                 }
-                return;
+                // 既存の定義（特にメソッド）を新しい定義にマージする
+                merge_definitions(&mut def_to_save, &existing_def);
             }
         }
     }
 
     // 3. 一時ファイルの書き込み
-    if let Ok(json) = serde_json::to_string(def) {
+    if let Ok(json) = serde_json::to_string(&def_to_save) {
         let mut hasher = std::hash::DefaultHasher::new();
         std::time::Instant::now().hash(&mut hasher);
         std::thread::current().id().hash(&mut hasher);
@@ -105,6 +108,48 @@ pub fn save_definition(def: &XrossDefinition) {
                 // 一時ファイルを残さないように掃除だけする
                 let _ = fs::remove_file(&temp_path);
             }
+        }
+    }
+}
+
+/// Merges two definitions, primarily combining their methods.
+fn merge_definitions(target: &mut XrossDefinition, source: &XrossDefinition) {
+    match (target, source) {
+        (XrossDefinition::Struct(t), XrossDefinition::Struct(s)) => {
+            merge_methods(&mut t.methods, &s.methods);
+            if t.docs.is_empty() && !s.docs.is_empty() {
+                t.docs = s.docs.clone();
+            }
+        }
+        (XrossDefinition::Enum(t), XrossDefinition::Enum(s)) => {
+            merge_methods(&mut t.methods, &s.methods);
+            if t.docs.is_empty() && !s.docs.is_empty() {
+                t.docs = s.docs.clone();
+            }
+        }
+        (XrossDefinition::Opaque(t), XrossDefinition::Opaque(s)) => {
+            merge_methods(&mut t.methods, &s.methods);
+            if t.docs.is_empty() && !s.docs.is_empty() {
+                t.docs = s.docs.clone();
+            }
+        }
+        (XrossDefinition::Function(t), XrossDefinition::Function(s)) => {
+            if t.docs.is_empty() && !s.docs.is_empty() {
+                t.docs = s.docs.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Helper to merge method vectors by symbol name.
+fn merge_methods(
+    target: &mut Vec<xross_metadata::XrossMethod>,
+    source: &[xross_metadata::XrossMethod],
+) {
+    for s_m in source {
+        if !target.iter().any(|t_m| t_m.symbol == s_m.symbol) {
+            target.push(s_m.clone());
         }
     }
 }
