@@ -161,6 +161,7 @@ fun CodeBlock.Builder.addRustStringResolution(
     return this
 }
 
+@OptIn(ExperimentalUnsignedTypes::class)
 fun CodeBlock.Builder.addResultVariantResolution(
     type: XrossType,
     ptrName: Any,
@@ -207,23 +208,29 @@ fun CodeBlock.Builder.addResultVariantResolution(
                 is XrossType.Slice -> type.inner
                 is XrossType.Array -> type.inner
             }
-            beginControlFlow("run")
+
+            // 修正ポイント1: run に型パラメータを指定して型推論を助ける
+            beginControlFlow("run<%T>", targetTypeName)
+
             addStatement("val dataCap = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 0L)", ptrName)
             addStatement("val dataLen = %L.get(java.lang.foreign.ValueLayout.JAVA_LONG, 8L)", ptrName)
             addStatement("val dataPtr = %L.get(java.lang.foreign.ValueLayout.ADDRESS, 16L)", ptrName)
+
             beginControlFlow("val resArr = if (dataPtr == %T.NULL || dataLen == 0L)", MEMORY_SEGMENT)
-            val emptyValue = when (innerType) {
-                is XrossType.I32 -> "intArrayOf()"
-                is XrossType.I64 -> "longArrayOf()"
-                is XrossType.F32 -> "floatArrayOf()"
-                is XrossType.F64 -> "doubleArrayOf()"
-                is XrossType.I8, is XrossType.U8 -> "byteArrayOf()"
-                is XrossType.I16 -> "shortArrayOf()"
-                is XrossType.Bool -> "booleanArrayOf()"
-                else -> "emptyList()"
+            // --- 修正箇所 1 ---
+            val emptyValue = when {
+                targetTypeName.toString().endsWith("ByteArray") -> "byteArrayOf()"
+                targetTypeName.toString().endsWith("UByteArray") -> "ubyteArrayOf()"
+                targetTypeName.toString().endsWith("IntArray") -> "intArrayOf()"
+                targetTypeName.toString().endsWith("UIntArray") -> "uintArrayOf()"
+                targetTypeName.toString().endsWith("LongArray") -> "longArrayOf()"
+                targetTypeName.toString().endsWith("ULongArray") -> "ulongArrayOf()"
+                targetTypeName.toString().contains("List") -> "emptyList()"
+                else -> "emptyArray()"
             }
             addStatement(emptyValue)
             nextControlFlow("else")
+
             if (innerType is XrossType.Object) {
                 val (sizeExpr, dropExpr, fromPointerExpr) = GeneratorUtils.compareExprs(
                     GeneratorUtils.getClassName(
@@ -244,21 +251,38 @@ fun CodeBlock.Builder.addResultVariantResolution(
                 addStatement("list.add(obj)")
                 endControlFlow()
                 addStatement("list")
+
             } else {
-                val layout = innerType.layoutMember
+                val layout = innerType.layoutMember // ここで I32 なら JAVA_INT が返る
+                val rawArrayType = GeneratorUtils.resolveRawArrayType(innerType)
+
                 addStatement(
-                    "dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L)",
-                    java.lang.foreign.ValueLayout::class,
-                    layout.simpleName,
-                    java.lang.foreign.ValueLayout::class,
-                    layout.simpleName,
+                    "val rawArray = dataPtr.reinterpret(dataLen * %T.%L.byteSize()).toArray(%T.%L) as %T",
+                    java.lang.foreign.ValueLayout::class, layout.simpleName, // ここが JAVA_BYTE になるべき
+                    java.lang.foreign.ValueLayout::class, layout.simpleName,
+                    rawArrayType
                 )
+                addStatement(
+                    "if ((%L as %T) != %T.NULL) xrossFreeBufferHandle.invoke(%L as %T)",
+                    ptrName, MEMORY_SEGMENT, MEMORY_SEGMENT, ptrName, MEMORY_SEGMENT
+                )
+
+                val converter = GeneratorUtils.getUnsignedArrayConverter(targetTypeName)
+                if (converter.isNotEmpty()) {
+                    addStatement("rawArray.%L", converter)
+                } else {
+                    // targetTypeName が ByteArray なのに rawArray が IntArray だとここでエラーになるため、
+                    // 型が違う場合は明示的にキャスト (本来は resolveReturnType 側で合わせるべき)
+                    if (targetTypeName != rawArrayType) {
+                        addStatement("rawArray as %T", targetTypeName)
+                    } else {
+                        addStatement("rawArray")
+                    }
+                }
             }
             endControlFlow()
-            // Always free Buffer return
-            addStatement("if (%L != %T.NULL) xrossFreeBufferHandle.invoke(%L)", ptrName, MEMORY_SEGMENT, ptrName)
             addStatement("resArr")
-            endControlFlow()
+            endControlFlow() // run の閉じ
         }
 
         else -> {
@@ -391,7 +415,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
         is XrossType.Object -> {
             if (type.ownership == XrossType.Ownership.Value) {
                 // Pass-by-value: the argument is already a MemorySegment (struct content)
-                callArgs.add(CodeBlock.of("$name"))
+                callArgs.add(CodeBlock.of(name))
             } else {
                 if (checkObjectValidity) {
                     beginControlFlow(
@@ -434,7 +458,6 @@ fun CodeBlock.Builder.addArgumentPreparation(
             val isObject = inner is XrossType.Object
 
             if (isObject) {
-                // Objectリストはポインタ配列を作る必要があるので既存のままでOK
                 addStatement("val ${name}Seg = if ($name == null) %T.NULL else run {", MEMORY_SEGMENT)
                 indent()
                 addStatement("val seg = $arenaName.allocate(java.lang.foreign.ValueLayout.ADDRESS, $name.size.toLong())")
@@ -449,20 +472,23 @@ fun CodeBlock.Builder.addArgumentPreparation(
                 unindent()
                 addStatement("}")
             } else {
-                // プリミティブ配列 (IntArray, FloatArray等)
-                // スレッド判定を廃止し、常に安全なオフヒープコピーを実行
-                addStatement("val ${name}Seg = run {", MEMORY_SEGMENT)
+                addStatement("val ${name}Seg = run {")
                 indent()
 
                 val layoutCode = inner.layoutCode
-                val byteSize = inner.kotlinSize // または inner.byteSize
+                val byteSize = inner.kotlinSize
 
-                // 常に Arena を使用して Native Segment を確保
-                addStatement("val seg = $arenaName.allocate(%L, $name.size.toLong())", layoutCode)
+                // 修正ポイント: $name が既に IntArray や ByteArray ならそのまま使う。
+                // もし List<Int> 等が混じる可能性があるなら .toIntArray() を付けるが、
+                // 今回は resolveReturnType で既に IntArray になっているので、
+                // そのまま $name を使うのが正解です。
+                val rawArrayName = name
 
-                // ヒープ(IntArray) -> ネイティブ(seg) へのバルクコピー
+                addStatement("val seg = $arenaName.allocate(%L, $rawArrayName.size.toLong())", layoutCode)
+
+                // $name ではなく、プリミティブ配列として確定している変数（ここでは $name 自身）を渡す
                 addStatement(
-                    "%T.copy(%T.ofArray($name), 0, seg, 0, $name.size.toLong() * %L)",
+                    "%T.copy(%T.ofArray($rawArrayName), 0, seg, 0, $rawArrayName.size.toLong() * %L)",
                     MEMORY_SEGMENT,
                     MEMORY_SEGMENT,
                     byteSize,
@@ -475,6 +501,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
             callArgs.add(CodeBlock.of("${name}Seg"))
             callArgs.add(CodeBlock.of("($name?.size ?: 0).toLong()"))
         }
+
         else -> {
             val converter = GeneratorUtils.getSignedConverter(type)
             callArgs.add(CodeBlock.of("%L$converter", name))

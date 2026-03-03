@@ -21,7 +21,8 @@ object GeneratorUtils {
     /**
      * Returns true if the definition is a "pure" enum (one without fields in its variants).
      */
-    fun isPureEnum(meta: XrossDefinition): Boolean = meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
+    fun isPureEnum(meta: XrossDefinition): Boolean =
+        meta is XrossDefinition.Enum && meta.variants.all { it.fields.isEmpty() }
 
     /**
      * Returns true if the definition requires locking logic.
@@ -213,6 +214,7 @@ object GeneratorUtils {
     /**
      * Resolves the Kotlin return type for a given XrossType.
      */
+    @OptIn(ExperimentalUnsignedTypes::class)
     fun resolveReturnType(type: XrossType, basePackage: String): TypeName = when (type) {
         is XrossType.Void -> UNIT
         is XrossType.RustString -> String::class.asTypeName()
@@ -227,17 +229,21 @@ object GeneratorUtils {
                 is XrossType.Array -> type.inner
             }
             when (inner) {
-                is XrossType.U64, is XrossType.I64 -> LongArray::class.asTypeName()
-                is XrossType.U32, is XrossType.I32 -> IntArray::class.asTypeName()
-                is XrossType.U16, is XrossType.I16 -> ShortArray::class.asTypeName()
-                is XrossType.U8, is XrossType.I8 -> ByteArray::class.asTypeName()
-                is XrossType.F32 -> FloatArray::class.asTypeName()
+                is XrossType.I8 -> ByteArray::class.asTypeName()
+                is XrossType.I16 -> ShortArray::class.asTypeName()
+                is XrossType.I32 -> IntArray::class.asTypeName()
+                is XrossType.I64 -> LongArray::class.asTypeName()
                 is XrossType.F64 -> DoubleArray::class.asTypeName()
+                is XrossType.F32 -> FloatArray::class.asTypeName()
                 is XrossType.Bool -> BooleanArray::class.asTypeName()
+                is XrossType.U64 -> if (XrossGenerator.property.useUnsignedTypes) ULongArray::class.asTypeName() else LongArray::class.asTypeName()
+                is XrossType.U32 -> if (XrossGenerator.property.useUnsignedTypes) UIntArray::class.asTypeName() else IntArray::class.asTypeName()
+                is XrossType.U16 -> if (XrossGenerator.property.useUnsignedTypes) UShortArray::class.asTypeName() else ShortArray::class.asTypeName()
+                is XrossType.U8 -> if (XrossGenerator.property.useUnsignedTypes) UByteArray::class.asTypeName() else ByteArray::class.asTypeName()
                 else -> List::class.asClassName().parameterizedBy(resolveReturnType(inner, basePackage))
             }
         }
-        // -----------------
+
         else -> type.kotlinType
     }
 
@@ -478,21 +484,20 @@ object GeneratorUtils {
         // 修正: 実際に Arena が必要な型のみをリストアップ
         val needsArena = args.any {
             it.ty is XrossType.RustString ||
-                it.ty is XrossType.Optional ||
-                it.ty is XrossType.Result ||
-                it.ty is XrossType.Vec ||
-                it.ty is XrossType.Slice ||
-                it.ty is XrossType.Array
+                    it.ty is XrossType.Optional ||
+                    it.ty is XrossType.Result ||
+                    it.ty is XrossType.Vec ||
+                    it.ty is XrossType.Slice ||
+                    it.ty is XrossType.Array
         }
 
-        val finalArenaName = if (arenaName != null) {
-            arenaName
-        } else if (needsArena) {
-            body.beginControlFlow("%T.ofConfined().use { arena ->", ARENA)
-            "arena"
-        } else {
-            "(java.lang.foreign.Arena.ofConfined() as java.lang.foreign.SegmentAllocator)"
-        }
+        val finalArenaName = arenaName
+            ?: if (needsArena) {
+                body.beginControlFlow("%T.ofConfined().use { arena ->", ARENA)
+                "arena"
+            } else {
+                "(java.lang.foreign.Arena.ofConfined() as java.lang.foreign.SegmentAllocator)"
+            }
 
         args.forEach { arg ->
             val name = (namePrefix + arg.name.toCamelCase()).escapeKotlinKeyword()
@@ -509,6 +514,7 @@ object GeneratorUtils {
         }
         return finalArenaName
     }
+
     fun getUnsignedConverter(retTy: XrossType): String = if (XrossGenerator.property.useUnsignedTypes) {
         when (retTy) {
             is XrossType.U8 -> " as Byte).toUByte()"
@@ -539,5 +545,34 @@ object GeneratorUtils {
         }
     } else {
         ""
+    }
+
+    fun resolveRawArrayType(inner: XrossType): TypeName = when (inner) {
+        is XrossType.I8, is XrossType.U8 -> ByteArray::class.asTypeName()
+        is XrossType.I16, is XrossType.U16 -> ShortArray::class.asTypeName()
+        is XrossType.I32, is XrossType.U32 -> IntArray::class.asTypeName()
+        is XrossType.I64, is XrossType.U64 -> LongArray::class.asTypeName()
+        is XrossType.ISize -> if (ValueLayout.ADDRESS.byteSize() <= 4L) resolveRawArrayType(XrossType.I32) else resolveRawArrayType(
+            XrossType.I64
+        )
+        is XrossType.USize -> if (ValueLayout.ADDRESS.byteSize() <= 4L) resolveRawArrayType(XrossType.U32) else resolveRawArrayType(
+            XrossType.U64
+        )
+        is XrossType.F32 -> FloatArray::class.asTypeName()
+        is XrossType.F64 -> DoubleArray::class.asTypeName()
+        is XrossType.Bool -> BooleanArray::class.asTypeName()
+        else -> Any::class.asTypeName()
+    }
+
+    @OptIn(ExperimentalUnsignedTypes::class)
+    fun getUnsignedArrayConverter(targetTypeName: TypeName): String {
+        val typeStr = targetTypeName.toString()
+        return when {
+            typeStr.endsWith("ULongArray") -> "toULongArray()"
+            typeStr.endsWith("UIntArray") -> "toUIntArray()"
+            typeStr.endsWith("UShortArray") -> "toUShortArray()"
+            typeStr.endsWith("UByteArray") -> "toUByteArray()"
+            else -> ""
+        }
     }
 }

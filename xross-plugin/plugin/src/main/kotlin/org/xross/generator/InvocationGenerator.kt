@@ -277,7 +277,7 @@ object InvocationGenerator {
             }
 
             is XrossType.Vec, is XrossType.Slice, is XrossType.Array -> {
-                val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") {
+                val callExpr = if (call.toString() == "outPanic") {
                     call
                 } else {
                     CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)

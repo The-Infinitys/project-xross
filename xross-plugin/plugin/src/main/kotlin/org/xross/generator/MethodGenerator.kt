@@ -364,12 +364,12 @@ object MethodGenerator {
                     withArgPrep.addStatement("%L.invokeExact(%L)", handleName, pArgs.joinToCode(", "))
 
                     // Invocation logic tailored for view
-                    withArgPrep.beginControlFlow("val res = run")
-                    withArgPrep.addStatement("val resRaw = outBuf as %T", MEMORY_SEGMENT)
+                    // MethodGenerator.kt 278行目付近
+                    withArgPrep.beginControlFlow("val res = run<R>")
+                    withArgPrep.addStatement("val resRaw = outBuf") // outBuf は既に MemorySegment なのでキャスト不要なはず
                     withArgPrep.beginControlFlow(
-                        "if (resRaw == %T.NULL || resRaw.get(%T.ADDRESS, 16L) == %T.NULL)",
+                        "if (resRaw == %T.NULL || resRaw.get(java.lang.foreign.ValueLayout.ADDRESS, 16L) == %T.NULL)",
                         MEMORY_SEGMENT,
-                        ValueLayout::class,
                         MEMORY_SEGMENT,
                     )
                     withArgPrep.addStatement(
@@ -382,7 +382,7 @@ object MethodGenerator {
                     withArgPrep.beginControlFlow("try")
                     withArgPrep.addStatement("block(view)")
                     withArgPrep.nextControlFlow("finally")
-                    withArgPrep.addStatement("xrossFreeBufferHandle.invoke(resRaw)")
+                    withArgPrep.addStatement("if (resRaw != %T.NULL) xrossFreeBufferHandle.invoke(resRaw)", MEMORY_SEGMENT)
                     withArgPrep.endControlFlow()
                     withArgPrep.endControlFlow()
                     withArgPrep.addStatement("res")

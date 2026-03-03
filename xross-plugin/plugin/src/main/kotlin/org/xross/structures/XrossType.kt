@@ -86,6 +86,7 @@ sealed class XrossType {
                     if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() <= 4L) INT else LONG
                 }
             }
+
             F32 -> FLOAT
             F64 -> DOUBLE
             Bool -> BOOLEAN
@@ -232,6 +233,7 @@ sealed class XrossType {
                 val className = signature.substringAfterLast('.')
                 CodeBlock.of("%N.LAYOUT", className) // Need to handle alignment here
             }
+
             is Array -> layoutCode
             else -> layoutCode
         }
@@ -248,6 +250,11 @@ sealed class XrossType {
 
     val isComplex: Boolean get() = this is Object || this is Optional || this is Result || this is RustString || this is Async || this is Slice || this is Vec || this is Array
     val isPrimitive: Boolean get() = !isComplex
+    val isUnsigned: Boolean
+        get() = when (this) {
+            is U8, U16, U32, U64, USize -> true
+            else -> false
+        }
 
     /**
      * Returns the size in bytes for the primitive type.
@@ -269,13 +276,15 @@ sealed class XrossType {
             is Void -> 0L
             else -> 8L
         }
-}
 
-private val U_BYTE = ClassName("kotlin", "UByte")
-private val U_SHORT = ClassName("kotlin", "UShort")
-private val U_INT = ClassName("kotlin", "UInt")
-private val U_LONG = ClassName("kotlin", "ULong")
-private val U_BYTE_ARRAY = ClassName("kotlin", "UByteArray")
-private val U_SHORT_ARRAY = ClassName("kotlin", "UShortArray")
-private val U_INT_ARRAY = ClassName("kotlin", "UIntArray")
-private val U_LONG_ARRAY = ClassName("kotlin", "ULongArray")
+    companion object {
+        private val U_BYTE = ClassName("kotlin", "UByte")
+        private val U_SHORT = ClassName("kotlin", "UShort")
+        private val U_INT = ClassName("kotlin", "UInt")
+        private val U_LONG = ClassName("kotlin", "ULong")
+        private val U_BYTE_ARRAY = ClassName("kotlin", "UByteArray")
+        private val U_SHORT_ARRAY = ClassName("kotlin", "UShortArray")
+        private val U_INT_ARRAY = ClassName("kotlin", "UIntArray")
+        private val U_LONG_ARRAY = ClassName("kotlin", "ULongArray")
+    }
+}
