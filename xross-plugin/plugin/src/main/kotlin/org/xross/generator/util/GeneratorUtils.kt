@@ -517,12 +517,12 @@ object GeneratorUtils {
 
     fun getUnsignedConverter(retTy: XrossType): String = if (XrossGenerator.property.useUnsignedTypes) {
         when (retTy) {
-            is XrossType.U8 -> " as Byte).toUByte()"
-            is XrossType.U16 -> " as Short).toUShort()"
-            is XrossType.U32 -> " as Int).toUInt()"
-            is XrossType.U64 -> " as Long).toULong()"
+            is XrossType.U8 -> ".toUByte()"
+            is XrossType.U16 -> ".toUShort()"
+            is XrossType.U32 -> ".toUInt()"
+            is XrossType.U64 -> ".toULong()"
             is XrossType.USize -> {
-                if (ValueLayout.ADDRESS.byteSize() == 8L) " as Long).toULong()" else " as Int).toUInt()"
+                if (ValueLayout.ADDRESS.byteSize() == 8L) ".toULong()" else ".toUInt()"
             }
 
             else -> ""
@@ -572,6 +572,18 @@ object GeneratorUtils {
             typeStr.endsWith("UIntArray") -> "toUIntArray()"
             typeStr.endsWith("UShortArray") -> "toUShortArray()"
             typeStr.endsWith("UByteArray") -> "toUByteArray()"
+            else -> ""
+        }
+    }
+
+    @OptIn(ExperimentalUnsignedTypes::class)
+    fun getSignedArrayConverter(targetTypeName: TypeName): String {
+        val typeStr = targetTypeName.toString()
+        return when {
+            typeStr.endsWith("ULongArray") -> "toLongArray()"
+            typeStr.endsWith("UIntArray") -> "toIntArray()"
+            typeStr.endsWith("UShortArray") -> "toShortArray()"
+            typeStr.endsWith("UByteArray") -> "toByteArray()"
             else -> ""
         }
     }

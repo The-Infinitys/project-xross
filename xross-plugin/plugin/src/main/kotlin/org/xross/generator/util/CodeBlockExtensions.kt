@@ -458,7 +458,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
             val isObject = inner is XrossType.Object
 
             if (isObject) {
-                addStatement("val ${name}Seg = if ($name == null) %T.NULL else run {", MEMORY_SEGMENT)
+                addStatement("val ${name}Seg = run {")
                 indent()
                 addStatement("val seg = $arenaName.allocate(java.lang.foreign.ValueLayout.ADDRESS, $name.size.toLong())")
                 beginControlFlow("for (i in $name.indices)")
@@ -478,17 +478,13 @@ fun CodeBlock.Builder.addArgumentPreparation(
                 val layoutCode = inner.layoutCode
                 val byteSize = inner.kotlinSize
 
-                // 修正ポイント: $name が既に IntArray や ByteArray ならそのまま使う。
-                // もし List<Int> 等が混じる可能性があるなら .toIntArray() を付けるが、
-                // 今回は resolveReturnType で既に IntArray になっているので、
-                // そのまま $name を使うのが正解です。
-                val rawArrayName = name
+                val converter = GeneratorUtils.getSignedArrayConverter(GeneratorUtils.resolveReturnType(type, basePackage))
+                val rawArrayName = if (converter.isNotEmpty()) "(${name}.${converter})" else name
 
-                addStatement("val seg = $arenaName.allocate(%L, $rawArrayName.size.toLong())", layoutCode)
+                addStatement("val seg = $arenaName.allocate(%L, $name.size.toLong())", layoutCode)
 
-                // $name ではなく、プリミティブ配列として確定している変数（ここでは $name 自身）を渡す
                 addStatement(
-                    "%T.copy(%T.ofArray($rawArrayName), 0, seg, 0, $rawArrayName.size.toLong() * %L)",
+                    "%T.copy(%T.ofArray($rawArrayName), 0, seg, 0, $name.size.toLong() * %L)",
                     MEMORY_SEGMENT,
                     MEMORY_SEGMENT,
                     byteSize,
@@ -499,7 +495,7 @@ fun CodeBlock.Builder.addArgumentPreparation(
                 addStatement("}")
             }
             callArgs.add(CodeBlock.of("${name}Seg"))
-            callArgs.add(CodeBlock.of("($name?.size ?: 0).toLong()"))
+            callArgs.add(CodeBlock.of("$name.size.toLong()"))
         }
 
         else -> {

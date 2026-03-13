@@ -134,6 +134,12 @@ object XrossGenerator {
 
         val runtimePkg = "$basePackage.xross.runtime"
         val fileSpecBuilder = FileSpec.builder(targetPackage, className)
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin", "ExperimentalUnsignedTypes"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .build(),
+            )
             .addImport(
                 runtimePkg,
                 "XrossObject",
@@ -168,6 +174,12 @@ object XrossGenerator {
 
         val runtimePkg = "$basePackage.xross.runtime"
         val fileSpec = FileSpec.builder(targetPackage, className)
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin", "ExperimentalUnsignedTypes"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .build(),
+            )
             .addImport(
                 runtimePkg,
                 "XrossObject",

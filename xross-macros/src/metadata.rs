@@ -14,9 +14,6 @@ pub fn get_xross_dir() -> PathBuf {
 
     // 初回呼び出し時のみ実行されるスレッド安全な初期化
     INIT.call_once(|| {
-        if xross_dir.exists() {
-            let _ = fs::remove_dir_all(&xross_dir);
-        }
         let _ = fs::create_dir_all(&xross_dir);
     });
 

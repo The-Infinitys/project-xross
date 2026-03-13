@@ -161,9 +161,23 @@ object InvocationGenerator {
             if (type == selfType) CodeBlock.of("fromPointer") else CodeBlock.of("%T.fromPointer", type),
         )
 
+        fun wrapCast(expr: Any, target: TypeName): CodeBlock {
+            val exprStr = expr.toString()
+            return if (exprStr == "outBuf" || exprStr == "outPanic" || exprStr.contains(" as MemorySegment")) {
+                if (target == MEMORY_SEGMENT) {
+                    if (expr is CodeBlock) expr else CodeBlock.of("%L", expr)
+                } else {
+                    CodeBlock.of("(%L as %T)", expr, target)
+                }
+            } else {
+                CodeBlock.of("(%L as %T)", expr, target)
+            }
+        }
+
         if (method.isAsync) {
             body.beginControlFlow("run")
-            body.addStatement("val task = %L as %T", call, MEMORY_SEGMENT)
+            val callExpr = wrapCast(call, MEMORY_SEGMENT)
+            body.addStatement("val task = %L", callExpr)
             body.addStatement("val taskPtr = task.get(%M, 0L)", ADDRESS)
             body.addStatement("val pollFnPtr = task.get(%M, 8L)", ADDRESS)
             body.addStatement("val dropFnPtr = task.get(%M, 16L)", ADDRESS)
@@ -196,7 +210,7 @@ object InvocationGenerator {
 
         if (isPanicable) {
             body.beginControlFlow("run")
-            val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+            val callExpr = wrapCast(call, MEMORY_SEGMENT)
             body.addStatement("val resRaw = %L", callExpr)
             body.addStatement("val isOk = resRaw.get(%M, 0L) != (0).toByte()", FFMConstants.JAVA_BYTE)
             body.addStatement("val ptr = resRaw.get(%M, 8L)", ADDRESS)
@@ -239,7 +253,7 @@ object InvocationGenerator {
 
             is XrossType.RustString -> {
                 body.beginControlFlow("run")
-                val callExpr = if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                val callExpr = wrapCast(call, MEMORY_SEGMENT)
                 body.addRustStringResolution(callExpr)
                 body.addStatement("str")
                 body.endControlFlow()
@@ -247,8 +261,7 @@ object InvocationGenerator {
 
             is XrossType.Object -> {
                 body.beginControlFlow("run")
-                val callExpr =
-                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                val callExpr = wrapCast(call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.beginControlFlow("if (resRaw == %T.NULL)", MEMORY_SEGMENT)
                     .addStatement("throw %T(%S)", NullPointerException::class.asTypeName(), "Unexpected NULL return")
@@ -260,8 +273,7 @@ object InvocationGenerator {
 
             is XrossType.Optional -> {
                 body.beginControlFlow("run")
-                val callExpr =
-                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                val callExpr = wrapCast(call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addOptionalResolution(retTy.inner, "resRaw", selfType, basePackage)
                 body.endControlFlow()
@@ -269,19 +281,14 @@ object InvocationGenerator {
 
             is XrossType.Result -> {
                 body.beginControlFlow("run")
-                val callExpr =
-                    if (call.toString() == "outPanic" || call.toString() == "outBuf") call else CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
+                val callExpr = wrapCast(call, MEMORY_SEGMENT)
                 body.addStatement("val resRaw = %L", callExpr)
                 body.addResultResolution(retTy, "resRaw", selfType, basePackage)
                 body.endControlFlow()
             }
 
             is XrossType.Vec, is XrossType.Slice, is XrossType.Array -> {
-                val callExpr = if (call.toString() == "outPanic") {
-                    call
-                } else {
-                    CodeBlock.of("(%L as %T)", call, MEMORY_SEGMENT)
-                }
+                val callExpr = wrapCast(call, MEMORY_SEGMENT)
                 body.addResultVariantResolution(retTy, callExpr, returnType, selfType, basePackage)
             }
 
@@ -296,18 +303,11 @@ object InvocationGenerator {
                 }
                 if (jvmType != returnType) {
                     val converter = GeneratorUtils.getUnsignedConverter(retTy)
-                    if (converter.startsWith(" as")) {
-                        // converter already contains " as Primitive).toUnsigned()"
-                        body.addStatement("((%L as %T)$converter", call, jvmType)
-                    } else {
-                        body.addStatement("((%L as %T)%L)", call, jvmType, converter)
-                    }
+                    val callExpr = wrapCast(call, jvmType)
+                    body.addStatement("(%L%L)", callExpr, converter)
                 } else {
-                    if (returnType == MEMORY_SEGMENT) {
-                        body.addStatement("(%L as %T)", call, MEMORY_SEGMENT)
-                    } else {
-                        body.addStatement("(%L as %T)", call, returnType)
-                    }
+                    val callExpr = wrapCast(call, returnType)
+                    body.addStatement("%L", callExpr)
                 }
             }
         }

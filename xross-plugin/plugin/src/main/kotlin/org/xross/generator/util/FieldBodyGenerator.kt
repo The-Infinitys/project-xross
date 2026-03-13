@@ -126,15 +126,18 @@ object FieldBodyGenerator {
 
                 else -> {
                     val converter = GeneratorUtils.getUnsignedConverter(ty)
-                    if (converter.startsWith(" as")) {
-                        addStatement(
-                            "res = (${ctx.vhName}.get(this.segment, 0L)$converter",
-                        )
+                    val jvmType = when (ty) {
+                        is XrossType.U8 -> Byte::class.asTypeName()
+                        is XrossType.U16 -> Short::class.asTypeName()
+                        is XrossType.U32 -> Int::class.asTypeName()
+                        is XrossType.U64 -> Long::class.asTypeName()
+                        is XrossType.USize -> if (java.lang.foreign.ValueLayout.ADDRESS.byteSize() == 8L) Long::class.asTypeName() else Int::class.asTypeName()
+                        else -> ctx.kType
+                    }
+                    if (converter.isNotEmpty()) {
+                        addStatement("res = (${ctx.vhName}.get(this.segment, 0L) as %T)%L", jvmType, converter)
                     } else {
-                        addStatement(
-                            "res = ${ctx.vhName}.get(this.segment, 0L)$converter as %T",
-                            ctx.kType,
-                        )
+                        addStatement("res = ${ctx.vhName}.get(this.segment, 0L) as %T", ctx.kType)
                     }
                 }
             }
@@ -191,8 +194,10 @@ object FieldBodyGenerator {
             is XrossType.Array -> {
                 val inner = ty.inner
                 val byteSize = ty.len * inner.kotlinSize
+                val converter = GeneratorUtils.getSignedArrayConverter(ctx.kType)
+                val rawVal = if (converter.isNotEmpty()) "(v.$converter)" else "v"
                 body.addStatement("val slice = this.segment.asSlice(${ctx.offsetName}, $byteSize)")
-                body.addStatement("%T.copy(%T.ofArray(v), 0, slice, 0, $byteSize)", MemorySegment::class, MemorySegment::class)
+                body.addStatement("%T.copy(%T.ofArray($rawVal), 0, slice, 0, $byteSize)", MemorySegment::class, MemorySegment::class)
             }
 
             else -> {
