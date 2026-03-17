@@ -76,7 +76,7 @@ pub fn get_path_by_signature(signature: &str) -> PathBuf {
 /// Performs compatibility checks and merges methods if a definition already exists.
 pub fn save_definition(def: &XrossDefinition) {
     let signature = def.signature();
-    let lock= get_file_lock(signature);
+    let lock = get_file_lock(signature);
     let _lock = lock.lock().expect("Failed to acquire file lock");
 
     let xross_dir = get_xross_dir();
