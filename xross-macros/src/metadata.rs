@@ -1,23 +1,31 @@
+use std::collections::HashMap;
 use std::fs;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::{Arc, LazyLock, Mutex};
 use xross_metadata::XrossDefinition;
 
-static INIT: Once = Once::new();
+static XROSS_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    let dir = resolve_xross_dir();
+    // 既存のメタデータを削除してクリーンアップ
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+    dir
+});
 
 /// Returns the directory where xross metadata files are stored.
-/// The first time this is called, the directory is cleared and recreated.
 pub fn get_xross_dir() -> PathBuf {
-    let xross_dir = resolve_xross_dir();
+    XROSS_DIR.clone()
+}
 
-    // 初回呼び出し時のみ実行されるスレッド安全な初期化
-    INIT.call_once(|| {
-        let _ = fs::create_dir_all(&xross_dir);
-    });
+static FILE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-    xross_dir
+/// Returns a per-signature lock to prevent concurrent writes to the same metadata file.
+fn get_file_lock(signature: &str) -> Arc<Mutex<()>> {
+    let mut locks = FILE_LOCKS.lock().expect("Failed to lock global file locks");
+    locks.entry(signature.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
 
 // パス特定ロジックのみを分離（再利用と可読性のため）
@@ -67,11 +75,13 @@ pub fn get_path_by_signature(signature: &str) -> PathBuf {
 /// Saves the type definition to a JSON file in the metadata directory.
 /// Performs compatibility checks and merges methods if a definition already exists.
 pub fn save_definition(def: &XrossDefinition) {
+    let signature = def.signature();
+    let _lock = get_file_lock(signature).lock().expect("Failed to acquire file lock");
+
     let xross_dir = get_xross_dir();
     // 1. ディレクトリ作成（既存なら何もしない）
     fs::create_dir_all(&xross_dir).ok();
 
-    let signature = def.signature();
     let path = get_path_by_signature(signature);
 
     let mut def_to_save = def.clone();
