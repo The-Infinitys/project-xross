@@ -1,11 +1,11 @@
 [versions]
 # Kotlin & Plugins
-kotlin = "2.3.10"
-serialization = "1.7.3"
-kotlinpoet = "2.2.0"
-gradle = "9.3.0"
-kotlin-gradle = "1.9.20"
-spotless = "7.0.2"
+kotlin = "2.3.20"
+serialization = "1.10.0"
+kotlinpoet = "2.3.0"
+gradle = "9.4.0"
+kotlin-gradle = "2.3.20"
+spotless = "8.4.0"
 
 [libraries]
 # Gradle Plugin 開発に必要な依存

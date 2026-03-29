@@ -4,8 +4,8 @@
 [versions]
 guava = "33.4.6-jre"
 junit-jupiter-engine = "5.12.1"
-spotless = "7.0.2"
-kotlin = "2.3.10"
+spotless = "8.4.0"
+kotlin = "2.3.20"
 
 [libraries]
 guava = { module = "com.google.guava:guava", version.ref = "guava" }

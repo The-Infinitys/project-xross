@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 xross-macros.workspace = true
 xross-alloc = { workspace = true, optional = true }
-tokio = { version = "1.49", features = ["full"], optional = true }
+tokio = { version = "1.50", features = ["full"], optional = true }
 futures = { version = "0.3", optional = true }
 
 [features]
