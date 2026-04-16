@@ -9,21 +9,21 @@ By leveraging **Project Panama (Foreign Function & Memory API)**, which is stand
 
 ## 🚀 Key Features
 
-*   **⚡️ Extreme Performance**: Eliminates JNI-specific overhead via `MethodHandle` and inline memory access. Minimizes the cost of native calls.
-*   **🛡️ Rust Safety for JVM**: Extracts Rust's ownership model (Owned, Ref, MutRef) as metadata and integrates it into Kotlin's lifecycle management and type system.
-*   **🛠️ Fully Automated Bindings**: Simply annotate your Rust code, and thread-safe, idiomatic Kotlin code is automatically generated.
-*   **🔒 Robust Thread Safety**: Automatically selects synchronization mechanisms such as `StampedLock`, `VarHandle`, or `Atomic` based on data nature to prevent data races.
-*   **🌐 Async/Await Integration**: Seamlessly bridges Rust's `Future` and Kotlin's `Coroutines`. Native async logic can be called as `suspend` functions.
-*   **💎 Advanced Type Support**: Handles structs, Rust-specific enums (Algebraic Data Types), opaque types, and slices (`&[T]`, `&mut [T]`) seamlessly.
+- **⚡️ Extreme Performance**: Eliminates JNI-specific overhead via `MethodHandle` and inline memory access. Minimizes the cost of native calls.
+- **🛡️ Rust Safety for JVM**: Extracts Rust's ownership model (Owned, Ref, MutRef) as metadata and integrates it into Kotlin's lifecycle management and type system.
+- **🛠️ Fully Automated Bindings**: Simply annotate your Rust code, and thread-safe, idiomatic Kotlin code is automatically generated.
+- **🔒 Robust Thread Safety**: Automatically selects synchronization mechanisms such as `StampedLock`, `VarHandle`, or `Atomic` based on data nature to prevent data races.
+- **🌐 Async/Await Integration**: Seamlessly bridges Rust's `Future` and Kotlin's `Coroutines`. Native async logic can be called as `suspend` functions.
+- **💎 Advanced Type Support**: Handles structs, Rust-specific enums (Algebraic Data Types), opaque types, and slices (`&[T]`, `&mut [T]`) seamlessly.
 
 ## 🏗️ Architecture
 
 Xross consists of the following components. See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed specifications.
 
-*   `xross-core`: Rust-side runtime foundation and annotations.
-*   `xross-macros`: Procedural macros for proxy code generation.
-*   `xross-plugin`: A powerful Gradle plugin that generates Kotlin bindings.
-*   `xross-metadata`: High-precision type definition schema shared across languages.
+- `xross-core`: Rust-side runtime foundation and annotations.
+- `xross-macros`: Procedural macros for proxy code generation.
+- `xross-plugin`: A powerful Gradle plugin that generates Kotlin bindings.
+- `xross-metadata`: High-precision type definition schema shared across languages.
 
 ## 📦 Installation and Usage
 
@@ -32,6 +32,7 @@ Xross consists of the following components. See [ARCHITECTURE.md](./ARCHITECTURE
 You can introduce the plugin in several ways depending on your project.
 
 #### A. Direct Use from GitHub Repository (Composite Build - Recommended)
+
 Best for trying out the latest version during development or contributing to Xross itself.
 
 1.  Clone the `xross` repository.
@@ -49,6 +50,7 @@ Best for trying out the latest version during development or contributing to Xro
     ```
 
 #### B. Using JitPack (Remote)
+
 Use the `main` branch directly from GitHub without cloning.
 
 ```kotlin
@@ -79,19 +81,20 @@ xross-core = "3.2.0"
 
 Xross analyzes Rust type definitions and generates optimal Kotlin code.
 
-| Rust Code | Generated Kotlin Code | Characteristics |
-| :--- | :--- | :--- |
-| `#[derive(XrossClass)] struct S` | `class S : AutoCloseable` | Class managing native memory |
-| `#[xross_new] fn new() -> Self` | `constructor(...)` | Creates a Rust instance |
-| `&self` / `&mut self` | Ordinary methods | Thread safety automatically applied |
-| `async fn foo()` | `suspend fun foo()` | Async function integrated with Coroutines |
-| `self` (Ownership consumption) | `fun consume()...` | Invalidated on Kotlin side after call |
-| `Option<T>` | `T?` (Nullable) | Natural expression using `null` |
-| `Result<T, E>` | `Result<T>` | Standard Result type containing exceptions |
+| Rust Code                        | Generated Kotlin Code     | Characteristics                            |
+| :------------------------------- | :------------------------ | :----------------------------------------- |
+| `#[derive(XrossClass)] struct S` | `class S : AutoCloseable` | Class managing native memory               |
+| `#[xross_new] fn new() -> Self`  | `constructor(...)`        | Creates a Rust instance                    |
+| `&self` / `&mut self`            | Ordinary methods          | Thread safety automatically applied        |
+| `async fn foo()`                 | `suspend fun foo()`       | Async function integrated with Coroutines  |
+| `self` (Ownership consumption)   | `fun consume()...`        | Invalidated on Kotlin side after call      |
+| `Option<T>`                      | `T?` (Nullable)           | Natural expression using `null`            |
+| `Result<T, E>`                   | `Result<T>`               | Standard Result type containing exceptions |
 
 ### Example Conversion
 
 **Rust:**
+
 ```rust
 #[xross_class]
 impl MyService {
@@ -104,6 +107,7 @@ impl MyService {
 ```
 
 **Kotlin (Generated):**
+
 ```kotlin
 val result: Result<String> = runBlocking {
     service.process("hello")
@@ -115,18 +119,22 @@ val result: Result<String> = runBlocking {
 Xross automatically generates `extern "C"` functions internally and calls them via Java 25's FFM API (`MethodHandle`).
 
 ### Symbol Naming Convention
+
 Generated symbols follow this format:
 `{crate}_{package}_{type}_{method}`
 
 Example: `my_lib_com_example_MyService_process`
 
 ### Automatically Generated Common Functions
+
 For every `XrossClass`, the following management functions are generated:
+
 - `_drop`: Calls `Box::from_raw` to release Rust-side memory.
 - `_size`: Returns `size_of` of the type, used for `MemorySegment` allocation on the Kotlin side.
 - `_clone`: If `Clone` is implemented, creates a new instance on the heap.
 
 ### Advanced Extension
+
 If you want to call specific functions directly via the FFM API, you can interoperate with Xross-managed objects by performing a `SymbolLookup` following these naming conventions.
 
 ## 💡 Usage
@@ -180,31 +188,39 @@ fun main() {
 ## 🔥 Advanced Features
 
 ### 🌐 Async/Await Integration
+
 Rust `async fn` is generated as a `suspend` function on the Kotlin side. Internally, it builds an efficient bridge that polls the Rust `Future` and resumes the Coroutine upon completion.
 
 ### 🧵 Thread Safety
+
 Xross brings Rust's borrow checker concepts to Kotlin.
+
 - **Atomic**: Provides CAS operations via `VarHandle`.
 - **Lock**: Uses `StampedLock` to apply optimistic reads for immutable references and exclusive locks for mutable references.
 
 ### 🧬 Algebraic Data Types (ADTs)
+
 Rust `enum` is generated as a Kotlin `sealed class`, allowing safe pattern matching via `when` expressions.
 
 ### 🔍 Standalone Functions
+
 Using `#[xross_function]`, you can bind global functions that do not belong to a class.
 
 ### 🔎 Opaque Types
+
 Using `#[xross_core::opaque_class]`, you can safely pass pointers to Kotlin while hiding Rust-side details.
 
 ### 🛠️ Advanced FFI Control
+
 For cases where the default conversion logic is insufficient, you can use `#[xross_raw_method]` and `#[xross_raw_function]` to manually define the FFI boundary.
 
-*   **Custom Signatures**: Manually specify FFI-compatible types (`sig`).
-*   **Manual Conversion**: Define `import` and `export` closures to bridge FFI types and Rust types.
-*   **Optimization**: Bypass high-level abstractions for extreme performance.
-*   **Panic Safety**: Use `panicable` to safely catch Rust panics at the FFI boundary.
+- **Custom Signatures**: Manually specify FFI-compatible types (`sig`).
+- **Manual Conversion**: Define `import` and `export` closures to bridge FFI types and Rust types.
+- **Optimization**: Bypass high-level abstractions for extreme performance.
+- **Panic Safety**: Use `panicable` to safely catch Rust panics at the FFI boundary.
 
 **Example:**
+
 ```rust
 #[xross_raw_method {
     sig = (p: Point) -> Point;
@@ -229,9 +245,9 @@ pub fn move_point_raw(&self, mut p: Point) -> Point {
 
 ## ⚠️ Requirements and Runtime Settings
 
-*   **Rust**: 1.80+ (Edition 2024 recommended)
-*   **Java**: 25+ (Project Panama / FFM API)
-*   **Gradle**: 8.0+
+- **Rust**: 1.80+ (Edition 2024 recommended)
+- **Java**: 25+ (Project Panama / FFM API)
+- **Gradle**: 8.0+
 
 At runtime, the following JVM argument is required to permit FFM API access:
 
